@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html><head>
+<title>.min</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="description" content="" />
+<script type="text/javascript" src="js/jquery.min.js"></script>
+<!--[if lt IE 9]><script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
+<script type="text/javascript" src="js/prettify.js"></script>                                   <!-- PRETTIFY -->
+<script type="text/javascript" src="js/kickstart.js"></script>                                  <!-- KICKSTART -->
+<link rel="stylesheet" type="text/css" href="css/kickstart.css" media="all" />                  <!-- KICKSTART -->
+<link rel="stylesheet" type="text/css" href="css/style.css" media="all" />                          <!-- CUSTOM STYLES -->
+<link rel="stylesheet" type="text/css" href="css/sprites.css" media="all" />                          <!-- icons -->
+</head><body>
+
+<div class="grid">
+	<div id="wrap" class="clearfix">
+<!-- ===================================== END HEADER ===================================== -->
+@require(page)
+@(
+#inline if statement for wheezy template
+def iff(cond,if_true,if_false=""):
+	if cond:
+		return if_true
+	return if_false
+)
+	 <!-- Menu Horizontal -->
+	<ul class="menu">
+	<li @iff(page=="home",'class="current"')><a href="home"><span class="icon24-cube @iff(page=="home",'icon24-white')"></span>Encoder Home</a></li>
+	<li @iff(page=="past",'class="current"')><a href="past"><span class="icon24-folder @iff(page=="past",'icon24-white')"></span>Past Events</a></li>
+	<li @iff(page=="sett",'class="current"')><a href="sett"><span class="icon24-cog @iff(page=="sett",'icon24-white')"></span>Settings</a>	</li>
+	<li class="right"><a><span class="icon-facetime-video"></span><span id="cam-status">Getting camera info...</span></a></li>
+	</ul>

@@ -1,0 +1,21 @@
+TODO:
+-ENC+SRV: add multiple points of authentication: e.g. hash the computer name, hdd size, hdd model, cpu then compare with what's in .cfg file
+-ENC: generate config encryption key from hardware
+-SRV: remove DATABASE ERROR OCCURRED... when response is a success and no custom msg is defined
+-SRV: when TEAM or LINE is deleted, make sure the player does not get lost
+-ENC+TAB+SRV: when the sync data is received and parsed, submit SYNC_SUCCESS to the server to mark the log as sync_tablet or sync_encoder
+-ENC: install script (to download and install all paths, settings, configs, etc.)
+
+TESTING:
+-ENC+SRV:introduce 404 errors in the cloud, see the response on the local encoder
+-ENC+SRV:submit an existing uniqueID during activation
+-ENC+SRV:submit ID that has been deactivated on the server
+
+-TAB+SRV:submit invalid ID or customer
+-TAB+SRV:what happens if all tagnames were deleted
+
+-SRV:test all scenarios on the cloud and verify logs (e.g. adding/modifying/deleting users, teams, leagues, etc.)
+-SRV: delete user from MYSQL, then try to modify/delete/activate him
+-SRV: add team/user/league/customer/event that were previously deleted
+-SRV: delete a team, see what happens to its players
+-SRV: create event by one customer, have one own team, another team from a diff. customer. then modify the event and see if it syncs on the 2nd customer's encoder/tablet

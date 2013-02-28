@@ -1,0 +1,27 @@
+@require(events)
+<table>
+	<tr>
+		<th></th>
+		<th></th>
+		<th></th>
+		<th></th>
+	</tr>
+@for ev in events:
+	<tr>
+		<td>
+			@ev['date']
+		</td>
+		<td>
+			@ev['homeTeam']
+		</td>
+		<td>
+			@ev['visitTeam']
+		</td>
+		<td>
+			@ev['league']
+		</td>
+		<td></td>
+		<td></td>
+	</tr>
+@end
+</table>

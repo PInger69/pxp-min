@@ -1,0 +1,129 @@
+<!-- ===================================== START FOOTER ===================================== -->
+		<div class="clear"></div>
+		<div id="footer">
+		&copy; 2013 Avoca Technologies Inc.
+		</div>
+	</div><!-- END WRAP -->
+</div><!-- END GRID -->
+<script type="text/javascript">
+	function ajaxSubmit(form, callback){
+		if(callback==undefined){
+			callback = false;
+		}
+		// $(form).find('input, select').removeClass('alert');
+		// show the loading wheel
+		// $(form).find('#loader').show();
+		//reset the warning on the form
+		// $(form).find("#msg").html(''); 
+		action = $(form).attr('action');
+		post_data = $(form).serialize();
+		$.ajax({
+		    url: action,
+		    type: 'POST',
+		    data: post_data,
+		    success: function(data, textStatus, xhr){
+		      //response from the server received
+		      console.log(data);
+		      try{
+		         rez = eval("("+data+")");//parse json
+		      }
+		      catch(e){
+		          rez = { };
+		          rez.success = false;
+		          rez.msg = data;
+		          rez.action = '';
+		      }
+				if(rez.success){
+					// callback();
+					if(callback){
+						eval(callback+"();");
+					}
+		        // // reset all the fields
+		        // $('#'+form)[0].reset();
+				}
+		      else{
+		        // try{
+		        //   $('form').find('input[name='+rez.field+'], select[name='+rez.field+']').addClass("alert").get(0).focus();
+		        // }
+		        // catch(e){
+		        //   //in case the field name was not returned or does not exist
+		        // }
+		      }//if rez.success
+
+		    },//on success
+		    error: function(xhr, textStatus, errorThrown){
+		      //called when there is an error
+		      console.log(textStatus)
+		    }
+		});
+	}//ajaxSubmit
+	function ajaxCall(action,params) {
+		if(params==undefined){
+			params = {}
+		}
+		$.ajax({
+		  url: action,
+		  data: params,
+		  success: function(data, textStatus, xhr) {
+		    console.log(data);
+		    setTimeout(function(){
+				window.location.reload();
+		    },3000);
+		  },
+		  error: function(xhr, textStatus, errorThrown) {
+		    console.log(textStatus)
+		    setTimeout(function(){
+				window.location.reload();
+		    },3000);
+		  }
+		});
+	}
+	function ajaxCamStatus() {
+		// check if the camera is connected and set the status accordingly
+		$.ajax({
+		  url: 'getcamera',
+		  success: function(data, textStatus, xhr) {
+			// console.log(data);
+			try{
+				rez = eval("("+data+")");//parse json
+			}
+			catch(e){
+				rez = { };
+				rez.success = false;
+				rez.msg = data;
+			}
+			if (rez.success){
+				// got a proper response from the server - put the message as camera status
+				$('#cam-status').text(rez.msg);
+			}
+			setTimeout(ajaxCamStatus,2000); //check camera status continuously
+		  },
+		  error: function(xhr, textStatus, errorThrown) {
+			setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
+		    console.log(textStatus);
+		  }
+		});
+	}
+	$(function(){
+		if(typeof fOnLoad=='undefined'){
+			fOnLoad = function (){ };
+        }
+        fOnLoad();
+        // get the camera status
+        ajaxCamStatus();
+        // attach ajax submit to the forms
+        $('form').submit(function(){
+        	ajaxSubmit(this,$(this).attr('callback'));
+        	return false;
+        });
+		$('.ajaxbtn').click(function(e) {
+			e.preventDefault();
+			$(this).attr('disabled','disabled');
+			if($(this).attr('action')){
+				ajaxCall($(this).attr('action'),$(this).attr('param'));
+			}
+		});
+	});
+</script>
+</body>
+</html>

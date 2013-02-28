@@ -1,0 +1,39 @@
+<div class="col_4">
+	<!-- left-most side -->
+</div>
+<div class="col_4">
+	<!-- center  -->
+	<form action="logincheck" method="post">
+		<div class="row center">
+			<h3 style="color:#777">encoder login</h3>
+		</div>
+		<div class="row">
+			<div class="col_12">
+					<label for="hmteam" class="cw_4">Email address</label>
+					<input id="email" type="text"  class="cw_8" name="email" placeholder="Email address">
+			</div>
+		</div>
+		<div class="row">
+			<div class="col_12">
+					<label for="hmteam" class="cw_4">Password</label>
+					<input id="pass" type="password" class="cw_8"name="pass" placeholder="Password">
+			</div>
+		</div>
+		<div class="row center">
+			<button class="medium col_6 green" type="submit">
+				<span class="icon24-user icon24-white"></span>login
+			</button>
+			<button class="medium col_6 orange">
+				<span class="icon24-cancel3 icon24-white"></span>reset
+			</button>
+		</div>	
+	</form>
+</div>
+<div class="col_4">
+	<!-- right-most side -->
+</div>
+<script type="text/javascript">
+function fOnLoad(){
+	$('form #email')[0].focus();
+}
+</script>
