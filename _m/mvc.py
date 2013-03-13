@@ -108,9 +108,7 @@ class MVC():
 		            if autocommit:
 		                self.con.commit()#commit it - without this no changes will be made to the db
 		        except ValueError, e:
-		            ##DEBUG##
-		            # print(e)
-		            ##END DEBUG##
+
 		            error = True
 		        #success when there was at least 1 row affected
 		        return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
@@ -123,9 +121,6 @@ class MVC():
 		            if self.autocommit:
 		                self.con.commit()#commit it - without this no changes will be made to the db
 		        except ValueError, e:
-		            ##DEBUG##
-		            # print(e)
-		            ##END DEBUG##
 		            error = True
 		        #success when there was at least 1 row affected
 		        return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
@@ -220,10 +215,7 @@ class MVC():
 				import cgi
 				if not self.frm:
 					self.frm = cgi.FieldStorage()
-				# print "call 1"
-				# print self.frm
 			def get(self, fieldName):
-				# print self.frm
 				return self.frm.getvalue(fieldName)
 			#end get
 			def send(self,url,params,jsn=False):
@@ -364,9 +356,12 @@ class MVC():
 		            self.uriQuery = os.environ["QUERY_STRING"]
 		    #end __init__
 		    #returns total number of segments minus the script name
-		    def numsegs(self):    
+		    def numsegs(self):
 		        return len(self.uriList)-1
 		    #end numsegs
+		    #returns array of segments
+		    def segarr(self):
+		    	return self.uriList[1:]
 		    #returns a specified segment (segment 0 is the script name)
 		    def segment(self,segnum,ifempty=False):
 		        if len(self.uriList)<(segnum+1):

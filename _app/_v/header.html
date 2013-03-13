@@ -10,7 +10,7 @@
 <script type="text/javascript" src="js/kickstart.js"></script>                                  <!-- KICKSTART -->
 <link rel="stylesheet" type="text/css" href="css/kickstart.css" media="all" />                  <!-- KICKSTART -->
 <link rel="stylesheet" type="text/css" href="css/style.css" media="all" />                          <!-- CUSTOM STYLES -->
-<link rel="stylesheet" type="text/css" href="css/sprites.css" media="all" />                          <!-- icons -->
+<!-- <link rel="stylesheet" type="text/css" href="css/sprites.css" media="all" />  --> <!-- icons -->
 </head><body>
 
 <div class="grid">
@@ -26,8 +26,8 @@ def iff(cond,if_true,if_false=""):
 )
 	 <!-- Menu Horizontal -->
 	<ul class="menu">
-	<li @iff(page=="home",'class="current"')><a href="home"><span class="icon24-cube @iff(page=="home",'icon24-white')"></span>Encoder Home</a></li>
-	<li @iff(page=="past",'class="current"')><a href="past"><span class="icon24-folder @iff(page=="past",'icon24-white')"></span>Past Events</a></li>
-	<li @iff(page=="sett",'class="current"')><a href="sett"><span class="icon24-cog @iff(page=="sett",'icon24-white')"></span>Settings</a>	</li>
-	<li class="right"><a><span class="icon-facetime-video"></span><span id="cam-status">Getting camera info...</span></a></li>
+	<li @iff(page=="home",'class="current"')><a href="home"><i class="icon-desktop icon-large"></i> L2B Encoder</a></li>
+	<li @iff(page=="past",'class="current"')><a href="past"><i class="icon-folder-open icon-large"></i>Past Events</a></li>
+	<li @iff(page=="sett",'class="current"')><a href="sett"><i class="icon-cog icon-large"></i>Settings</a>	</li>
+	<li class="right"><a><span class="icon-facetime-video"></span> <span id="cam-status">Getting camera info...</span></a></li>
 	</ul>

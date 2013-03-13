@@ -1,58 +1,70 @@
+@require(encStatus,teams,leagues)
 
 <div class="col_12">
 	<div class="row">
 		<h3>encoder management</h3>
 	</div>
+@if encStatus=="off" or encStatus=="vod":
 	<div class="row">
-		<p>Start a new event</p>		
+		<p>Start a new event</p>
 	</div>
 	<div class="col_5">
 			<div class="col_12">
 	 			<label for="hmteam" class="cw_4">Home Team</label>
 				<select id="hmteam" class="cw_8">
-					<option value="1">Team h1</option>
-					<option value="2">Team h2</option>
-				</select>			
+					<!-- <option value="" disabled="disabled" selected></option> -->
+@for team in teams:
+					<option value="@team['hid']">@team['name']</option>
+@end
+				</select>
 			</div>
 			<div class="col_12">
 	 			<label for="vsteam" class="cw_4">Visitor Team</label>
 				<select id="vsteam" class="cw_8">
-					<option value="1">super duper cool ninja hacker teamssssssss</option>
-					<option value="2">Option 2</option>
-				</select>			
+					<!-- <option value="" disabled="disabled" selected></option> -->
+@for team in teams:
+					<option value="@team['hid']">@team['name']</option>
+@end
+				</select>
 			</div>
 			<div class="col_12">
 				<label for="league" class="cw_4">League</label>
 				<select id="league" class="cw_8">
-					<option value="1">NHL</option>
-					<option value="2">USEHL</option>
-				</select>			
+					<!-- <option value="" disabled="disabled" selected></option> -->
+@for league in leagues:
+					<option value="@league['hid']">@league['name']</option>
+@end
+				</select>
 			</div>
-	</div>	
+	</div>
+@end
 	<div class="col_6">
 		<div class="row">
-@require(encStatus)
-@if encStatus=="off":
-			<button class="medium green col_3 ajaxbtn" action="encstart">
-				<span class="icon24-play icon24-white"></span>Start
+@if encStatus=="off" or encStatus=="vod":
+			<button class="medium green col_4 ajaxbtn" action="encstart" param="hmteam,vsteam,league">
+				<span class="icon-play"></span> Start
 			</button>
 @end
 @if encStatus=='live':
-			<button class="medium orange col_3 ajaxbtn" action="encpause">
-				<span class="icon24-pause icon24-white"></span>Pause
+			<button class="medium orange col_4 ajaxbtn" action="encpause">
+				<span class="icon-pause"></span> Pause
 			</button>
 @end
 @if encStatus=='paused':
-			<button class="medium blue col_3 ajaxbtn" action="encresume">
-				<span class="icon24-pause icon24-white"></span>Resume
+			<button class="medium blue col_4 ajaxbtn" action="encresume">
+				<span class="icon-play"></span> Resume
 			</button>
 @end
 @if encStatus=='live' or encStatus=='paused':
-			<button class="medium red col_3 ajaxbtn" action="encstop">
-				<span class="icon24-stop icon24-white"></span>Stop
+			<button class="medium red col_4 ajaxbtn" action="encstop">
+				<span class="icon-stop"></span> Stop
 			</button>
 @end
 		</div>
 	</div>
 </div>
-
+<script type="text/javascript">
+function fOnLoad(){
+	$('#vsteam').append('<option>Manchester United</option>');
+}
+</script>

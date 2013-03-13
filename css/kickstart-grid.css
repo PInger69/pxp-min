@@ -16,17 +16,18 @@
  & Gutter %: 20% 
  & MaxWidth: 1280px
  */
-
+ 
 .grid{
 max-width:1220px;
 margin:0 auto;
-padding:0 2%;
+padding:0 2em;
 }
 
 .grid.flex{
 width:100%;
 max-width:100%;
 padding:0 2%;
+padding:2em;
 }
 
 .row{
@@ -34,31 +35,22 @@ display:block;
 overflow:hidden;
 clear:both;
 }
-.cw_1  { width: 6.6666666666667%; }
-.cw_2  { width: 15%; }
-.cw_3  { width: 23.333333333333%; }
-.cw_4  { width: 31.666666666667%; }
-.cw_5  { width: 40%; }
-.cw_6  { width: 48.333333333333%; }
-.cw_7  { width: 56.666666666667%; }
-.cw_8  { width: 65%; }
-.cw_9  { width: 73.333333333333%; }
-.cw_10 { width: 81.666666666667%; }
-.cw_11 { width: 90%; }
-.cw_12 { width: 98.333333333333%; }
+
+*[class*="col_"].alpha{margin-left:0;}
+*[class*="col_"].omega{margin-right:0;}
  
-.col_1  { width: 6.6666666666667%; }
-.col_2  { width: 15%; }
-.col_3  { width: 23.333333333333%; }
-.col_4  { width: 31.666666666667%; }
-.col_5  { width: 40%; }
-.col_6  { width: 48.333333333333%; }
-.col_7  { width: 56.666666666667%; }
-.col_8  { width: 65%; }
-.col_9  { width: 73.333333333333%; }
-.col_10 { width: 81.666666666667%; }
-.col_11 { width: 90%; }
-.col_12 { width: 98.333333333333%; }
+.cw_1, .col_1   { width: 6.6666666666667%; }
+.cw_2, .col_2   { width: 15%; }
+.cw_3, .col_3   { width: 23.333333333333%; }
+.cw_4, .col_4   { width: 31.666666666667%; }
+.cw_5, .col_5   { width: 40%; }
+.cw_6, .col_6   { width: 48.333333333333%; }
+.cw_7, .col_7   { width: 56.666666666667%; }
+.cw_8, .col_8   { width: 65%; }
+.cw_9, .col_9   { width: 73.333333333333%; }
+.cw_10, .col_10 { width: 81.666666666667%; }
+.cw_11, .col_11 { width: 90%; }
+.cw_12, .col_12 { width: 98.333333333333%; }
 
 *[class*="col_"]{
 margin-left: 0.83333333333333%;
@@ -83,7 +75,8 @@ height:auto;
 	This will add a background color so you can see the layout of your grids. 
 */
 *[class*="col_"].visible{
-background:#efefef;
+background:#eee;
+border:1px dotted #ccc;
 }
 
 

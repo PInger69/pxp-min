@@ -6,6 +6,8 @@
 	</div><!-- END WRAP -->
 </div><!-- END GRID -->
 <script type="text/javascript">
+	var encStatus = "";
+	var tmr = null;
 	function ajaxSubmit(form, callback){
 		if(callback==undefined){
 			callback = false;
@@ -15,40 +17,44 @@
 		// $(form).find('#loader').show();
 		//reset the warning on the form
 		// $(form).find("#msg").html(''); 
+		$(form).find('.warning').hide();
 		action = $(form).attr('action');
 		post_data = $(form).serialize();
 		$.ajax({
-		    url: action,
+		    url: 'ajax/'+action,
 		    type: 'POST',
 		    data: post_data,
 		    success: function(data, textStatus, xhr){
-		      //response from the server received
-		      console.log(data);
-		      try{
-		         rez = eval("("+data+")");//parse json
-		      }
-		      catch(e){
-		          rez = { };
-		          rez.success = false;
-		          rez.msg = data;
-		          rez.action = '';
-		      }
+				//response from the server received
+				console.log(data);
+				try{
+					rez = eval("("+data+")");//parse json
+				}
+				catch(e){
+					rez = { };
+					rez.success = false;
+					rez.msg = data;
+					rez.action = '';
+				}
+				// console.log(rez.success)
 				if(rez.success){
 					// callback();
 					if(callback){
 						eval(callback+"();");
 					}
-		        // // reset all the fields
-		        // $('#'+form)[0].reset();
+					// reset all the fields
+					// $('#'+form)[0].reset();
 				}
-		      else{
-		        // try{
-		        //   $('form').find('input[name='+rez.field+'], select[name='+rez.field+']').addClass("alert").get(0).focus();
-		        // }
-		        // catch(e){
-		        //   //in case the field name was not returned or does not exist
-		        // }
-		      }//if rez.success
+				else{
+					$(form).find('.warning .status').html(rez.msg);
+					$(form).find('.warning').show();
+					// try{
+					//   $('form').find('input[name='+rez.field+'], select[name='+rez.field+']').addClass("alert").get(0).focus();
+					// }
+					// catch(e){
+					//   //in case the field name was not returned or does not exist
+					// }
+				}//if rez.success else
 
 		    },//on success
 		    error: function(xhr, textStatus, errorThrown){
@@ -57,31 +63,49 @@
 		    }
 		});
 	}//ajaxSubmit
-	function ajaxCall(action,params) {
+	function ajaxCall(action,params){
 		if(params==undefined){
-			params = {}
+			params = "";
 		}
+		try{
+			//params contains the list of IDs of elements whose values should be passed as parameters
+			// perform the ajax request
+			//eval("("+params+")");
+			pr = params.split(',');
+		}
+		catch(e){
+			pr = new Array();
+		}
+		// console.log(pr);
+		// return;
+		params = {};
+		for(elem in pr){
+			// console.log(pr[elem]);
+			params[pr[elem]] = $('#'+pr[elem]).val();
+		}
+		// console.log(params);
 		$.ajax({
-		  url: action,
+		  url: 'ajax/'+action,
 		  data: params,
 		  success: function(data, textStatus, xhr) {
 		    console.log(data);
 		    setTimeout(function(){
-				window.location.reload();
+				// window.location.reload(); the window will reload when the status has changed - no need for timeout
 		    },3000);
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
 		    console.log(textStatus)
 		    setTimeout(function(){
-				window.location.reload();
+				// window.location.reload();
 		    },3000);
 		  }
 		});
 	}
-	function ajaxCamStatus() {
+	// periodically get the camera status
+	function ajaxCamStatus(){
 		// check if the camera is connected and set the status accordingly
 		$.ajax({
-		  url: 'getcamera',
+		  url: 'ajax/getcamera',
 		  success: function(data, textStatus, xhr) {
 			// console.log(data);
 			try{
@@ -95,30 +119,50 @@
 			if (rez.success){
 				// got a proper response from the server - put the message as camera status
 				$('#cam-status').text(rez.msg);
+				if(rez.encoder!=encStatus){
+					clearTimeout(tmr);
+					window.location.reload();
+				}
 			}
-			setTimeout(ajaxCamStatus,2000); //check camera status continuously
+			tmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
-			setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
+			tmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
 		    console.log(textStatus);
 		  }
 		});
 	}
+	// get encoder status (live/paused/off)
+	function ajaxEncStatus() {
+		$.ajax({
+		  url: 'ajax/encoderstatus',
+		  success: function(data, textStatus, xhr) {
+			encStatus = eval("("+data+")");
+	        // get the camera status
+	        ajaxCamStatus();
+		  }
+		});
+
+	}
 	$(function(){
+		// get the encoder status at first, then it triggers camera status updates
+		ajaxEncStatus();
+		// if there was an onLoad function defined in one of the html's - run it
 		if(typeof fOnLoad=='undefined'){
 			fOnLoad = function (){ };
         }
         fOnLoad();
-        // get the camera status
-        ajaxCamStatus();
         // attach ajax submit to the forms
         $('form').submit(function(){
-        	ajaxSubmit(this,$(this).attr('callback'));
-        	return false;
+        	if(!$(this).attr('default')){
+	        	ajaxSubmit(this,$(this).attr('callback'));
+	        	return false;
+	        }
         });
 		$('.ajaxbtn').click(function(e) {
-			e.preventDefault();
+			// e.preventDefault();
 			$(this).attr('disabled','disabled');
+			$(this).html('<img src="css/img/ajax-loader.gif"/>');
 			if($(this).attr('action')){
 				ajaxCall($(this).attr('action'),$(this).attr('param'));
 			}

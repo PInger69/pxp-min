@@ -4,36 +4,43 @@ m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
 	p = None
 	def __init__(self):
-		pass
+		import os
+		# check if the pxpStream app is running
+		if (not self.disk().psOn("pxpStream")):
+			os.system("/usr/bin/open /Applications/pxpStream.app")
 		# super(Controller, self).__init__()
 	#this function is executed first
 	def _run(self):
 		# get the method name that the user is trying to access
 		self.p = self.loader().module("pxp").pxp()
 		sess = self.session(expires=24*60*60,cookie_path="/")
-
 		functionName = self.uri().segment(1,"home")
-		# if not "user" in sess.data and not functionName=="logincheck" and not functionName=="login":
-		# 	#user is not logged in
-		# 	#redirect to login
-		# 	print "Location: login"		
 		if (functionName[:1]=="_"): # methods starting with _ are private - user cannot access them
 			functionName = ""
-		# if (functionName=="ajax"): #call method from the pxp model
-		# 	functionName = self.uri().segment(2,"")
-		# 	fn = getattr(self.p, functionName, None)
-		# else:#load view
-		# 	if not self.sget("user"):
-		# 		functionName ="login"
-		# 	fn = getattr(self, functionName, None)
-		fn = getattr(self.p, functionName, None)
+		elif (functionName=="ajax"): #call method from the pxp model
+			functionName = self.uri().segment(2,"")
+			fn = getattr(self.p, functionName, None)
+		else:#load view
+			# if (not sess) or ((not "user" in sess.data) and (not functionName=="logincheck") and (not functionName=="login")):
+			# 	#user is not logged in
+			# 	# redirect to login
+			# 	print "Location: login\n"
+			# 	# self.str().pout("zz")
+			# 	return
+			# else:
+			fn = getattr(self, functionName, None)
+		# fn = getattr(self.p, functionName, None)
 
 		# check if it exists
 		if callable(fn):# it does - go to that method
 			self.str().jout(fn())
 		else: # the method does not exist
 			self.page(functionName)
-
+		# db = self.dbsqlite(self.wwwroot+"live/pxp.db")
+		# sql = "INSERT INTO tags (user, player) VALUES('zzz', '9')"
+		# db.qstr(sql)
+		# print db.lastID()
+		# db.close()
 		# print self.loader.modul
 		# print "got here first"
 	#end run
@@ -43,6 +50,8 @@ class Controller(m.MVC):
 			"page":page,			
 		}
 		if(page=="home"):
+			d['leagues']=self.p._listLeagues()
+			d['teams']=self.p._listTeams()
 			d['encStatus']=self.p.encoderstatus()
 		if(page=="past"):
 			d['events']=self.p._listEvents()
@@ -67,8 +76,8 @@ class Controller(m.MVC):
 		try:
 			template = engine.get_template(pgName)
 			print(template.render(params))	
-		except:
-			pass
+		except Exception as e:
+			print e
 		template = engine.get_template('footer.html')
 		print(template.render(params))
 #end pout#end Controller()
