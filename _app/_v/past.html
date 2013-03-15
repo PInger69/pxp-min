@@ -1,9 +1,11 @@
 @require(events)
 <table>
 	<tr>
-		<th></th>
-		<th></th>
-		<th></th>
+		<th>Date</th>
+		<th>Home team</th>
+		<th>Visitor team</th>
+		<th>League</th>
+		<th>Video</th>
 		<th></th>
 	</tr>
 @for ev in events:
@@ -20,7 +22,13 @@
 		<td>
 			@ev['league']
 		</td>
-		<td></td>
+		<td>
+			@if 'vid' in ev:
+				<a href="@ev['vid']">play</a> (@ev['vid_size'])
+			@else:
+				n/a
+			@end
+		</td>
 		<td></td>
 	</tr>
 @end

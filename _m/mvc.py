@@ -1,6 +1,6 @@
 class MVC():
 	"""main MVC class"""	
-	wwwroot = "/Applications/MAMP/htdocs/events/"
+	wwwroot = "/Library/WebServer/htdocs/events/"
 	def __init__(self):
 		# self.loader = c_loader()
 		pass

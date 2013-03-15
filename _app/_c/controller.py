@@ -21,12 +21,13 @@ class Controller(m.MVC):
 			functionName = self.uri().segment(2,"")
 			fn = getattr(self.p, functionName, None)
 		else:#load view
+			if not(self.p._inited() or functionName=='login'):
 			# if (not sess) or ((not "user" in sess.data) and (not functionName=="logincheck") and (not functionName=="login")):
 			# 	#user is not logged in
-			# 	# redirect to login
-			# 	print "Location: login\n"
+				# redirect to login
+				print "Location: login\n"
 			# 	# self.str().pout("zz")
-			# 	return
+				return
 			# else:
 			fn = getattr(self, functionName, None)
 		# fn = getattr(self.p, functionName, None)

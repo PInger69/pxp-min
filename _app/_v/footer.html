@@ -6,8 +6,10 @@
 	</div><!-- END WRAP -->
 </div><!-- END GRID -->
 <script type="text/javascript">
-	var encStatus = "";
-	var tmr = null;
+	var encStatus = ""; 	//encoder status: live, off, paused
+	var tmr = null;     	//timer variable (used to reset it if need be)
+	var btnHtml = "";   	//html for the submit button prior to clicking
+	var ajaxInProgress = false;	//whether the page can be reloaded - true if there is an ajax call in progress
 	function ajaxSubmit(form, callback){
 		if(callback==undefined){
 			callback = false;
@@ -20,6 +22,7 @@
 		$(form).find('.warning').hide();
 		action = $(form).attr('action');
 		post_data = $(form).serialize();
+		ajaxInProgress = true;
 		$.ajax({
 		    url: 'ajax/'+action,
 		    type: 'POST',
@@ -27,6 +30,7 @@
 		    success: function(data, textStatus, xhr){
 				//response from the server received
 				console.log(data);
+				ajaxInProgress = false;
 				try{
 					rez = eval("("+data+")");//parse json
 				}
@@ -48,18 +52,15 @@
 				else{
 					$(form).find('.warning .status').html(rez.msg);
 					$(form).find('.warning').show();
-					// try{
-					//   $('form').find('input[name='+rez.field+'], select[name='+rez.field+']').addClass("alert").get(0).focus();
-					// }
-					// catch(e){
-					//   //in case the field name was not returned or does not exist
-					// }
 				}//if rez.success else
-
+				// reset the submit button state to what it was before the submission
+				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
 		    },//on success
 		    error: function(xhr, textStatus, errorThrown){
-		      //called when there is an error
-		      console.log(textStatus)
+				//called when there is an error
+				console.log(textStatus)
+				ajaxInProgress = false;
+				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
 		    }
 		});
 	}//ajaxSubmit
@@ -78,26 +79,23 @@
 		}
 		// console.log(pr);
 		// return;
+		ajaxInProgress = true;
 		params = {};
 		for(elem in pr){
 			// console.log(pr[elem]);
 			params[pr[elem]] = $('#'+pr[elem]).val();
 		}
-		// console.log(params);
+		// console.log(params);;
 		$.ajax({
 		  url: 'ajax/'+action,
 		  data: params,
 		  success: function(data, textStatus, xhr) {
 		    console.log(data);
-		    setTimeout(function(){
-				// window.location.reload(); the window will reload when the status has changed - no need for timeout
-		    },3000);
+		    ajaxInProgress = false;
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
-		    console.log(textStatus)
-		    setTimeout(function(){
-				// window.location.reload();
-		    },3000);
+		    console.log(textStatus);
+		    ajaxInProgress = false;
 		  }
 		});
 	}
@@ -121,7 +119,9 @@
 				$('#cam-status').text(rez.msg);
 				if(rez.encoder!=encStatus){
 					clearTimeout(tmr);
-					window.location.reload();
+					if (!ajaxInProgress){
+						window.location.reload();
+					}
 				}
 			}
 			tmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
@@ -133,7 +133,8 @@
 		});
 	}
 	// get encoder status (live/paused/off)
-	function ajaxEncStatus() {
+	$(function(){
+		// get the encoder status at first, then it triggers camera status updates
 		$.ajax({
 		  url: 'ajax/encoderstatus',
 		  success: function(data, textStatus, xhr) {
@@ -142,11 +143,6 @@
 	        ajaxCamStatus();
 		  }
 		});
-
-	}
-	$(function(){
-		// get the encoder status at first, then it triggers camera status updates
-		ajaxEncStatus();
 		// if there was an onLoad function defined in one of the html's - run it
 		if(typeof fOnLoad=='undefined'){
 			fOnLoad = function (){ };
@@ -155,17 +151,25 @@
         // attach ajax submit to the forms
         $('form').submit(function(){
         	if(!$(this).attr('default')){
+        		// disable submit button to prevent it from submitting again        		
+        		btnSubmit = $(this).find('button[type="submit"]');
+				btnSubmit.attr('disabled','disabled');
+				btnHtml = btnSubmit.html();
+				// add ajax loader image
+				btnSubmit.html('<img src="css/img/ajax-loader.gif"/>');
+				// perform the submit
 	        	ajaxSubmit(this,$(this).attr('callback'));
 	        	return false;
 	        }
         });
 		$('.ajaxbtn').click(function(e) {
-			// e.preventDefault();
+			// disable the ajax button to prevent further submissions
 			$(this).attr('disabled','disabled');
+			// show loader image
 			$(this).html('<img src="css/img/ajax-loader.gif"/>');
-			if($(this).attr('action')){
-				ajaxCall($(this).attr('action'),$(this).attr('param'));
-			}
+			// ajax buttons have 'action' attribute which is the name of the url to call
+			// some have param attribute - list of #id's of elements whose values to add to the call
+			ajaxCall($(this).attr('action'),$(this).attr('param'));
 		});
 	});
 </script>

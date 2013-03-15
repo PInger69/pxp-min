@@ -2,6 +2,7 @@ from imp import load_source as ls
 from imp import load_compiled as lp
 import os, json
 m = ls("MVC","_m/mvc.py")
+
 class pxp(m.MVC):
 	tagVidBegin = 10
 	#######################################################
@@ -96,21 +97,36 @@ class pxp(m.MVC):
 		from datetime import datetime as dt
 		from time import time as tm
 		try:
+			#make sure not overwriting an old event
+			if(os.path.exists(self.wwwroot+"live/evt.txt")):
+				self._postProcess()
+			#make sure the 'live' directory was initialized
 			if(not os.path.exists(self.wwwroot+"live/thumbs")):
-				self._initLive()
+				self._initLive()							
 			io = self.io()
+			# get the team and league informaiton
 			hmteam = io.get('hmteam')
 			vsteam = io.get('vsteam')
 			league = io.get('league')
+			# start the capture
 			rez = os.system(self.wwwroot+"_db/encstart >/dev/null &")
 			# add entry to the database that the encoding has started
 			msg = self._logSql(ltype="enc_start",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
+			# create new event in the database
+			# get time for hid and for database
+			timestamp = dt.fromtimestamp(tm()).strftime('%Y-%m-%d %H:%M:%S')
+			evthid = self.enc().sha(timestamp) #event hid
+			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+			sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`) VALUES(?,?,?,?,?)"
+			db.query(sql,(evthid,timestamp,hmteam,vsteam,league))
+			#the name of the directory will be YYYY-MM-DD_HH-MM-SS
+			evtName = dt.fromtimestamp(tm()).strftime('%Y-%m-%d_%H-%M-%S')+'_H'+hmteam[:3]+'_V'+vsteam[:3]+'_L'+league[:3]
 			#store the event name (for processing when it's stopped)
-			timestamp = dt.fromtimestamp(tm()).strftime('%Y%m%d_%H%M%S')
-			cmd = "/bin/echo '"+timestamp+"' > "+self.wwwroot+"live/evt.txt"
+			cmd = "echo '"+evtName+"' > "+self.wwwroot+"live/evt.txt"
 			rez = not os.system(cmd)
 		except Exception as e:
 			self.str().pout(e)
+			print sys.exc_traceback.tb_lineno
 			rez = False
 		# rez = False
 		return {"success":rez}
@@ -147,6 +163,13 @@ class pxp(m.MVC):
 		if appon and cfg:
 			return {"success":True,"msg":cfg,"encoder":self.encoderstatus()}
 		return {"success":True,"msg":"No camera connected","encoder":self.encoderstatus()}
+	#end getcamera
+	#######################################################
+	# returns list of the past events in array
+	#######################################################
+	def getpastevents(self):
+		return {"events":self._listEvents()} #send it in dictionary format to match the sync2cloud format
+	#end getpastevents
 	#######################################################
 	#returns all the game tags for a specified event
 	#######################################################
@@ -167,8 +190,7 @@ class pxp(m.MVC):
 	#returns true if there is an active feed present
 	#######################################################
 	def islive(self):
-		wwwroot = self.wwwroot
-		hlsPresent = os.path.exists(wwwroot+'live/video/list.m3u8')
+		hlsPresent = os.path.exists(self.wwwroot+'live/video/list.m3u8')
 		return {"success":(self._encState()==1) and hlsPresent}
 	def logincheck(self):
 		io = self.io()
@@ -176,7 +198,7 @@ class pxp(m.MVC):
 		passw = io.get("pass")
 		# sess = self.session(expires=24*60*60,cookie_path="/")
 		if not (email and passw):
-			return self.str().err("Email and pass must be specified")
+			return self.str().err("Email and password must be specified")
 		encEm = self.enc().sha(email)
 		encPs = self._hash(passw)
 		if not self._inited():
@@ -208,12 +230,10 @@ class pxp(m.MVC):
 		evt = jp['event']
 		return self._syncTab(user=usr, device=dev, event=evt)
 	#######################################################
-	#modify a tag
+	#modify a tag - set as coachpick, bookmark, etc
 	#######################################################
 	def tagmod(self):
-		wwwroot = self.wwwroot
 		strParam = self.uri().segment(3,"{}")
-		# strParam = '{"starttime":"367.090393","duration":"35","user":"fe5dbbcea5ce7e2988b8c69bcfdfde8904aabc1f","event":"live","id":9}'
 		jp = json.loads(strParam)
 		if not ('user' in jp and 'event' in jp and 'id' in jp):
 			return self.str().err("Specify user, event, and tag id")
@@ -251,10 +271,10 @@ class pxp(m.MVC):
 		#update the tag
 		sql = "UPDATE `tags` SET "+(', '.join(sqlInsert))+" WHERE id=?"
 		#make sure the database exists
-		if(not os.path.exists(wwwroot+event+'/pxp.db')):
+		if(not os.path.exists(self.wwwroot+event+'/pxp.db')):
 			return {'success':False}
 		#perform the update
-		db = self.dbsqlite(wwwroot+event+'/pxp.db')
+		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 		# return {"sq":sql,"i":params}
 		success = db.query(sql,params) and db.numrows()>0
 		if success:
@@ -305,7 +325,6 @@ class pxp(m.MVC):
 		#strength start 	= 9
 		#strength end 		= 10
 		import json, os, sys
-		wwwroot = self.wwwroot
 		tagVidBegin = self.tagVidBegin
 		if (not tagStr):
 			tagStr = self.uri().segment(3)
@@ -321,14 +340,14 @@ class pxp(m.MVC):
 				t = t[0] # this is an array of dictionaries - get the first element
 			if (not 'event' in t):
 				return self.str().err("Specify event") #event was not defined - can't open the database
-			if (not os.path.exists(wwwroot+t['event']+'/pxp.db')):
+			if (not os.path.exists(self.wwwroot+t['event']+'/pxp.db')):
 				# this is the first tag in the event 
-				self.disk().mkdir(wwwroot+t['event'])
+				self.disk().mkdir(self.wwwroot+t['event'])
 				# copy the template db for tags
-				self.disk().copy(wwwroot+'_db/event_template.db', wwwroot+t['event']+'/pxp.db')
-			db.open(wwwroot+t['event']+'/pxp.db')
+				self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+t['event']+'/pxp.db')
+			db.open(self.wwwroot+t['event']+'/pxp.db')
 			db.transBegin() #in case we need to roll it back later
-			epath = wwwroot+t['event']+'/'
+			epath = self.wwwroot+t['event']+'/'
 			success = 1
 			if(not 'type' in t):
 				t['type'] = 0 #if type is not defined set it to default
@@ -519,7 +538,6 @@ class pxp(m.MVC):
 	#######################################################
 	def teleset(self):
 		import sys, Image
-		wwwroot = self.wwwroot
 		io = self.io()
 		try:
 			# create a tag first
@@ -528,12 +546,12 @@ class pxp(m.MVC):
 			t = self.tagset(tagStr)
 			#upload a file with the tag name
 			imgID = str(t['id'])
-			io.upload(wwwroot+event+"/thumbs/tl"+imgID+".png")
+			io.upload(self.wwwroot+event+"/thumbs/tl"+imgID+".png")
 			# update the thumbnail with the telestration overlay
 			# background is the thumbnail
-			bgFile = wwwroot + event+"/thumbs/tn"+imgID+".jpg"
+			bgFile = self.wwwroot + event+"/thumbs/tn"+imgID+".jpg"
 			# overlay is the png telestration
-			olFile = wwwroot + event+"/thumbs/tl"+imgID+".png"			
+			olFile = self.wwwroot + event+"/thumbs/tl"+imgID+".png"			
 			# open the image files
 			bg = Image.open(bgFile)
 			ol = Image.open(olFile)
@@ -560,8 +578,7 @@ class pxp(m.MVC):
 	#######################################################
 	def _bookmark(self, tagid, event):
 		# get tag ID
-		wwwroot = self.wwwroot
-		db = self.dbsqlite(wwwroot+event+'/pxp.db')
+		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 		# get the time from the database
 		sql = "SELECT starttime, duration FROM tags WHERE id=?"
 		db.query(sql,(tagid,))
@@ -575,10 +592,10 @@ class pxp(m.MVC):
 		vidFiles = ""
 		#select .ts files that should be merged
 		for i in range(int(strFile),int(endFile)):
-			vidFiles += wwwroot+event+"/video/segm"+str(i)+".ts "
+			vidFiles += self.wwwroot+event+"/video/segm"+str(i)+".ts "
 		# concatenate the videos		
-		bigTsFile = wwwroot+event+"/video/vid"+tagid+".ts" #temporary .ts output file
-		bigMP4File= wwwroot+event+"/video/vid_"+tagid+".mp4" #converted mp4 file
+		bigTsFile = self.wwwroot+event+"/video/vid"+tagid+".ts" #temporary .ts output file
+		bigMP4File= self.wwwroot+event+"/video/vid_"+tagid+".mp4" #converted mp4 file
 		cmd = "/bin/cat "+vidFiles+">"+bigTsFile
 		os.system(cmd)
 		# convert to mp4
@@ -682,7 +699,6 @@ class pxp(m.MVC):
 	#######################################################
 	def _init(self, email, password):
 		import platform
-		wwwroot = self.wwwroot
 		# make sure the credentials were supplied
 		url = "http://www.myplayxplay.net/max/activate/ajax"
 		
@@ -697,19 +713,19 @@ class pxp(m.MVC):
 		if(resp):
 			if(resp['success']):
 				#create all the necessary directories
-				self.disk().mkdir(wwwroot+"_db")
+				self.disk().mkdir(self.wwwroot+"_db")
 				#save the config info
-				self._cfgSet(wwwroot+"_db/",[resp['authorization'],resp['customer']])
+				self._cfgSet(self.wwwroot+"_db/",[resp['authorization'],resp['customer']])
 				#download encoder control scripts
-				os.system("curl -#Lo "+wwwroot+"_db/encpause http://myplayxplay.net/assets/min/encpause")
-				os.system("curl -#Lo "+wwwroot+"_db/encstart http://myplayxplay.net/assets/min/encstart")
-				os.system("curl -#Lo "+wwwroot+"_db/encstop http://myplayxplay.net/assets/min/encstop")
-				os.system("curl -#Lo "+wwwroot+"_db/encresume http://myplayxplay.net/assets/min/encresume")
+				os.system("curl -#Lo "+self.wwwroot+"_db/encpause http://myplayxplay.net/.assets/min/encpause")
+				os.system("curl -#Lo "+self.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
+				os.system("curl -#Lo "+self.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
+				os.system("curl -#Lo "+self.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
 				#add execution privileges for the scripts
-				os.system("/bin/chmod +x "+wwwroot+"_db/*")
+				os.system("chmod +x "+self.wwwroot+"_db/*")
 				#download the blank database files
-				os.system("curl -#Lo "+wwwroot+"_db/event_template.db http://myplayxplay.net/assets/min/event_template.db")
-				os.system("curl -#Lo "+wwwroot+"_db/pxp_main.db http://myplayxplay.net/assets/min/pxp_main.db")
+				os.system("curl -#Lo "+self.wwwroot+"_db/event_template.db http://myplayxplay.net/.assets/min/event_template.db")
+				os.system("curl -#Lo "+self.wwwroot+"_db/pxp_main.db http://myplayxplay.net/.assets/min/pxp_main.db")
 				self._initLive()
 
 				return 1
@@ -722,9 +738,8 @@ class pxp(m.MVC):
 	# returns true if this encoder has been initialized
 	#######################################################
 	def _inited(self):
-		wwwroot = self.wwwroot
 		# LATER ON: check if server is online. if so, check auth code against the cloud
-		cfg = self._cfgGet(wwwroot+"_db/")
+		cfg = self._cfgGet(self.wwwroot+"_db/")
 		return (len(cfg)>1 and cfg[0]=='.min config file')
 	#end inited
 	#######################################################
@@ -733,19 +748,31 @@ class pxp(m.MVC):
 	def _initLive(self):
 		self.disk().mkdir(self.wwwroot+"live/thumbs")
 		self.disk().mkdir(self.wwwroot+"live/video")
-		self.disk().copy(wwwroot+'_db/event_template.db', wwwroot+'live/pxp.db')
+		self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+'live/pxp.db')
 	#end initLive
 	#######################################################
 	#returns a list of events in the system
 	#######################################################
 	def _listEvents(self):
-		wwwroot = self.wwwroot
-		sql = "SELECT * FROM `events` WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 ORDER BY `date` DESC"
-		if(not os.path.exists(wwwroot+"_db/pxp_main.db")):
+		sql = "SELECT events.*, strftime('%Y-%m-%d_%H-%M-%S',`date`) AS `dateFmt` FROM `events` WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 ORDER BY `date` DESC"
+		if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
 			return False
-		db = self.dbsqlite(wwwroot+"_db/pxp_main.db")
+		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 		db.qstr(sql)
 		result = db.getasc()
+		# go through events and check if they have videos
+		i = 0
+		for row in result:
+			# event name
+			evtName = row['dateFmt']+'_H'+row['homeTeam'][:3]+'_V'+row['visitTeam'][:3]+'_L'+row['league'][:3]
+			evtDir = self.wwwroot+evtName
+			result[i]['name']=evtName
+			# check if the video file is there
+			if(os.path.exists(evtDir+'/video/main.mp4')):
+				#it is - provide a path to it
+				result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
+				result[i]['vid_size']=self._sizeFmt(os.stat(evtDir+"/video/main.mp4").st_size)
+			i+=1
 		db.close()
 		return result
 	#end listevents
@@ -753,11 +780,10 @@ class pxp(m.MVC):
 	#returns a list of teams in the system
 	#######################################################
 	def _listLeagues(self):
-		wwwroot = self.wwwroot
 		sql = "SELECT * FROM `leagues` ORDER BY `name` ASC"
-		if(not os.path.exists(wwwroot+"_db/pxp_main.db")):
+		if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
 			return False
-		db = self.dbsqlite(wwwroot+"_db/pxp_main.db")
+		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 		db.qstr(sql)
 		result = db.getasc()
 		db.close()
@@ -767,11 +793,10 @@ class pxp(m.MVC):
 	#returns a list of teams in the system
 	#######################################################
 	def _listTeams(self):
-		wwwroot = self.wwwroot
 		sql = "SELECT * FROM `teams` ORDER BY `name` ASC"
-		if(not os.path.exists(wwwroot+"_db/pxp_main.db")):
+		if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
 			return False
-		db = self.dbsqlite(wwwroot+"_db/pxp_main.db")
+		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 		db.qstr(sql)
 		result = db.getasc()
 		db.close()
@@ -789,7 +814,7 @@ class pxp(m.MVC):
 			if(not os.path.exists(dbfile)):
 				return False
 			db = self.dbsqlite(dbfile)
-		#logging an event - delete the last event and create a new one			
+		#logging an event - delete the last identical event (e.g tag_mod for specific tag id by the same user)
 		sql = "DELETE FROM `logs` WHERE (`type` LIKE ?) AND (`user` LIKE ?) AND (`id` LIKE ?)"
 		db.query(sql,(ltype,uid,lid))
 		#add it again
@@ -822,25 +847,33 @@ class pxp(m.MVC):
 	#######################################################
 	def _postProcess(self):
 		# get the name of what the new directory should be called
-		event = self.disk().file_get_contents(self.wwwroot+"live/evt.txt")
+		event = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
 		# rename the live to that directory
 		os.rename(self.wwwroot+"live",self.wwwroot+event)
-		# remove all .ts files (maybe later)		
+		# remove all .ts files
+		cmd = "find "+self.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
+		os.system(cmd)
 		# re-create the directories for live:
 		self._initLive()
 	#end postProcess
 
+	def _sizeFmt(self,size):
+		sizePrefix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
+		for x in sizePrefix:
+			if size < 1024 or x==sizePrefix[len(sizePrefix)-1]:
+				return "%d %s" % (size, x)
+			size = size >> 10
+		return ""
 	#######################################################
 	#adds tags to an event during the sync procedure (gets called once for each event)
 	#######################################################
 	def _syncAddTags(self, path,tagrow,del_arr,add_arr):
-		wwwroot = self.wwwroot
 		if(not os.path.exists(path+'/pxp.db')):
 			# event directory does not exist yet
 			# create it recursively (default mode is 0777)
 			self.disk().mkdir(path)
 			# copy the template database there
-			self.disk().copy(wwwroot+'_db/event_template.db', path+'/pxp.db')
+			self.disk().copy(self.wwwroot+'_db/event_template.db', path+'/pxp.db')
 		#end if not path exists
 
 		sql_del = "DELETE FROM `tags` WHERE"+("OR".join(del_arr))
@@ -863,16 +896,15 @@ class pxp(m.MVC):
 	#adds tags to an event during the sync procedure (gets called once for each event)
 	#######################################################
 	def _syncEnc(self, encEmail="",encPassw=""):
-		wwwroot = self.wwwroot
 		db = self.dbsqlite()
 		#open the main database (where everything except tags is stored)
-		if(not db.open(wwwroot+"_db/pxp_main.db")):
+		if(not db.open(self.wwwroot+"_db/pxp_main.db")):
 			return False
 		url = 'http://www.myplayxplay.net/max/sync/ajax'
 		# name them v1 and v2 to make sure it's not obvious what is being sent
 		# v3 is a dummy variable
 		# v0 is the authorization code (it will determine if this is encoder or another device)
-		cfg = self._cfgGet(wwwroot+"_db/")
+		cfg = self._cfgGet(self.wwwroot+"_db/")
 		if(not cfg): 
 			return False
 		authorization = cfg[1]
@@ -897,7 +929,7 @@ class pxp(m.MVC):
 			# add all data rows in a single query
 			for row in resp[table]:
 				delFields = row['primary'].split(",")#contains names of the fields that are the key - used to delete entries from old tables
-				# e.g. may have player, team as the key
+				# e.g. may have "player, team" as the key
 				delQuery = []
 				for delField in delFields:
 					#contains query conditions for deletion
@@ -999,12 +1031,11 @@ class pxp(m.MVC):
 	#that were created in a specific event since the last sync)
 	#######################################################
 	def _syncTab(self, user, device, event, allData=False):
-		wwwroot = self.wwwroot
 		##get the user's ip
 		##userIP = os.environ['REMOTE_ADDR']
-		if (not user) or len(user)<1 or (not device) or len(device)<1 or (not event) or len(event)<1 or (not os.path.exists(wwwroot+event+"/pxp.db")):
+		if (not user) or len(user)<1 or (not device) or len(device)<1 or (not event) or len(event)<1 or (not os.path.exists(self.wwwroot+event+"/pxp.db")):
 			return [] #return empty list if user did not provide the correct info or event does not exist
-		db = self.dbsqlite(wwwroot+event+"/pxp.db")
+		db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
 		try:
 			if(allData):#selecting all tags from this game
 				lastup = 0
@@ -1052,7 +1083,7 @@ class pxp(m.MVC):
 				if len(outJSON[key])<1:
 					del(outJSON[key])
 			if len(outJSON)>0: #only log sync when something was sync'ed
-				self._logSql(ltype='sync_tablet',lid=device,uid=user,dbfile=wwwroot+event+'/pxp.db')
+				self._logSql(ltype='sync_tablet',lid=device,uid=user,dbfile=self.wwwroot+event+'/pxp.db')
 			return outJSON
 		except Exception as e:
 			# print e
@@ -1122,8 +1153,8 @@ class pxp(m.MVC):
 	#######################################################
 	def _thumbName(self,seekTo,number=False):
 		import math
-		# global wwwroot
-		# listPath = wwwroot+"/list.m3u8"
+		# global self.wwwroot
+		# listPath = self.wwwroot+"/list.m3u8"
 		#open m3u8 file:
 		# f = open(listPath,"r")
 		#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at 00:00:50 time. reachedTime contains the number of seconds since file0
