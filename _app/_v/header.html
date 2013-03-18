@@ -16,7 +16,7 @@
 <div class="grid">
 	<div id="wrap" class="clearfix">
 <!-- ===================================== END HEADER ===================================== -->
-@require(page)
+@require(page,user,email)
 @(
 #inline if statement for wheezy template
 def iff(cond,if_true,if_false=""):
@@ -26,8 +26,9 @@ def iff(cond,if_true,if_false=""):
 )
 	 <!-- Menu Horizontal -->
 	<ul class="menu">
-	<li @iff(page=="home",'class="current"')><a href="home"><i class="icon-desktop icon-large"></i> L2B Encoder</a></li>
-	<li @iff(page=="past",'class="current"')><a href="past"><i class="icon-folder-open icon-large"></i>Past Events</a></li>
-	<li @iff(page=="sett",'class="current"')><a href="sett"><i class="icon-cog icon-large"></i>Settings</a>	</li>
-	<li class="right"><a><span class="icon-facetime-video"></span> <span id="cam-status">Getting camera info...</span></a></li>
+		<li @iff(page=="home",'class="current"')><a href="home"><i class="icon-desktop icon-large"></i> L2B Encoder</a></li>
+		<li @iff(page=="past",'class="current"')><a href="past"><i class="icon-folder-open icon-large"></i>Past Events</a></li>
+		<!-- <li @iff(page=="sett",'class="current"')><a href="sett"><i class="icon-cog icon-large"></i>Settings</a>	</li> -->
+		<li @iff(page=="login",'class="current"')><a href="@iff(user,'logout','login')"><i class="icon-user icon-large"></i>@iff(user,'Log out ('+str(email)+')','login')</a></li>
+		<li class="right"><a><span class="icon-facetime-video"></span> <span id="cam-status">Getting camera info...</span></a></li>
 	</ul>

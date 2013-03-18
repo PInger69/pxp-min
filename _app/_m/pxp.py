@@ -192,26 +192,45 @@ class pxp(m.MVC):
 	def islive(self):
 		hlsPresent = os.path.exists(self.wwwroot+'live/video/list.m3u8')
 		return {"success":(self._encState()==1) and hlsPresent}
-	def logincheck(self):
+	def login(self, sess):
 		io = self.io()
 		email = io.get("email")
 		passw = io.get("pass")
-		# sess = self.session(expires=24*60*60,cookie_path="/")
 		if not (email and passw):
 			return self.str().err("Email and password must be specified")
 		encEm = self.enc().sha(email)
 		encPs = self._hash(passw)
+		# make sure the encoder has been initialized
 		if not self._inited():
+			# it wasn't initialized yet - activate it in the cloud
 			res = self._init(email,passw)
 			if (not res==1):
 				return {"success":False, "msg":res}
+			# activation was successful, perform a sync
+		#sync with every login
 		self._syncEnc(encEm,encPs)
+		#if not inited
+
 		# check if user is in the database
 		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
-		sql = "SELECT * FROM `users` WHERE `email` LIKE ? AND `password` LIKE ?"
-		db.query(sql,(encEm,encPs))
+		sql = "SELECT `hid` FROM `users` WHERE `email` LIKE ? AND `password` LIKE ?"
+		db.query(sql,(email,encPs))
+		rows = db.getrows()
+		if(len(rows)<1):
+			return {"success":False,"msg":"Invalid email or password"}
 		# log him in
+		usrData = rows[0]
+		sess.data['user']=usrData[0]
+		sess.data['email']=email
 		# return {io.get("email"):io.get("pass")}
+		return {"success":True}
+	#logs the user out
+	#session variable must be passed here
+	#initializing it in this method opens it as read-only(??)
+	def logout(self, sess):
+		sess.data['user']=False
+		sess.data['email']=False
+		# del sess.data['user']
 		return {"success":True}
 	#######################################################
   	#get any new events that happened since the last update (e.g. new tags, removed tags, etc.)

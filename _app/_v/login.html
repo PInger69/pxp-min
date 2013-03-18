@@ -3,7 +3,7 @@
 </div>
 <div class="col_4">
 	<!-- center  -->
-	<form action="logincheck" method="post">
+	<form action="login" method="post" callback="reload">
 		<div class="row center">
 			<h3 style="color:#777">encoder login</h3>
 		</div>
@@ -39,5 +39,8 @@
 <script type="text/javascript">
 function fOnLoad(){
 	$('form #email')[0].focus();
+}
+function reload() {
+	window.location.reload();
 }
 </script>

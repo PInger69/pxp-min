@@ -2,10 +2,12 @@ from imp import load_source as ls
 from imp import load_compiled as lp
 m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
-	p = None
+	p = None #pxp controller variable
+	d = {} #data passed to the template engine
+	sess = None
 	def __init__(self):
 		import os
-		# check if the pxpStream app is running
+		# ensure that the pxpStream app is running
 		if (not self.disk().psOn("pxpStream")):
 			os.system("/usr/bin/open /Applications/pxpStream.app")
 		# super(Controller, self).__init__()
@@ -13,7 +15,16 @@ class Controller(m.MVC):
 	def _run(self):
 		# get the method name that the user is trying to access
 		self.p = self.loader().module("pxp").pxp()
-		sess = self.session(expires=24*60*60,cookie_path="/")
+		self.sess = self.session(expires=24*60*60,cookie_path="/")
+		sess = self.sess
+		if ('user' in sess.data):
+			# someone is logged in - set the session variable
+			self.d['user'] = sess.data['user']
+			self.d['email']= sess.data['email']
+		else:
+			# nobody is logged in
+			self.d['user'] = False
+			self.d['email'] = False
 		functionName = self.uri().segment(1,"home")
 		if (functionName[:1]=="_"): # methods starting with _ are private - user cannot access them
 			functionName = ""
@@ -21,20 +32,24 @@ class Controller(m.MVC):
 			functionName = self.uri().segment(2,"")
 			fn = getattr(self.p, functionName, None)
 		else:#load view
-			if not(self.p._inited() or functionName=='login'):
-			# if (not sess) or ((not "user" in sess.data) and (not functionName=="logincheck") and (not functionName=="login")):
-			# 	#user is not logged in
-				# redirect to login
-				print "Location: login\n"
-			# 	# self.str().pout("zz")
-				return
-			# else:
 			fn = getattr(self, functionName, None)
-		# fn = getattr(self.p, functionName, None)
-
+		# fn = getattr(self.p, functionName, None)		
+		if not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login'):
+			#user is not logged in
+			# redirect to login
+			print "Location: login\n"
+			# make sure he does not proceed any further
+			return		
+		if(functionName=='login' and sess and ('user' in sess.data) and sess.data['user']):
+			#user just logged in, redirect him to home
+			print "Location: home\n"
+			return
 		# check if it exists
 		if callable(fn):# it does - go to that method
-			self.str().jout(fn())
+			if(functionName=='login'):
+				self.str().jout(fn(sess))
+			else:
+				self.str().jout(fn())
 		else: # the method does not exist
 			self.page(functionName)
 		# db = self.dbsqlite(self.wwwroot+"live/pxp.db")
@@ -45,18 +60,21 @@ class Controller(m.MVC):
 		# print self.loader.modul
 		# print "got here first"
 	#end run
+	#logs user out
+	def logout(self):
+		self.p.logout(self.sess)
+		print "Location: login"
+	#end logout
 	def page(self,page):
 		# output the page
-		d = {
-			"page":page,			
-		}
+		self.d["page"]=page
 		if(page=="home"):
-			d['leagues']=self.p._listLeagues()
-			d['teams']=self.p._listTeams()
-			d['encStatus']=self.p.encoderstatus()
+			self.d['leagues']=self.p._listLeagues()
+			self.d['teams']=self.p._listTeams()
+			self.d['encStatus']=self.p.encoderstatus()
 		if(page=="past"):
-			d['events']=self.p._listEvents()
-		self._out(page+'.html',d)
+			self.d['events']=self.p._listEvents()
+		self._out(page+'.html',self.d)
 ######################################
 ##		 internal functions	   ##
 ######################################

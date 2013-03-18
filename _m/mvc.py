@@ -1,6 +1,6 @@
 class MVC():
 	"""main MVC class"""	
-	wwwroot = "/Library/WebServer/htdocs/events/"
+	wwwroot = "/var/www/html/events/"
 	def __init__(self):
 		# self.loader = c_loader()
 		pass
@@ -274,6 +274,7 @@ class MVC():
 	def session(self, expires=None, cookie_path=None):
 		import sha, shelve, time, Cookie, os, sys
 		class c_session(object):
+			# data = None
 			def __init__(self, glob, expires=None, cookie_path=None):
 				try:
 					string_cookie = os.environ.get('HTTP_COOKIE', '')
@@ -289,17 +290,15 @@ class MVC():
 					self.cookie['sid'] = sid
 					if cookie_path:
 						self.cookie['sid']['path'] = cookie_path
-					# session_dir = os.environ['DOCUMENT_ROOT'] + '/session'
-					session_dir = glob.wwwroot+"/session"
+					session_dir = glob.wwwroot+"session/"
 					if not os.path.exists(session_dir):
 						glob.disk().mkdir(session_dir,0770)
-					self.data = shelve.open(session_dir + '/sess_' + sid, writeback=True)
+					self.data = shelve.open(session_dir + 'sess_' + sid, writeback=True)
 					# os.chmod(session_dir + '/sess_' + sid, 0660)
 					
 					# Initializes the expires data
 					if not self.data.get('cookie'):
 						self.data['cookie'] = {'expires':''}
-
 					self.set_expires(expires)
 					print ("%s"%(self.cookie))
 				except Exception as e:
