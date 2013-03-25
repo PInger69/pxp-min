@@ -40,6 +40,59 @@ class pxp(m.MVC):
 			print self.tagset(tstr)
 	#######################################################
 	#######################################################
+	# gets download progress from the progress.txt file
+	# sums up all the individual progresses and outputs a number
+	#######################################################
+	def dlprogress(self):
+		#get progress for each device
+		# self.str().pout("")
+		# import random
+		# totalPercent = random.randrange(90,105);
+		# return {"progress":totalPercent}
+		progFile = self.approot+"prog.txt"
+		if(os.path.exists(progFile)):
+			os.remove(progFile)
+		os.system("cp "+self.approot+"progress.txt "+progFile)
+		progresses = self.disk().file_get_contents(progFile)
+		totalPercent = 0
+		numDevices   = 1 #number of devices connected - do not set this to zero to avoid 0/0 case
+		if (not progresses): #file doesn't exist
+			return {"progress":totalPercent}
+		progresses = progresses.strip().split("\n")
+		numDevices = len(progresses)
+		#go through each one
+		for progress in progresses:
+			if(len(progress)<=5):
+				continue #skip empty/erroneous lines in the file
+			# extract percentage from the line (right before -)
+			percentNum = int(progress.split("-")[0])
+			totalPercent += percentNum
+		return {"progress":int(totalPercent/numDevices)}
+	#end dlprogress
+	#######################################################
+	# starts the video download to all the connected tablets
+	#######################################################
+	def download(self):
+		io = self.io()
+		event = io.get('event')
+		# self.str().pout("")
+		if not event:
+			return {"success":False}
+		try:
+			# event = "2013-03-14_14-51-07_HMan_VMan_LBar"
+			# make sure it has no : or / \ in the name
+			if('/' in event or '\\' in event):
+				return {"success":False}
+			#command to start the download
+			# os.system("pwd > "+self.wwwroot+"test.txt")
+			cmd = self.wwwroot+"_db/idevcopy "+event+" "+self.wwwroot+event+'/video/main.mp4 > /dev/null &'
+			#successful command will return 0
+			return {"success":not os.system(cmd)}
+		except Exception as e:
+			import sys 
+			return {"success":False,"line":sys.exc_traceback.tb_lineno,"msg":e}
+	#end download
+	#######################################################
 	# returns encoder status as a string, 
 	# either json or plain text
 	#######################################################
@@ -89,6 +142,21 @@ class pxp(m.MVC):
 		# rez = False
 		return {"success":not rez}
 	#end encresume
+	#######################################################
+	#shuts down the encoder
+	#######################################################
+	def encshutdown(self):
+		import os
+		import getpass
+		msg = ""
+		try:
+			rez = os.system("sudo shutdown -h now")
+		except Exception as e:
+			rez = False
+		# rez = False
+		return {"success":not rez}
+	#end encresume
+	
 	#######################################################
 	#starts a new encode
 	#######################################################
@@ -162,7 +230,7 @@ class pxp(m.MVC):
 		cfg = self.disk().file_get_contents(self.wwwroot+"_db/.cam")
 		if appon and cfg:
 			return {"success":True,"msg":cfg,"encoder":self.encoderstatus()}
-		return {"success":True,"msg":"No camera connected","encoder":self.encoderstatus()}
+		return {"success":True,"msg":"No camera","encoder":self.encoderstatus()}
 	#end getcamera
 	#######################################################
 	# returns list of the past events in array
@@ -303,7 +371,7 @@ class pxp(m.MVC):
 			sql = "SELECT * FROM `tags` WHERE `id`=?"
 			db.query(sql,(tid,))
 			tag = db.getasc()
-			db.close()
+			db.close() #close db here because next statement will return
 			if (bookmark):
 				# user wants to make a bookmark - extract the video
 				success = success and self._bookmark(tagid=tid,event=event)
@@ -366,7 +434,6 @@ class pxp(m.MVC):
 				self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+t['event']+'/pxp.db')
 			db.open(self.wwwroot+t['event']+'/pxp.db')
 			db.transBegin() #in case we need to roll it back later
-			epath = self.wwwroot+t['event']+'/'
 			success = 1
 			if(not 'type' in t):
 				t['type'] = 0 #if type is not defined set it to default
@@ -444,7 +511,7 @@ class pxp(m.MVC):
 				sqlVars += (t['strength'],)
 				sqlAddFld += ", strength"
 				sqlAddVal += ", ?"
-			# create the query
+			# create the query to add a new tag
 			sql = "INSERT INTO tags (name, user, starttime, type, time, colour, coachpick"+sqlAddFld+") VALUES(?, ?, ?, ?, ?, ?, ?"+sqlAddVal+")"
 			#run it
 			success = success and db.query(sql,sqlVars)
@@ -466,88 +533,106 @@ class pxp(m.MVC):
 				# could not get the tag info - probably invalid tag ID (should never happen)
 				db.rollback()
 				return {'success':False}
-			#either default tag or start tag - create thumbnails for those
-			if(not (t['type'] & 1)): #odd-number types do not require thumbnail, even ones do
-				#create a thumbnail for the tag video - only do this when a tag is created
-				#i.e. tagStart is not technically a "tag" - wait till the Stop is set, then make a thumbnail
-				fileName = self._thumbName(t['tagtime'])
-				#create a tag if it doesn't exist already
-				imgFile = epath+"thumbs/tn"+str(lastID)+".jpg"
-				if(not os.path.exists(imgFile)):
-					vidFile = epath+"video/"+str(fileName)
-					sec = 0
-					self._mkThumb(vidFile, imgFile, sec)
-			#if not t['type']==2
 
 			#get the time of the current tag
 			tagTime = t['tagtime']
+			tagOut = False
+			# if((t['type']==0) or (t['type']==4)):
+			#only normal tags and telestrations should be updated with periods and logged in the database log
 
-			if((t['type']==0) or (t['type']==4)):
-				#only normal tags and telestrations should be updated with periods and logged in the database log
+			#find a line/third  corresponding to this tag - 
+			#either the tag is being created in the past and its 
+			#time falls within the duration of the line tag, 
+			#or it's being created live and there is a line/third active right now
+			#name contains the line designation, i.e. d_2, or o_1
 
-				#find a line/third  corresponding to this tag - 
-				#either the tag is being created in the past and its 
-				#time falls within the duration of the line tag, 
-				#or it's being created live and there is a line/third active right now
-				#name contains the line designation, i.e. d_2, or o_1
+			types = {
+				#numbers are: stop, start codes for line, period, strength
+				"line"		: ['2','1'], 
+				"player"	: ['6','5'],
+				"period"	: ['8','7'],
+				"strength"	: ['10','9']
+			}
+			#go through every type of metadata for each tag (e.g. line, period)
+			#and update that attribute for the current tag based on what was the last line/zone, period/half etc. selected
+			for tp in types:
+				if (tp in t): #this 
+					continue
+				#get the sql query with proper types
+				sql = "SELECT `"+tp+"` FROM `tags` WHERE `starttime`<=? AND ((`type`="+types[tp][0]+" AND (`starttime`+`duration`)>=?) OR (`type`="+types[tp][1]+" AND `duration`=0)) ORDER BY `starttime` "
+				db.query(sql,(tagTime,tagTime))
+				rows = db.getrows()
+				# return
+				#array with lines, or players or whatever was selected
+				dataArray = []
+				#select any active lines (or zones, or thirds at the time of the tag)
+				#there can be multiple players or lines per tag
+				for row in rows:
+					if (not row[0]==None):
+						dataArray.append(row[0])
+				if (len(dataArray)>0): #make sure there are elements in the array, otherwise the next query will cause the entire transaction to fail
+					sqlVals = ",".join(dataArray)
+					sql = "UPDATE `tags` SET `"+tp+"`=? WHERE `id`=?"
+					db.query(sql,(sqlVals,lastID))
+			#for tp in types
 
-				types = {
-					#numbers are: stop, start codes for line, period, strength
-					"line"		: ['2','1'], 
-					"period"	: ['8','7'],
-					"strength"	: ['10','9']
-					}
-				#players might have been specified in the tag, if it is the case, add them
-				if (not 'player' in t):
-					#players were not defined with the tag - get it automatically
-					types["player"]=['6','5']
-				#go through every type of metadata for each tag (e.g. line, period)
-				#and update that attribute for the current tag based on what was the last line/zone, period/half etc. selected
-				for tp in types:
-					#get the sql query with proper types
-					sql = "SELECT `"+tp+"` FROM `tags` WHERE `starttime`<=? AND ((`type`="+types[tp][0]+" AND (`starttime`+`duration`)>=?) OR (`type`="+types[tp][1]+" AND `duration`=0)) ORDER BY `starttime` "
-					db.query(sql,(tagTime,tagTime))
-					rows = db.getrows()
-					# return
-					#array with lines, or players or whatever was selected
-					dataArray = []
-					#select any active lines (or zones, or thirds at the time of the tag)
-					#there can be multiple players or lines per tag
-					for row in rows:
-						if (not row[0]==None):
-							dataArray.append(row[0])
-					if (len(dataArray)>0): #make sure there are elements in the array, otherwise the next query will cause the entire transaction to fail
-						sqlVals = ",".join(dataArray)
-						sql = "UPDATE `tags` SET `"+tp+"`=? WHERE `id`=?"
-						db.query(sql,(sqlVals,lastID))
-				#for tp in types
+			tagOut = {} # this dictionary will be returned
 
-				# tagOut = {} # this dictionary will be returned
-				if(t['type']==1):
-					tagOut = {
-						'id':lastID,
-						'success':success
-					}
-				else:
-					#log that a tag was created
-					if(success):
-						success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=t['user'],db=db)
-					tagOut = self._tagFormat(event=t['event'], user=t['user'], tagID=lastID)
-				if(success):
-					db.commit()
-				else:
-					db.rollback()
-				#output result as JSON
-				return tagOut
-			#if type==0 or type==4
+			if (t['type']&1) : #odd types are start of a new line/zone/etc. - return the last line/zone/etc. that just ended
+				tagTypes = {1:'line',5:'player',7:'period',9:'strength'}
+				# get the last active line/player/period, etc.
+				sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'current_"+tagTypes[t['type']]+"' ORDER BY `logID` DESC"
+				db.qstr(sql)
+				rows = db.getrows()
+				if(len(rows)>0):#previous line/zone/etc was specified
+					lastEntry = rows[0][0]
+					# get id of the tag containing that entry
+					sql = "SELECT IFNULL(MAX(`id`),0) FROM `tags` WHERE `"+tagTypes[t['type']]+"` LIKE ?"
+					db.query(sql,(lastEntry,))
+					lastID = db.getrow()
+					lastID = lastID[0]
+				else:#this is a first time tagging line/zone/etc
+					lastID = 0
+				# set new line/zone/period/etc.
+				success = success and self._logSql(ltype="current_"+tagTypes[t['type']],lid=t[tagTypes[t['type']]],uid=t['user'],db=db)
+				# return {"success":success}
+			#if type & 1
+			if(success):
+				# get all the details about the tag that was created (or last line/period/etc. if a new line/period was started)
+				db.commit()
 			else:
-				tagTypes = {1:'zone',5:'player',7:'period',9:'strength'}
-				self._logSql(ltype="current_"+tagTypes[t['type']],lid=t['name'],uid=t['user'],db=db)
-				if(success):
-					db.commit()
-				else:
-					db.rollback()
-				return {"success":success}
+				db.rollback()
+			
+			if (success and lastID): 
+				#create a thumbnail for the tag video - only do this when a tag is created
+				#i.e. tagStart is not technically a "tag" - wait till the Stop is set, then make a thumbnail
+				#this only happens when it's a first 'start' tag - since every other 'start' tag will 
+				#automatically stop the previous start 'tag'
+
+				# get the tag information
+				tagOut = self._tagFormat(event=t['event'], user=t['user'], tagID=lastID, db=db)	
+				t['tagtime'] = tagOut['time']
+				# self.str().pout("zz")
+				vidSegmfileName = self._thumbName(t['tagtime'])
+				#create a tag image if it doesn't exist already
+				pathToEvent = self.wwwroot+t['event']+'/'
+				imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
+				if(not os.path.exists(imgFile)):
+					vidFile = pathToEvent+"video/"+str(vidSegmfileName)
+					# self._thumbName(t['tagtime'],number=True)
+					roundedSec = int(self._thumbName(t['tagtime'],number=True))
+					#get the accurate time within the .ts file 
+					#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
+					sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
+					if sec<0: #sanity check - should never happen
+						sec = 0
+					self._mkThumb(vidFile, imgFile, sec)
+				#log that a tag was created
+				success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=t['user'],db=db)
+			#if not t['type']==2
+			if not tagOut: #tag will not be returned - happens when line/zone/etc. is tagged for the first time
+				tagOut = {"success":success}
+			return tagOut
 		except Exception as e:
 			self.str().pout(sys.exc_traceback.tb_lineno)
 			print e
@@ -689,7 +774,7 @@ class pxp(m.MVC):
 		UDP_PORT = 2224
 		sock = socket.socket(socket.AF_INET, # Internet
 		                     socket.SOCK_DGRAM) # UDP
-		sock.settimeout(0.2) #wait for 0.2 seconds - if there is no response, server is not streaming
+		sock.settimeout(0.5) #wait for 0.2 seconds - if there is no response, server is not streaming
 		#bind to the port and listen
 		try:
 			sock.bind((UDP_IP, UDP_PORT))
@@ -740,6 +825,7 @@ class pxp(m.MVC):
 				os.system("curl -#Lo "+self.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
 				os.system("curl -#Lo "+self.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
 				os.system("curl -#Lo "+self.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
+				os.system("curl -#Lo "+self.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy")
 				#add execution privileges for the scripts
 				os.system("chmod +x "+self.wwwroot+"_db/*")
 				#download the blank database files
@@ -781,16 +867,27 @@ class pxp(m.MVC):
 		result = db.getasc()
 		# go through events and check if they have videos
 		i = 0
+		# get the name of the live event
+		if(os.path.exists(self.wwwroot+'live/evt.txt')):
+			live = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
+		else:
+			live = ""
 		for row in result:
 			# event name
 			evtName = row['dateFmt']+'_H'+row['homeTeam'][:3]+'_V'+row['visitTeam'][:3]+'_L'+row['league'][:3]
 			evtDir = self.wwwroot+evtName
 			result[i]['name']=evtName
+			# check if there is a streaming file in there
+			if(os.path.exists(evtDir+'/video/list.m3u8')):
+				result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/list.m3u8'
 			# check if the video file is there
 			if(os.path.exists(evtDir+'/video/main.mp4')):
 				#it is - provide a path to it
-				result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
+				result[i]['mp4']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
 				result[i]['vid_size']=self._sizeFmt(os.stat(evtDir+"/video/main.mp4").st_size)
+			# check if this is a live event
+			if(evtName==live):
+				result[i]['live']='http://'+os.environ['HTTP_HOST']+'/events/live/video/list.m3u8'
 			i+=1
 		db.close()
 		return result
@@ -858,7 +955,8 @@ class pxp(m.MVC):
 		#make the thumbnail
 		cmd = "/usr/local/bin/ffmpeg"
 		#automatically calculates height based on defined width:
-		params = " -ss "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
+		# -itsoffset is slower than -ss but insignificant for small files
+		params = " -itsoffset "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
 		os.system(cmd+params) # need to wait for response otherwise the tablet will try to download image file that does not exist yet
 	
 	#######################################################
@@ -867,20 +965,26 @@ class pxp(m.MVC):
 	def _postProcess(self):
 		# get the name of what the new directory should be called
 		event = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
+		#delete the file containing the name of the event (not needed anymore)
+		os.remove(self.wwwroot+"live/evt.txt")
 		# rename the live to that directory
 		os.rename(self.wwwroot+"live",self.wwwroot+event)
-		# remove all .ts files
-		cmd = "find "+self.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
+		# remove all .ts files - leave them on the server for streaming
+		# cmd = "find "+self.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
 		os.system(cmd)
 		# re-create the directories for live:
 		self._initLive()
 	#end postProcess
 
 	def _sizeFmt(self,size):
-		sizePrefix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
-		for x in sizePrefix:
-			if size < 1024 or x==sizePrefix[len(sizePrefix)-1]:
+		#size names
+		sizeSuffix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
+		for x in sizeSuffix:			
+			if size < 1024 or x==sizeSuffix[len(sizeSuffix)-1]:
+				#either reached the capacity (i.e. size will be under 1024)
+				#or reached the end of suffixes (highly unlikely)
 				return "%d %s" % (size, x)
+			#shift left by 10 is equivalent to dividing by 1024 with round down
 			size = size >> 10
 		return ""
 	#######################################################
@@ -1081,7 +1185,7 @@ class pxp(m.MVC):
 					continue
 				if(str(tag['time'])=='nan'):
 					tag['time']=0
-				tagJSON = self._tagFormat(tag=tag,event=event)
+				tagJSON = self._tagFormat(tag=tag,event=event, db=db)
 				if(allData or not user==tag['user']):
 					tagsOut[tag['id']]=(tagJSON)
 			#end for tags:
@@ -1110,15 +1214,22 @@ class pxp(m.MVC):
 	#end syncTab()
 	#######################################################
 	# formats the tag in a proper json format and returns it as json dictionary
+	# if db is not specified, the default db from the specified 'event' will be opened
 	#######################################################
-	def _tagFormat(self, event=False, user=False, tagID=False, tag=False):
+	def _tagFormat(self, event=False, user=False, tagID=False, tag=False, db=False):
 		import os, datetime
 		outDict = {}
 		if(tagID): #tag id was given - retreive it from the database
 			sql = "SELECT * FROM `tags` WHERE `id`=?"
-			db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
+			if(not db):
+				autoclose = True #db was not passed, open and close it in this function
+				db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
+			else:
+				autoclose = False #db was passed as argument - do not close it here
 			db.query(sql,(tagID,))
 			tag = db.getasc()[0]
+			if(autoclose):
+				db.close()
 		elif(not tag):
 			# no tag id or other information given - return empty dictionary
 			return {}
@@ -1132,7 +1243,10 @@ class pxp(m.MVC):
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(tag['time'])))
 		tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
 		tag['own'] = tag['user']==user
-		tag['deleted'] = (tag['deleted']==1 or tag['type']==3) #this will be removed in the future
+		#set deleted attribute for a tag
+		if not 'deleted' in tag:
+			tag['deleted']=0
+		tag['deleted'] = (tag['deleted']==1 or tag['type']==3) #this will be removed in the future and set to type==3 only
 		tag['success'] = True
 		if(int(tag['type'])==4): #add telestration url for telestration tags only
 			tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
@@ -1200,10 +1314,11 @@ class pxp(m.MVC):
 		# f.close()
 
 		# time of the thumbnail
-		sec = round(seekTo)
+		# sec = round(seekTo)
 		# for the file name
 		# each .ts file contains slightly less than 1 second
-		secname = str(round(seekTo/0.984315))[:-2] #trim the .0 from the name
+		#round down to the nearest file
+		secname = str(int(seekTo/0.984315)) 
 		# convert time to hh:mm:ss
 		# hr = math.floor(seekTo/3600)
 		# mn = math.floor((seekTo-hr*3600)/60)

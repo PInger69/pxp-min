@@ -6,8 +6,8 @@
 	</div><!-- END WRAP -->
 </div><!-- END GRID -->
 <script type="text/javascript">
+	var cameraStateTmr = null;     	//timer variable (used to reset it if need be)
 	var encStatus = ""; 	//encoder status: live, off, paused
-	var tmr = null;     	//timer variable (used to reset it if need be)
 	var btnHtml = "";   	//html for the submit button prior to clicking
 	var ajaxInProgress = false;	//whether the page can be reloaded - true if there is an ajax call in progress
 	function ajaxSubmit(form, callback){
@@ -116,33 +116,29 @@
 			}
 			if (rez.success){
 				// got a proper response from the server - put the message as camera status
-				$('#cam-status').text(rez.msg);
+				if(rez.msg=='No camera'){
+					$('#cam-status').text('N/A');
+				}
+				else{
+					$('#cam-status').text(rez.msg);
+				}
 				if(rez.encoder!=encStatus){
-					clearTimeout(tmr);
+					clearTimeout(cameraStateTmr);
 					if (!ajaxInProgress){
 						window.location.reload();
 					}
 				}
 			}
-			tmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
+			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
-			tmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
+			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
 		    console.log(textStatus);
 		  }
 		});
 	}
 	// get encoder status (live/paused/off)
 	$(function(){
-		// get the encoder status at first, then it triggers camera status updates
-		$.ajax({
-		  url: 'ajax/encoderstatus',
-		  success: function(data, textStatus, xhr) {
-			encStatus = eval("("+data+")");
-	        // get the camera status
-	        ajaxCamStatus();
-		  }
-		});
 		// if there was an onLoad function defined in one of the html's - run it
 		if(typeof fOnLoad=='undefined'){
 			fOnLoad = function (){ };

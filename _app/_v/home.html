@@ -44,6 +44,9 @@
 			<button class="medium green col_4 ajaxbtn" action="encstart" param="hmteam,vsteam,league">
 				<span class="icon-play"></span> Start
 			</button>
+			<button class="medium blue col_4 ajaxbtn" action="encshutdown">
+				<span class="icon-off"></span> Shut down
+			</button>
 @end
 @if encStatus=='live':
 			<button class="medium orange col_4 ajaxbtn" action="encpause">
@@ -65,6 +68,14 @@
 </div>
 <script type="text/javascript">
 function fOnLoad(){
-	$('#vsteam').append('<option>Manchester United</option>');
+	// get the encoder status at first, then it triggers camera status updates
+	$.ajax({
+		url: 'ajax/encoderstatus',
+		success: function(data, textStatus, xhr) {
+		encStatus = eval("("+data+")");
+			// get the camera status
+			ajaxCamStatus();
+		}
+	});
 }
 </script>

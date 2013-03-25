@@ -1,35 +1,162 @@
 @require(events)
-<table>
-	<tr>
-		<th>Date</th>
-		<th>Home team</th>
-		<th>Visitor team</th>
-		<th>League</th>
-		<th>Video</th>
-		<th></th>
-	</tr>
+<div class="col_12">
+	<div class="row bold">
+		<div class="col_2">Date</div>
+		<div class="col_2">Home team</div>
+		<div class="col_2">Visitor team</div>
+		<div class="col_2">League</div>
+		<div class="col_2">Video</div>
+		<div class="col_2">
+			<button id="download" class="green small col_12" type="reset">
+				<i class="icon-download-alt"></i> download
+			</button>
+		</div>
+	</div>	
 @for ev in events:
-	<tr>
-		<td>
+	<div class="row border-top">
+		<div class="col_2">
 			@ev['date']
-		</td>
-		<td>
+		</div>
+		<div class="col_2">
 			@ev['homeTeam']
-		</td>
-		<td>
+		</div>
+		<div class="col_2">
 			@ev['visitTeam']
-		</td>
-		<td>
+		</div>
+		<div class="col_2">
 			@ev['league']
-		</td>
-		<td>
-			@if 'vid' in ev:
-				<a href="@ev['vid']">play</a> (@ev['vid_size'])
+		</div>
+		<div class="col_2">
+			@if 'mp4' in ev:
+				<a class="media" href="@ev['mp4']">play</a> (@ev['vid_size'])
+			@elif 'live' in ev:
+				<a class="media" href="@ev['live']">live</a>
 			@else:
 				n/a
 			@end
-		</td>
-		<td></td>
-	</tr>
+		</div>
+		<div class="col_2 center">
+			@if 'mp4' in ev:
+				<input type="checkbox" event="@ev['name']">
+			@end
+		</div>
+	</div>
 @end
-</table>
+</div>
+<div id="videoWnd" class="wnd-container hide">
+	<div class="wnd">
+		<div id="vidPlayer"></div>
+		<a href="#close" class="icon-remove"></a>
+	</div>
+</div>
+
+
+
+<script type="text/javascript" src="js/jwplayer.js"></script>
+<script type="text/javascript">
+var dlQueue = []; //queue used for processing multiple downloads
+function getProgress() {
+	// get download progress
+	$.ajax({
+		url: 'ajax/dlprogress',
+		type: 'GET',
+		success: function(data, textStatus, xhr) {
+			// response received for progress, get the % value
+			data = eval("("+data+")");
+			progress = parseInt(data['progress']);
+			// set the progress bar width based on percentage
+			pbarWidth(dlQueue[0].find('.meter > span'),progress);
+			if(progress>=100){				
+				processQueue(true);// file has finished - move on to the next one
+			}
+			else{
+				setTimeout(getProgress,1000);//keep getting the progress every second until complete
+			}
+		}//end success
+	});
+	
+	
+}
+function processQueue(itemDone, itemError) {
+	if(itemDone==undefined) itemDone=false;
+	if(itemError==undefined) itemError=false;
+	if(itemDone) { //just finished downloading an element - remove the progress bar
+		dlQueue[0].html(itemError?itemError:'complete'); //either an error occurred or the progress has finished - put the status instead of the progress bar
+		dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
+	}
+	if(dlQueue.length<=0) {
+		$('#download').removeAttr('disabled');
+		return; //no more items in the queue - finish
+	}
+	// grab the next video in the queue (first element)
+	vid = dlQueue[0].find('input'); //dlqueue contains div's that contain checkboxes - hence the .find() method
+	// get the name of the event (for ipad)
+	evt = $(vid).attr('event');
+	// replace checkbox with a progress bar
+	dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
+	// send a request to download the file
+	$.ajax({
+	  url: 'ajax/download',
+	  data: {'event':evt},
+	  success: function(data, textStatus, xhr){
+	    //called when successful - start checking for progress after 1 second
+	    setTimeout(getProgress,1000);
+	  }
+	});
+	
+}
+
+function pbarWidth(obj,width) {
+	obj.animate({
+			width: width+'%'
+		}, 500);
+}
+function fOnLoad (argument) {
+
+	// warn user about exiting the page if the download is in progress
+	window.onbeforeunload = function(e){
+		if(dlQueue.length>0){
+		    return 'If you leave this page, not all files may be downloaded and progress will not be updated for the current download.';
+		}
+	}
+	// attach a click to the close button on a window
+	$('.wnd a[href$="close"]').live('click', function(e){
+		e.preventDefault();
+		$('html').find('.overlay').fadeOut(function (e) {
+			$(this).remove();
+		});
+		$(this).parents('.wnd-container').fadeOut();
+	});
+	// attach media player to any media links (allows graceful breakdown for js-disabled cases)
+    $('.media').click(function(e){
+    	e.preventDefault();
+	    self = this;
+	    // html overlay
+	    $('html').prepend("<div class='overlay hide'></div>");
+	    $('.overlay').fadeIn();
+	    // player window
+	    $('#videoWnd').fadeIn();
+	    // initialize the player to 480p resolution
+	    jwplayer("vidPlayer").setup({
+	        file: $(self).attr('href'),
+	        width: 853,
+	        height: 480
+	    });	
+	    // start playing
+	    jwplayer("vidPlayer").play();
+    	return false;
+    });
+    // clicked download button
+    $('#download').click(function(){
+    	$(this).attr('disabled','disabled'); //make sure user cannot click download again
+    	// go through every checked video (checkbox) and add it to the queue
+    	$('input:checked').each(function (){
+    		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
+    		dlQueue.push($(this).parent('div'));
+    	}).attr('disabled','disabled');
+    	// start download
+    	processQueue();
+
+    });
+}
+</script>

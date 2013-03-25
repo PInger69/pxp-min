@@ -17,6 +17,8 @@ class Controller(m.MVC):
 		self.p = self.loader().module("pxp").pxp()
 		self.sess = self.session(expires=24*60*60,cookie_path="/")
 		sess = self.sess
+		if (not 'email' in sess.data):
+			sess.data['email']=False
 		if ('user' in sess.data):
 			# someone is logged in - set the session variable
 			self.d['user'] = sess.data['user']
@@ -33,13 +35,13 @@ class Controller(m.MVC):
 			fn = getattr(self.p, functionName, None)
 		else:#load view
 			fn = getattr(self, functionName, None)
-		# fn = getattr(self.p, functionName, None)		
-		if not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login'):
-			#user is not logged in
-			# redirect to login
-			print "Location: login\n"
-			# make sure he does not proceed any further
-			return		
+			# fn = getattr(self.p, functionName, None)		
+			if (not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login')):
+				#user is not logged in
+				# redirect to login
+				print "Location: login\n"
+				# make sure he does not proceed any further
+				return		
 		if(functionName=='login' and sess and ('user' in sess.data) and sess.data['user']):
 			#user just logged in, redirect him to home
 			print "Location: home\n"
@@ -73,10 +75,10 @@ class Controller(m.MVC):
 			self.d['teams']=self.p._listTeams()
 			self.d['encStatus']=self.p.encoderstatus()
 		if(page=="past"):
-			self.d['events']=self.p._listEvents()
+			self.d['events']=self.p._listEvents()#+self.p._listEvents()+self.p._listEvents()+self.p._listEvents()
 		self._out(page+'.html',self.d)
 ######################################
-##		 internal functions	   ##
+##		 internal functions	   		##
 ######################################
 	def _out(self,pgName,params):
 		from wheezy.template.engine import Engine

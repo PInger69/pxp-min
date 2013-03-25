@@ -1,9 +1,13 @@
 class MVC():
-	"""main MVC class"""	
+	"""main MVC class"""
+	approot = "/var/www/html/min/"
 	wwwroot = "/var/www/html/events/"
+	# wwwroot = "/Applications/MAMP/htdocs/events/"
 	def __init__(self):
 		# self.loader = c_loader()
-		pass
+		import os
+		if (not (os.getcwd()+"/")==self.approot):
+			os.chdir(self.approot) #make sure the current working directory is properly set
 		# super(loader, self).__init__()
 	#sqlite operations class
 	def dbsqlite(self,dbpath=False):
@@ -147,9 +151,10 @@ class MVC():
 				import os
 				if(not os.path.exists(filename)):
 					return False
+				contents = ""
 				with open(filename) as f:
-					return f.read()
-
+					contents = f.read()
+				return contents
 			def file_set_contents(self, filename,text):
 				f = open(filename,"w")
 				f.write(text)

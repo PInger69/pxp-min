@@ -275,6 +275,7 @@ clear:both;
 }
 
 	.notice.warning{}/*default*/
+	.notice.clean{border:0; background:transparent;padding:0;}
 	.notice.error{border:1px solid red;background:pink;color:red;}
 	.notice.success{border:1px solid green;background:lightgreen;color:green;}
 	.notice i[class^='icon-']{position:absolute;top:50%;left:0.8em;margin-top:-0.6em;}
