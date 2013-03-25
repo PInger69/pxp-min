@@ -2,6 +2,7 @@ from imp import load_source as ls
 from imp import load_compiled as lp
 m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
+	version = 0.4
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -11,6 +12,7 @@ class Controller(m.MVC):
 		if (not self.disk().psOn("pxpStream")):
 			os.system("/usr/bin/open /Applications/pxpStream.app")
 		# super(Controller, self).__init__()
+		self.d['version']=self.version
 	#this function is executed first
 	def _run(self):
 		# get the method name that the user is trying to access

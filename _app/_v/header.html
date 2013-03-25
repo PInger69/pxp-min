@@ -1,9 +1,11 @@
+@require(page,user,email,version)
 <!DOCTYPE html>
 <html><head>
-<title>.min</title>
+<title>.min (v@str(version))</title>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <meta name="description" content="" />
+<link rel="shortcut icon" href="css/img/favicon.png" type="image/png"/>
 <script type="text/javascript" src="js/jquery.min.js"></script>
 <!--[if lt IE 9]><script src="http://html5shiv.googlecode.com/svn/trunk/html5.js"></script><![endif]-->
 <script type="text/javascript" src="js/prettify.js"></script>                                   <!-- PRETTIFY -->
@@ -16,7 +18,6 @@
 <div class="grid">
 	<div id="wrap" class="clearfix">
 <!-- ===================================== END HEADER ===================================== -->
-@require(page,user,email)
 @(
 #inline if statement for wheezy template
 def iff(cond,if_true,if_false=""):
@@ -26,7 +27,7 @@ def iff(cond,if_true,if_false=""):
 )
 	 <!-- Menu Horizontal -->
 	<ul class="menu">
-		<li @iff(page=="home",'class="current"')><a href="home"><i class="icon-desktop icon-large"></i> L2B Encoder</a></li>
+		<li @iff(page=="home",'class="current"')><a href="home"><i class="icon-desktop icon-large"></i> L2B Encoder (v@str(version))</a></li>
 		<li @iff(page=="past",'class="current"')><a href="past"><i class="icon-folder-open icon-large"></i>Past Events</a></li>
 		<!-- <li @iff(page=="sett",'class="current"')><a href="sett"><i class="icon-cog icon-large"></i>Settings</a>	</li> -->
 		<li @iff(page=="login",'class="current"')><a href="@iff(user,'logout','login')"><i class="icon-user icon-large"></i>@iff(user,'Log out ('+str(email)+')','login')</a></li>
