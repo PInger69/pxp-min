@@ -1,8 +1,8 @@
 from imp import load_source as ls
 from imp import load_compiled as lp
-m = lp("MVC","_m/mvc.pyc")
+m = ls("MVC","_m/mvc.py")
 class Controller(m.MVC):
-	version = 0.4
+	version = 0.5
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -41,12 +41,16 @@ class Controller(m.MVC):
 			if (not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login')):
 				#user is not logged in
 				# redirect to login
+				sess.data['uri'] = functionName
 				print "Location: login\n"
 				# make sure he does not proceed any further
 				return		
 		if(functionName=='login' and sess and ('user' in sess.data) and sess.data['user']):
 			#user just logged in, redirect him to home
-			print "Location: home\n"
+			if('uri' in sess.data):
+				print "Location: "+sess.data['uri']+"\n"
+			else:
+				print "Location: home\n"
 			return
 		# check if it exists
 		if callable(fn):# it does - go to that method
@@ -54,7 +58,7 @@ class Controller(m.MVC):
 				self.str().jout(fn(sess))
 			else:
 				self.str().jout(fn())
-		else: # the method does not exist
+		else: # the method does not exist - try to find a page with this name
 			self.page(functionName)
 		# db = self.dbsqlite(self.wwwroot+"live/pxp.db")
 		# sql = "INSERT INTO tags (user, player) VALUES('zzz', '9')"
@@ -97,8 +101,12 @@ class Controller(m.MVC):
 		print("Content-Type: text/html\n")
 		print(template.render(params))
 		try:
-			template = engine.get_template(pgName)
-			print(template.render(params))	
+			if(pgName=='egg.html'):
+				print self.p.egg()
+			else:
+				pass
+				template = engine.get_template(pgName)			
+				print(template.render(params))	
 		except Exception as e:
 			print e
 		template = engine.get_template('footer.html')

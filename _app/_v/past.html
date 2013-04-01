@@ -35,10 +35,19 @@
 				n/a
 			@end
 		</div>
-		<div class="col_2 center">
-			@if 'mp4' in ev:
-				<input type="checkbox" event="@ev['name']">
-			@end
+		<div class="col_2">
+			<div class="cw_11 center">
+				@if 'mp4' in ev:
+					<input type="checkbox" class="center" event="@ev['name']">
+				@else:
+					&nbsp;
+				@end
+			</div>
+			<div class="cw_1 right">
+				@if not 'live' in ev:
+					<a href="#" class="removeEvt large red" name="@ev['name']" event="@ev['hid']"><i class="icon-remove"></i></a>
+				@end
+			</div>
 		</div>
 	</div>
 @end
@@ -60,33 +69,34 @@ function getProgress() {
 	$.ajax({
 		url: 'ajax/dlprogress',
 		type: 'GET',
-		success: function(data, textStatus, xhr) {
+		success: function(data, textStatus, xhr){
+			console.log(data);
 			// response received for progress, get the % value
 			data = eval("("+data+")");
 			progress = parseInt(data['progress']);
 			// set the progress bar width based on percentage
 			pbarWidth(dlQueue[0].find('.meter > span'),progress);
-			if(progress>=100){				
-				processQueue(true);// file has finished - move on to the next one
+			errorCode = parseInt(data['status']);
+			if(progress>=100 || errorCode){ //file has finished or there was an error
+				processQueue(true,errorCode);// file has finished - move on to the next one
 			}
 			else{
 				setTimeout(getProgress,1000);//keep getting the progress every second until complete
 			}
 		}//end success
-	});
-	
-	
+	});	
 }
 function processQueue(itemDone, itemError) {
 	if(itemDone==undefined) itemDone=false;
 	if(itemError==undefined) itemError=false;
 	if(itemDone) { //just finished downloading an element - remove the progress bar
-		dlQueue[0].html(itemError?itemError:'complete'); //either an error occurred or the progress has finished - put the status instead of the progress bar
+		dlQueue[0].html(itemError?(itemError==1?'not enough space':'error'):'<i class="icon-ok green large"></i>'); //either an error occurred or the progress has finished - put the status instead of the progress bar
 		dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
 	}
-	if(dlQueue.length<=0) {
+	if(dlQueue.length<=0) {//no more items in the queue - all downloads are complete
 		$('#download').removeAttr('disabled');
-		return; //no more items in the queue - finish
+		$('#download').html('<i class="icon-download-alt"></i> download');
+		return; 
 	}
 	// grab the next video in the queue (first element)
 	vid = dlQueue[0].find('input'); //dlqueue contains div's that contain checkboxes - hence the .find() method
@@ -96,9 +106,10 @@ function processQueue(itemDone, itemError) {
 	dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
 	// send a request to download the file
 	$.ajax({
-	  url: 'ajax/download',
+	  url: 'dlstart.php',
 	  data: {'event':evt},
 	  success: function(data, textStatus, xhr){
+	  	console.log(data);
 	    //called when successful - start checking for progress after 1 second
 	    setTimeout(getProgress,1000);
 	  }
@@ -149,14 +160,27 @@ function fOnLoad (argument) {
     // clicked download button
     $('#download').click(function(){
     	$(this).attr('disabled','disabled'); //make sure user cannot click download again
+    	$(this).html('<img src="css/img/ajax-loader.gif"/>')
     	// go through every checked video (checkbox) and add it to the queue
     	$('input:checked').each(function (){
     		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
     		dlQueue.push($(this).parent('div'));
-    	}).attr('disabled','disabled');
+    	}).attr('disabled','disabled')
     	// start download
     	processQueue();
 
     });
+    $('.removeEvt').click(function (e) {
+    	e.preventDefault();
+    	if(dlQueue.length>0){
+    		return;
+    	}
+    	if(confirm('This will delete the event and the video. Are you sure?')){
+    		ajaxCall("evtdelete/?name="+$(this).attr('name')+"&event="+$(this).attr('event'));
+    		// remove event row from the table
+    		$(this).parents('.row').hide();
+    	}
+    	return false;
+    })
 }
 </script>

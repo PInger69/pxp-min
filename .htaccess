@@ -1,6 +1,6 @@
 RewriteEngine on
 
-RewriteCond $1 !^(css|js|index\.py)
+RewriteCond $1 !^(css|js|index\.py|dlstart.php)
 RewriteRule ^(.*)$ index.py/$1 [L]
 # RewriteRule ^main(.*) $1 [R]
 

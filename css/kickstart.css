@@ -54,6 +54,9 @@ em,i{}
 .bold{font-weight:bold;}
 .border-bottom{border-bottom:1px #ccc solid;}
 .border-top{border-top:1px #ccc solid;}
+.green{color:#6ba500;}
+.red{color:#cf0404;}
+.large{font-size:1.3em;}
 /*---------------------------------
 	HR
 -----------------------------------*/

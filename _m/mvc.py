@@ -152,7 +152,7 @@ class MVC():
 				if(not os.path.exists(filename)):
 					return False
 				contents = ""
-				with open(filename) as f:
+				with open(filename,"rb") as f:
 					contents = f.read()
 				return contents
 			def file_set_contents(self, filename,text):
@@ -178,12 +178,30 @@ class MVC():
 			    else:
 			        #system can be Linux, Darwin
 			        #get all the processess matching the specified one:
-			        cmd = "ps -A | pgrep "+process+" > /dev/null"
+			        cmd = "ps -ef | grep "+process+" | grep -v grep > /dev/null" #"ps -A | pgrep "+process+" > /dev/null"
 			    #result of the cmd is 0 if it was successful (i.e. the process exists)
 			    return os.system(cmd)==0
 			#end psOn
-			def rm(self, path, recursive=True):
-				pass
+			# reads sizeToRead from a specified udp port
+			def sockRead(self, udpAddr="127.0.0.1", udpPort=2224, timeout=0.5, sizeToRead=1):
+				import socket
+				sock = socket.socket(socket.AF_INET, # Internet
+				                     socket.SOCK_DGRAM) # UDP
+				sock.settimeout(timeout) #wait for 'timeout' seconds - if there's no response, server isn't running
+				#bind to the port and listen
+				try:
+					sock.bind((udpAddr, udpPort))
+					data, addr = sock.recvfrom(sizeToRead)
+				except Exception as e:
+					#failed to bind to that port
+					data = 0
+				#close the socket
+				try:
+					sock.close()
+				except:
+					#probably failed because bind didn't work - no need to worry
+					pass
+				return data
 		#end c_disk class
 		return c_disk()
 	#end disk
@@ -267,8 +285,10 @@ class MVC():
 	#module/view loading class
 	def loader(self):
 		from imp import load_source as ls
+		from imp import load_compiled as lp
 		class c_loader():
 			def module(self,modname):
+				# return ls(modname,"_app/_m/"+modname+".py")
 				return ls(modname,"_app/_m/"+modname+".py")
 			def view(self,viewname):
 				pass

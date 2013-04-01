@@ -51,7 +51,9 @@ clear:both;
 .cw_10, .col_10 { width: 81.666666666667%; }
 .cw_11, .col_11 { width: 90%; }
 .cw_12, .col_12 { width: 98.333333333333%; }
-
+*[class*="cw_"]{
+float: left;
+}
 *[class*="col_"]{
 margin-left: 0.83333333333333%;
 margin-right: 0.83333333333333%;

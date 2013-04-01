@@ -39,59 +39,236 @@ class pxp(m.MVC):
 			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a192b7953b04c54574d18c28d46e6395428ab","tagtime":"'+str(rr(10,vidlen))+'","event":"live","period":"1"}'
 			print self.tagset(tstr)
 	#######################################################
+
 	#######################################################
 	# gets download progress from the progress.txt file
 	# sums up all the individual progresses and outputs a number
 	#######################################################
 	def dlprogress(self):
 		#get progress for each device
-		# self.str().pout("")
-		# import random
-		# totalPercent = random.randrange(90,105);
-		# return {"progress":totalPercent}
-		progFile = self.approot+"prog.txt"
-		if(os.path.exists(progFile)):
-			os.remove(progFile)
-		os.system("cp "+self.approot+"progress.txt "+progFile)
-		progresses = self.disk().file_get_contents(progFile)
+
+		# problem with sockets: may miss the 100% mark
+		# progresses = self.disk().sockRead(udpPort=2221, sizeToRead=512)
+		progresses = self.disk().file_get_contents("/tmp/pxpidevprogress")
+		copyStatus = self.disk().file_get_contents("/tmp/pxpidevstatus")
+
 		totalPercent = 0
 		numDevices   = 1 #number of devices connected - do not set this to zero to avoid 0/0 case
 		if (not progresses): #file doesn't exist
-			return {"progress":totalPercent}
+			return {"progress":totalPercent, "status":copyStatus}
 		progresses = progresses.strip().split("\n")
-		numDevices = len(progresses)
+		numDevices = len(progresses)		
 		#go through each one
 		for progress in progresses:
-			if(len(progress)<=5):
+			if(len(progress)<=5 or len(progress.split("-"))<2):
 				continue #skip empty/erroneous lines in the file
 			# extract percentage from the line (right before -)
 			percentNum = int(progress.split("-")[0])
 			totalPercent += percentNum
-		return {"progress":int(totalPercent/numDevices)}
+		return {"progress":int(totalPercent/numDevices),"status":copyStatus}
 	#end dlprogress
 	#######################################################
 	# starts the video download to all the connected tablets
 	#######################################################
 	def download(self):
+		import pty
+		pty.fork()
 		io = self.io()
 		event = io.get('event')
-		# self.str().pout("")
-		if not event:
-			return {"success":False}
 		try:
 			# event = "2013-03-14_14-51-07_HMan_VMan_LBar"
+			if not event:
+				return {"success":False}
 			# make sure it has no : or / \ in the name
 			if('/' in event or '\\' in event):
-				return {"success":False}
+				return {"success":False}#invalid name
 			#command to start the download
-			# os.system("pwd > "+self.wwwroot+"test.txt")
+			# create a named pipe for reading the idevcopy output
+			# make sure the pipe doesn't exist already
+			pipeName = "/tmp/pxpidevprogress"
+			if(os.path.exists(pipeName)):
+				os.system("rm -f "+pipeName)
+			# kill any previous download processes going on
+			if(self.disk().psOn("idevcopy")):
+				cmd = "kill `ps ax | grep idevcopy | grep 'grep' -v | awk '{print $1}'` > /dev/null &"
+				os.system(cmd)
 			cmd = self.wwwroot+"_db/idevcopy "+event+" "+self.wwwroot+event+'/video/main.mp4 > /dev/null &'
-			#successful command will return 0
-			return {"success":not os.system(cmd)}
+			#successful command will return 0x
+			# print cmd
+			# os.spawnl(os.P_NOWAIT,self.wwwroot+"_db/idevcopy","/",event,self.wwwroot+event+'/video/main.mp4','>','/dev/null')
+			os.system(cmd)
+			return {"success":True}
 		except Exception as e:
 			import sys 
 			return {"success":False,"line":sys.exc_traceback.tb_lineno,"msg":e}
 	#end download
+	#######################################################
+	# easter egg - prints the comparison features list 
+	#######################################################
+	def egg(self):
+		r = """
+		<div class="col_3">
+			<!-- left-most side -->
+		</div>
+		<div class="col_6">
+			<!-- center  -->
+			<div class="row bold border-bottom large">
+				<div class="col_6 bold">feature</div>
+				<div class="col_3">NEW</div>
+				<div class="col_3">OLD</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">UI/UX response speed</div>
+				<div class="col_3">fast</div>
+				<div class="col_3">slow</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">App updates</div>
+				<div class="col_3">simple</div>
+				<div class="col_3">complex</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">UI design</div>
+				<div class="col_3">clean</div>
+				<div class="col_3">poor</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Encoder installation time</div>
+				<div class="col_3">10 minutes (automatic)</div>
+				<div class="col_3">2 - 4 hours (manual)</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Encode start time</div>
+				<div class="col_3">2-4 seconds</div>
+				<div class="col_3">2 minutes</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Post-encode delay</div>
+				<div class="col_3">2-4 seconds</div>
+				<div class="col_3">2-5 minutes</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Encoder computer access</div>
+				<div class="col_3">not required</div>
+				<div class="col_3">required</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Video source identification</div>
+				<div class="col_3">automatic</div>
+				<div class="col_3">manual</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Accidental camera disconnect</div>
+				<div class="col_3">handled - resume</div>
+				<div class="col_3">not handled - content lost</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">3hr-game file size</div>
+				<div class="col_3">3gb</div>
+				<div class="col_3">4-5gb</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Discrete clip export</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Automatic encoder recognition</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Audio</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Timeline scrubbing</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Pause encoding</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Pinch-to-zoom gestures</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Airplay</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Slow motion playback</div>
+				<div class="col_3 green large"><i class="icon-ok"></i></div>
+				<div class="col_3 red large"><i class="icon-remove"></i></div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Source code security</div>
+				<div class="col_3">PYC - no access</div>
+				<div class="col_3">PHP - open source</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Tag thumbnail delay</div>
+				<div class="col_3">2-3 seconds</div>
+				<div class="col_3">30 seconds</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Tag accuracy</div>
+				<div class="col_3">0-1 seconds</div>
+				<div class="col_3">*10-30 seconds</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Live video delay</div>
+				<div class="col_3">5-6 seconds</div>
+				<div class="col_3">12 seconds</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">OS Compatibility</div>
+				<div class="col_3">OSX, Windows</div>
+				<div class="col_3">Windows</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">System cost</div>
+				<div class="col_3">$1500</div>
+				<div class="col_3">$4000</div>
+			</div>
+			* on 1s HLS fragment size
+		</div>
+		<div class="col_3">
+			<!-- right-most side -->
+		</div>
+		"""
+		return r
+	#end egg
+	#######################################################
+	# removes an event (sets deleted = 1)
+	# delets all content associated with it
+	#######################################################
+	def evtdelete(self):
+		import os
+		io = self.io()
+		folder = io.get('name') #name of the folder containing the content
+		event  = io.get('event') #hid of the event  stored in the database
+		if((not event) or (len(event)<5) or ('\\' in event) or ('/' in event)):
+			#either event was not specified or there's invalid characters in the name 
+			#e.g. user tried to get clever by deleting other directories
+			return {"success":False,"msg":"Invalid event"}
+		# remove the event from the database
+		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+		sql = "UPDATE `events` SET `deleted`=1 WHERE `hid` LIKE ?"
+		db.query(sql,(event,))
+		db.close()
+		# remove the content
+		success = True
+		if(os.path.exists(self.wwwroot+folder)):
+			success = not os.system("rm -r "+self.wwwroot+folder)
+		return {"Success":success}
+	#end evtdelete
 	#######################################################
 	# returns encoder status as a string, 
 	# either json or plain text
@@ -118,7 +295,7 @@ class pxp(m.MVC):
 		import os
 		msg = ""
 		try:
-			rez = os.system(self.wwwroot+"_db/encpause >/dev/null &")
+			rez = os.system(self.wwwroot+"_db/encpause ")
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_pause",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 		except Exception as e:
@@ -134,7 +311,7 @@ class pxp(m.MVC):
 		import os
 		msg = ""
 		try:
-			rez = os.system(self.wwwroot+"_db/encresume >/dev/null &")
+			rez = os.system(self.wwwroot+"_db/encresume ")
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_resume",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 		except Exception as e:
@@ -150,6 +327,7 @@ class pxp(m.MVC):
 		import getpass
 		msg = ""
 		try:
+			self.encstop()
 			rez = os.system("sudo shutdown -h now")
 		except Exception as e:
 			rez = False
@@ -207,7 +385,7 @@ class pxp(m.MVC):
 		from time import sleep
 		msg = ""
 		try:
-			rez = os.system(self.wwwroot+"_db/encstop >/dev/null &")
+			rez = os.system(self.wwwroot+"_db/encstop")
 			os.system("/bin/kill `ps ax | grep mediastreamsegmenter | grep 'grep' -v | awk '{print $1}'`")
 			#send 2 kill signals to ffmpeg
 			os.system("/bin/kill `ps ax | grep ffmpeg | grep 'grep' -v | awk '{print $1}'`")
@@ -336,7 +514,7 @@ class pxp(m.MVC):
 		del jp['event']
 		# go through all json parameters (tag mod's) and check 
 		# which modifications should be applied
-		bookmark = False;
+		bookmark = False
 		for mod in jp:
 			#modifying starttime (extending the beginning of the tag)
 			if (mod=='starttime' and float(jp[mod])<0):
@@ -349,7 +527,7 @@ class pxp(m.MVC):
 				#any other modifications, just add them to the sql query
 				sqlInsert.append("`"+mod+"`=?")
 				params +=(jp[mod],)
-				bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']==1))
+				bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']=='1'))
 		#end for mod in jp
 		if len(sqlInsert)<1:#nothing was specified 
 			return {'success':False}
@@ -612,7 +790,6 @@ class pxp(m.MVC):
 				# get the tag information
 				tagOut = self._tagFormat(event=t['event'], user=t['user'], tagID=lastID, db=db)	
 				t['tagtime'] = tagOut['time']
-				# self.str().pout("zz")
 				vidSegmfileName = self._thumbName(t['tagtime'])
 				#create a tag image if it doesn't exist already
 				pathToEvent = self.wwwroot+t['event']+'/'
@@ -687,7 +864,6 @@ class pxp(m.MVC):
 		sql = "SELECT starttime, duration FROM tags WHERE id=?"
 		db.query(sql,(tagid,))
 		row = db.getrow()
-		self.str().pout("")
 		db.close()
 		startTime = float(row[0])
 		endTime   = float(row[0])+float(row[1])
@@ -696,17 +872,17 @@ class pxp(m.MVC):
 		vidFiles = ""
 		#select .ts files that should be merged
 		for i in range(int(strFile),int(endFile)):
-			vidFiles += self.wwwroot+event+"/video/segm"+str(i)+".ts "
-		# concatenate the videos		
-		bigTsFile = self.wwwroot+event+"/video/vid"+tagid+".ts" #temporary .ts output file
-		bigMP4File= self.wwwroot+event+"/video/vid_"+tagid+".mp4" #converted mp4 file
+			vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
+		# concatenate the videos				
+		bigTsFile = self.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file
+		bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file
 		cmd = "/bin/cat "+vidFiles+">"+bigTsFile
 		os.system(cmd)
 		# convert to mp4
 		#using ffmpeg
 		# cmd = "/usr/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
 		#using handbrake
-		cmd = "/usr/sbin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File
+		cmd = "/usr/bin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File		
 		os.system(cmd)
 		#remove the temporary ts file
 		os.remove(bigTsFile)
@@ -769,26 +945,27 @@ class pxp(m.MVC):
 	#returns encoder state (0 - off, 1 - live, 2 - paused)
 	#######################################################
 	def _encState(self):
-		import socket
-		UDP_IP = "127.0.0.1"
-		UDP_PORT = 2224
-		sock = socket.socket(socket.AF_INET, # Internet
-		                     socket.SOCK_DGRAM) # UDP
-		sock.settimeout(0.5) #wait for 0.2 seconds - if there is no response, server is not streaming
-		#bind to the port and listen
-		try:
-			sock.bind((UDP_IP, UDP_PORT))
-			data, addr = sock.recvfrom(1)
-			data = int(data)
-		except Exception as e:
-			#failed to bind to that port
-			data = 0
-		#close the socket
-		try:
-			sock.close()
-		except:
-			pass		
-		return data
+		return int(self.disk().sockRead(udpPort=2224))
+		# import socket
+		# UDP_IP = "127.0.0.1"
+		# UDP_PORT = 2224
+		# sock = socket.socket(socket.AF_INET, # Internet
+		#                      socket.SOCK_DGRAM) # UDP
+		# sock.settimeout(0.5) #wait for 0.2 seconds - if there is no response, server is not streaming
+		# #bind to the port and listen
+		# try:
+		# 	sock.bind((UDP_IP, UDP_PORT))
+		# 	data, addr = sock.recvfrom(1)
+		# 	data = int(data)
+		# except Exception as e:
+		# 	#failed to bind to that port
+		# 	data = 0
+		# #close the socket
+		# try:
+		# 	sock.close()
+		# except:
+		# 	pass		
+		# return data
 	#end encState
 	#######################################################
 	#return salted hash sha256 of the password
@@ -1180,8 +1357,8 @@ class pxp(m.MVC):
 			#format tags for output
 			tagsOut = {}
 			for tag in tags:
-				if (not(int(tag['type'])==0 or int(tag['type'])==4)):
-					#only event names and telestrations should be sent
+				if (int(tag['type'])&1):
+					#only even type tags are sent (normal, telestration, period/half/zone/line end tags)
 					continue
 				if(str(tag['time'])=='nan'):
 					tag['time']=0
@@ -1243,6 +1420,10 @@ class pxp(m.MVC):
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(tag['time'])))
 		tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
 		tag['own'] = tag['user']==user
+		if(event=='live' and os.path.exists(self.wwwroot+event+'/evt.txt')):
+			tag['event'] = self.disk().file_get_contents(self.wwwroot+event+'/evt.txt').strip()
+		else:
+			tag['event'] = event
 		#set deleted attribute for a tag
 		if not 'deleted' in tag:
 			tag['deleted']=0
