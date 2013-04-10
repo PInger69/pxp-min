@@ -288,7 +288,7 @@ class MVC():
 		from imp import load_compiled as lp
 		class c_loader():
 			def module(self,modname):
-				# return ls(modname,"_app/_m/"+modname+".py")
+				# return lp(modname,"_app/_m/"+modname+".pyc")
 				return ls(modname,"_app/_m/"+modname+".py")
 			def view(self,viewname):
 				pass

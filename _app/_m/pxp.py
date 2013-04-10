@@ -1,6 +1,7 @@
 from imp import load_source as ls
 from imp import load_compiled as lp
 import os, json
+# m = lp("MVC","_m/mvc.pyc")
 m = ls("MVC","_m/mvc.py")
 
 class pxp(m.MVC):
@@ -271,7 +272,7 @@ class pxp(m.MVC):
 	#end evtdelete
 	#######################################################
 	# returns encoder status as a string, 
-	# either json or plain text
+	# either json or plain text (depending on textOnly)
 	#######################################################
 	def encoderstatus(self,textOnly=True):
 		state = self._encState()
@@ -328,11 +329,11 @@ class pxp(m.MVC):
 		msg = ""
 		try:
 			self.encstop()
-			rez = os.system("sudo shutdown -h now")
+			rez = os.system("sudo /sbin/shutdown -h now")
 		except Exception as e:
 			rez = False
 		# rez = False
-		return {"success":not rez}
+		return {"success":not rez, "msg":rez}
 	#end encresume
 	
 	#######################################################
@@ -354,6 +355,8 @@ class pxp(m.MVC):
 			hmteam = io.get('hmteam')
 			vsteam = io.get('vsteam')
 			league = io.get('league')
+			if not (hmteam and vsteam and league):
+				return {'success':False}
 			# start the capture
 			rez = os.system(self.wwwroot+"_db/encstart >/dev/null &")
 			# add entry to the database that the encoding has started
@@ -453,8 +456,7 @@ class pxp(m.MVC):
 			if (not res==1):
 				return {"success":False, "msg":res}
 			# activation was successful, perform a sync
-		#sync with every login
-		self._syncEnc(encEm,encPs)
+			self._syncEnc(encEm,encPs)
 		#if not inited
 
 		# check if user is in the database
@@ -525,9 +527,9 @@ class pxp(m.MVC):
 				params +=(3,)
 			else:
 				#any other modifications, just add them to the sql query
+				bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']=='1'))
 				sqlInsert.append("`"+mod+"`=?")
 				params +=(jp[mod],)
-				bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']=='1'))
 		#end for mod in jp
 		if len(sqlInsert)<1:#nothing was specified 
 			return {'success':False}
@@ -538,17 +540,19 @@ class pxp(m.MVC):
 		#make sure the database exists
 		if(not os.path.exists(self.wwwroot+event+'/pxp.db')):
 			return {'success':False}
-		#perform the update
 		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
-		# return {"sq":sql,"i":params}
+		# if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyon else to get this file
+			#update the tag info in the database
 		success = db.query(sql,params) and db.numrows()>0
-		if success:
+		# else:
+			# success = True
+		if success and not bookmark:
 			#add an entry to the event log that tag was updated or deleted
 			success = self._logSql(ltype='mod_tags',lid=tid,uid=user,db=db)
 		if success:
-			sql = "SELECT * FROM `tags` WHERE `id`=?"
-			db.query(sql,(tid,))
-			tag = db.getasc()
+			# sql = "SELECT * FROM `tags` WHERE `id`=?"
+			# db.query(sql,(tid,))
+			# tag = db.getasc()
 			db.close() #close db here because next statement will return
 			if (bookmark):
 				# user wants to make a bookmark - extract the video
@@ -758,30 +762,50 @@ class pxp(m.MVC):
 
 			if (t['type']&1) : #odd types are start of a new line/zone/etc. - return the last line/zone/etc. that just ended
 				tagTypes = {1:'line',5:'player',7:'period',9:'strength'}
+				# if the tag type is line then the lines can be offensive/defensive, select that
+				if(t['type']==1 and t['line'][:4]=='line'):
+					#this is a line tag - end previous line (e.g. if this is line_f then end the last line_f, not line_d)
+					tagTypeString = t['line'][:6]+'%'
+				else:
+					tagTypeString = '%'
 				# get the last active line/player/period, etc.
-				sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'current_"+tagTypes[t['type']]+"' ORDER BY `logID` DESC"
-				db.qstr(sql)
+				sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'current_"+tagTypes[t['type']]+"' AND `id` LIKE ? ORDER BY `logID` DESC"
+				db.query(sql,(tagTypeString,))
+
 				rows = db.getrows()
 				if(len(rows)>0):#previous line/zone/etc was specified
 					lastEntry = rows[0][0]
 					# get id of the tag containing that entry
-					sql = "SELECT IFNULL(MAX(`id`),0) FROM `tags` WHERE `"+tagTypes[t['type']]+"` LIKE ?"
-					db.query(sql,(lastEntry,))
-					lastID = db.getrow()
-					lastID = lastID[0]
+					sql = "SELECT IFNULL(MAX(`id`),0) FROM `tags` WHERE `"+tagTypes[t['type']]+"` LIKE ? AND `type`=?"
+					db.query(sql,(lastEntry,t['type']+1))
+					lastID = db.getrows()
+					if(len(lastID)>0):
+						lastID = lastID[0][0]
+					else:
+						lastID = 0
 				else:#this is a first time tagging line/zone/etc
 					lastID = 0
 				# set new line/zone/period/etc.
 				success = success and self._logSql(ltype="current_"+tagTypes[t['type']],lid=t[tagTypes[t['type']]],uid=t['user'],db=db)
 				# return {"success":success}
-			#if type & 1
+			#if odd type
 			if(success):
 				# get all the details about the tag that was created (or last line/period/etc. if a new line/period was started)
 				db.commit()
 			else:
 				db.rollback()
-			
-			if (success and lastID): 
+			# cleanup
+			if(t['type'] & 1):
+				# remove nonsensical tags (tags with short duration)
+				# make sure not to delete current line/period/strength, etc. (odd type tags)
+				sql = "DELETE FROM `tags` WHERE (`duration`<5) AND ((`type` & 1) = 0) AND (NOT (`type`=4))"
+				db.qstr(sql)
+			#if type is odd
+
+			# check if the tag that was just created wasn't deleted in the cleanup
+			sql = "SELECT * FROM `tags` WHERE `id`=?"
+			db.query(sql,(lastID,))
+			if(success and lastID and len(db.getrows())>0): 
 				#create a thumbnail for the tag video - only do this when a tag is created
 				#i.e. tagStart is not technically a "tag" - wait till the Stop is set, then make a thumbnail
 				#this only happens when it's a first 'start' tag - since every other 'start' tag will 
@@ -803,10 +827,10 @@ class pxp(m.MVC):
 					sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
 					if sec<0: #sanity check - should never happen
 						sec = 0
-					self._mkThumb(vidFile, imgFile, sec)
+					self._mkThumb(vidFile, imgFile, sec)				
 				#log that a tag was created
 				success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=t['user'],db=db)
-			#if not t['type']==2
+			#if lastID
 			if not tagOut: #tag will not be returned - happens when line/zone/etc. is tagged for the first time
 				tagOut = {"success":success}
 			return tagOut
@@ -858,6 +882,15 @@ class pxp(m.MVC):
 	# extracts video clip and saves it as mp4 file
 	#######################################################
 	def _bookmark(self, tagid, event):
+		from random import randrange
+		import glob
+		# the process is as follows:
+		# 1) grab .ts files that encompass the tag duration
+		# 2) concatenate them
+		# 3) resize and convert to 540xHHH (keeping aspect ratio) mp4 file
+		# 4) convert it back to .ts file 
+		# 5) concatenate the 540x ad and the 540x video clip into one .ts
+		# 6) convert the resulting .ts into mp4 file
 		# get tag ID
 		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 		# get the time from the database
@@ -869,22 +902,54 @@ class pxp(m.MVC):
 		endTime   = float(row[0])+float(row[1])
 		strFile = self._thumbName(startTime,number=True) #index of the starting .ts file
 		endFile = self._thumbName(endTime,number=True) #index of the ending .ts file
-		vidFiles = ""
+
+		bigTsFile = self.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file containing all .ts segments 
+		bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
+		tempTs = self.wwwroot+event+"/video/int_"+str(tagid)+".ts"#TS file containing resized video clip
+
+
+		vidFiles = "" #small .ts files to concatenate
 		#select .ts files that should be merged
 		for i in range(int(strFile),int(endFile)):
 			vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
-		# concatenate the videos				
-		bigTsFile = self.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file
-		bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file
+		if (os.path.exists(bigMP4File)):
+			return True # no need to re-create bookmarks that already exist
+
+		# concatenate the videos
 		cmd = "/bin/cat "+vidFiles+">"+bigTsFile
 		os.system(cmd)
 		# convert to mp4
 		#using ffmpeg
 		# cmd = "/usr/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
 		#using handbrake
-		cmd = "/usr/bin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File		
+		cmd = "/usr/bin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File
 		os.system(cmd)
 		#remove the temporary ts file
+		os.remove(bigTsFile)
+
+		# randomy select an ad to add to the video
+		# this list contains all the ads videos in the directory
+		adFiles = glob.glob(self.wwwroot+"/ads/*.ts")
+		if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
+			return True
+		adFile = adFiles[randrange(0,len(adFiles)-1)] #TS file containing small size ad video (random ad)
+
+
+		#convert mp4 back to .ts for merging with an ad
+		cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 3000k -f mpegts "+tempTs #use 3Mbps bitrate to ensure high ad quality
+		# self.str().pout(cmd)
+		os.system(cmd)
+		# remove the mp4
+		os.remove(bigMP4File)
+		# merge the ad and the video file
+		cmd = "/bin/cat "+adFile+" "+tempTs+" >"+bigTsFile
+		os.system(cmd)
+		# remove temporary ts:
+		os.remove(tempTs)
+		# convert the result to an mp4 file again:
+		cmd = "/usr/bin/handbrake -i "+bigTsFile+" -o "+bigMP4File
+		os.system(cmd)
+		# remove the temporary ts file
 		os.remove(bigTsFile)
 		return True
 	#end bookmark
@@ -1036,38 +1101,47 @@ class pxp(m.MVC):
 	#returns a list of events in the system
 	#######################################################
 	def _listEvents(self):
-		sql = "SELECT events.*, strftime('%Y-%m-%d_%H-%M-%S',`date`) AS `dateFmt` FROM `events` WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 ORDER BY `date` DESC"
-		if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
-			return False
-		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
-		db.qstr(sql)
-		result = db.getasc()
-		# go through events and check if they have videos
-		i = 0
-		# get the name of the live event
-		if(os.path.exists(self.wwwroot+'live/evt.txt')):
-			live = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
-		else:
-			live = ""
-		for row in result:
-			# event name
-			evtName = row['dateFmt']+'_H'+row['homeTeam'][:3]+'_V'+row['visitTeam'][:3]+'_L'+row['league'][:3]
-			evtDir = self.wwwroot+evtName
-			result[i]['name']=evtName
-			# check if there is a streaming file in there
-			if(os.path.exists(evtDir+'/video/list.m3u8')):
-				result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/list.m3u8'
-			# check if the video file is there
-			if(os.path.exists(evtDir+'/video/main.mp4')):
-				#it is - provide a path to it
-				result[i]['mp4']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
-				result[i]['vid_size']=self._sizeFmt(os.stat(evtDir+"/video/main.mp4").st_size)
-			# check if this is a live event
-			if(evtName==live):
-				result[i]['live']='http://'+os.environ['HTTP_HOST']+'/events/live/video/list.m3u8'
-			i+=1
-		db.close()
-		return result
+		try:
+			sql = "SELECT IFNULL(homeTeam,'---') AS `homeTeam`, IFNULL(visitTeam,'---') AS `visitTeam`, IFNULL(league,'---') AS `league`, IFNULL(`date`,'2000-01-01') AS `date`, IFNULL(`hid`,'000') AS `hid`, strftime('%Y-%m-%d_%H-%M-%S',`date`) AS `dateFmt` FROM `events` WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 ORDER BY `date` DESC"
+			if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
+				return False
+			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+			db.qstr(sql)
+			result = db.getasc()
+			# go through events and check if they have videos
+			i = 0
+			# get the name of the live event
+			if(os.path.exists(self.wwwroot+'live/evt.txt')):
+				live = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
+			else:
+				live = ""
+			# self.str().pout("")
+			for row in result:
+				# event name
+				# print row	
+				evtName = row['dateFmt']+'_H'+row['homeTeam'][:3]+'_V'+row['visitTeam'][:3]+'_L'+row['league'][:3]
+				evtDir = self.wwwroot+evtName
+				result[i]['name']=evtName
+				# check if there is a streaming file in there
+				if(os.path.exists(evtDir+'/video/list.m3u8')):
+					result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/list.m3u8'
+				# check if the video file is there
+				if(os.path.exists(evtDir+'/video/main.mp4')):
+					#it is - provide a path to it
+					result[i]['mp4']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
+					result[i]['vid_size']=self._sizeFmt(os.stat(evtDir+"/video/main.mp4").st_size)
+				# check if this is a live event
+				if(evtName==live):
+					result[i]['live']='http://'+os.environ['HTTP_HOST']+'/events/live/video/list.m3u8'
+				i+=1
+			db.close()
+			return result
+		except Exception as e:
+			import sys
+			self.str().pout("")
+			print e
+			print sys.exc_traceback.tb_lineno
+			return {"msg":str(e),"line":str(sys.exc_traceback.tb_lineno),"fct":"listEvents"}
 	#end listevents
 	#######################################################
 	#returns a list of teams in the system
@@ -1431,7 +1505,7 @@ class pxp(m.MVC):
 		tag['success'] = True
 		if(int(tag['type'])==4): #add telestration url for telestration tags only
 			tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
-		if(int(tag['bookmark'])):
+		if(os.path.exists(self.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
 			tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
 		if('hid' in tag):
 			del(tag['hid'])

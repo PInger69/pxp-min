@@ -90,7 +90,22 @@ function processQueue(itemDone, itemError) {
 	if(itemDone==undefined) itemDone=false;
 	if(itemError==undefined) itemError=false;
 	if(itemDone) { //just finished downloading an element - remove the progress bar
-		dlQueue[0].html(itemError?(itemError==1?'not enough space':'error'):'<i class="icon-ok green large"></i>'); //either an error occurred or the progress has finished - put the status instead of the progress bar
+		switch(itemError){
+			case 1:
+				status = 'not enough space';
+			break;
+			case 4:
+				status = 'connect iPad via USB';
+			break;
+			case false:
+			case 0:
+				status = '<i class="icon-ok green large"></i>';
+			break;
+			default: 
+				status='error ('+itemError+')';
+			break;
+		}
+		dlQueue[0].html(status); //either an error occurred or the progress has finished - put the status instead of the progress bar
 		dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
 	}
 	if(dlQueue.length<=0) {//no more items in the queue - all downloads are complete

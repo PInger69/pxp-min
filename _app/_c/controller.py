@@ -1,8 +1,9 @@
 from imp import load_source as ls
 from imp import load_compiled as lp
 m = ls("MVC","_m/mvc.py")
+# m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
-	version = 0.5
+	version = 0.71
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -16,50 +17,55 @@ class Controller(m.MVC):
 	#this function is executed first
 	def _run(self):
 		# get the method name that the user is trying to access
-		self.p = self.loader().module("pxp").pxp()
-		self.sess = self.session(expires=24*60*60,cookie_path="/")
-		sess = self.sess
-		if (not 'email' in sess.data):
-			sess.data['email']=False
-		if ('user' in sess.data):
-			# someone is logged in - set the session variable
-			self.d['user'] = sess.data['user']
-			self.d['email']= sess.data['email']
-		else:
-			# nobody is logged in
-			self.d['user'] = False
-			self.d['email'] = False
-		functionName = self.uri().segment(1,"home")
-		if (functionName[:1]=="_"): # methods starting with _ are private - user cannot access them
-			functionName = ""
-		elif (functionName=="ajax"): #call method from the pxp model
-			functionName = self.uri().segment(2,"")
-			fn = getattr(self.p, functionName, None)
-		else:#load view
-			fn = getattr(self, functionName, None)
-			# fn = getattr(self.p, functionName, None)		
-			if (not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login')):
-				#user is not logged in
-				# redirect to login
-				sess.data['uri'] = functionName
-				print "Location: login\n"
-				# make sure he does not proceed any further
-				return		
-		if(functionName=='login' and sess and ('user' in sess.data) and sess.data['user']):
-			#user just logged in, redirect him to home
-			if('uri' in sess.data):
-				print "Location: "+sess.data['uri']+"\n"
+		try:
+			self.p = self.loader().module("pxp").pxp()
+			self.sess = self.session(expires=24*60*60,cookie_path="/")
+			sess = self.sess
+			if (not 'email' in sess.data):
+				sess.data['email']=False
+			if ('user' in sess.data):
+				# someone is logged in - set the session variable
+				self.d['user'] = sess.data['user']
+				self.d['email']= sess.data['email']
 			else:
-				print "Location: home\n"
-			return
-		# check if it exists
-		if callable(fn):# it does - go to that method
-			if(functionName=='login'):
-				self.str().jout(fn(sess))
-			else:
-				self.str().jout(fn())
-		else: # the method does not exist - try to find a page with this name
-			self.page(functionName)
+				# nobody is logged in
+				self.d['user'] = False
+				self.d['email'] = False
+			functionName = self.uri().segment(1,"home")
+			if (functionName[:1]=="_"): # methods starting with _ are private - user cannot access them
+				functionName = ""
+			elif (functionName=="ajax"): #call method from the pxp model
+				functionName = self.uri().segment(2,"")
+				fn = getattr(self.p, functionName, None)
+			else:#load view
+				fn = getattr(self, functionName, None)
+				# fn = getattr(self.p, functionName, None)		
+				if (not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login')):
+					#user is not logged in
+					# redirect to login
+					sess.data['uri'] = functionName
+					print "Location: login\n"
+					# make sure he does not proceed any further
+					return		
+			if(functionName=='login' and sess and ('user' in sess.data) and sess.data['user']):
+				#user just logged in, redirect him to home
+				if('uri' in sess.data):
+					print "Location: "+sess.data['uri']+"\n"
+				else:
+					print "Location: home\n"
+				return
+			# check if it exists
+			if callable(fn):# it does - go to that method
+				if(functionName=='login'):
+					self.str().jout(fn(sess))
+				else:
+					self.str().jout(fn())
+			else: # the method does not exist - try to find a page with this name
+				self.page(functionName)
+		except Exception as e:
+			import sys, inspect
+			self.str().jout({"msg":str(e),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run"})
+			# print inspect.trace()
 		# db = self.dbsqlite(self.wwwroot+"live/pxp.db")
 		# sql = "INSERT INTO tags (user, player) VALUES('zzz', '9')"
 		# db.qstr(sql)
