@@ -47,6 +47,9 @@
 			<button class="medium blue col_4 ajaxbtn" action="encshutdown">
 				<span class="icon-off"></span> Shut down
 			</button>
+			<button class="medium orange col_4 ajaxbtn" action="sync2cloud">
+				<span class="icon-cloud"></span> Sync encoder
+			</button>
 @end
 @if encStatus=='live':
 			<button class="medium orange col_4 ajaxbtn" action="encpause">
@@ -72,10 +75,15 @@ function fOnLoad(){
 	$.ajax({
 		url: 'ajax/encoderstatus',
 		success: function(data, textStatus, xhr) {
-		encStatus = eval("("+data+")");
-			// get the camera status
-			ajaxCamStatus();
-		}
+			// try{
+				encStatus = eval("("+data+")");
+				// get the camera status
+				ajaxCamStatus();
+			// }
+			// catch(e){
+
+			// }
+		}//success
 	});
 }
 </script>

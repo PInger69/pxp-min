@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 m = ls("MVC","_m/mvc.py")
 # m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
-	version = 0.71
+	version = 0.72
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -55,8 +55,8 @@ class Controller(m.MVC):
 					print "Location: home\n"
 				return
 			# check if it exists
-			if callable(fn):# it does - go to that method
-				if(functionName=='login'):
+			if callable(fn):# it exists - go to that method
+				if(functionName=='login' or functionName=='sync2cloud'):
 					self.str().jout(fn(sess))
 				else:
 					self.str().jout(fn())

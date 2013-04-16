@@ -22,7 +22,7 @@ function start(){
 		$cmd = "kill $pid";
 		shell_exec($cmd);
 	}
-	$cmd = "/var/www/html/events/_db/idevcopy ".$event." /var/www/html/events/".$event.'/video/main.mp4 >/dev/null &';
+	$cmd = "/var/www/html/events/_db/idevcopy ".$event." /var/www/html/events/".$event.' >/dev/null &';
 	#successful command will return 0x
 	# print cmd
 	# os.spawnl(os.P_NOWAIT,self.wwwroot+"_db/idevcopy","/",event,self.wwwroot+event+'/video/main.mp4','>','/dev/null')

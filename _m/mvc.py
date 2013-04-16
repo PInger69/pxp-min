@@ -38,21 +38,24 @@ class MVC():
 		   
 		    #returns all rows of a query as a dictionary (associative array)
 		    def getasc(self):
-		        if not self.c:
-		            return False        
-		        rows = []
-		        #get column names
-		        cols = []
-		        for cn in self.c.description:
-		            cols.append(cn[0])
-		        #get all rows
-		        for row in self.getrows():
-		            entry = {}
-		            idx = 0
-		            for cn in cols:                
-		                entry[cn] = row[idx]
-		                idx += 1
-		            rows.append(entry)
+		    	try:
+			        if not self.c:
+			            return False        
+			        rows = []
+			        #get column names
+			        cols = []
+			        for cn in self.c.description:
+			            cols.append(cn[0])
+			        #get all rows
+			        for row in self.getrows():
+			            entry = {}
+			            idx = 0
+			            for cn in cols:                
+			                entry[cn] = row[idx]
+			                idx += 1
+			            rows.append(entry)
+		        except:
+		        	pass
 		        return rows
 		    #end getasc()
 		   
@@ -193,6 +196,7 @@ class MVC():
 					sock.bind((udpAddr, udpPort))
 					data, addr = sock.recvfrom(sizeToRead)
 				except Exception as e:
+					# print e
 					#failed to bind to that port
 					data = 0
 				#close the socket

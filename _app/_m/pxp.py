@@ -69,35 +69,89 @@ class pxp(m.MVC):
 		return {"progress":int(totalPercent/numDevices),"status":copyStatus}
 	#end dlprogress
 	#######################################################
-	# starts the video download to all the connected tablets
+	# prepares the download - converts tags to a plist
 	#######################################################
-	def download(self):
+	def prepdown(self):
 		import pty
-		pty.fork()
+		# pty.fork()
 		io = self.io()
 		event = io.get('event')
 		try:
-			# event = "2013-03-14_14-51-07_HMan_VMan_LBar"
+			# # remove old plist if it exists
+			# if(os.path.exists(self.wwwroot+event+'/tags.plist')):
+			# 	os.remove(self.wwwroot+event+'/tags.plist')
 			if not event:
 				return {"success":False}
 			# make sure it has no : or / \ in the name
 			if('/' in event or '\\' in event):
 				return {"success":False}#invalid name
-			#command to start the download
-			# create a named pipe for reading the idevcopy output
-			# make sure the pipe doesn't exist already
-			pipeName = "/tmp/pxpidevprogress"
-			if(os.path.exists(pipeName)):
-				os.system("rm -f "+pipeName)
-			# kill any previous download processes going on
-			if(self.disk().psOn("idevcopy")):
-				cmd = "kill `ps ax | grep idevcopy | grep 'grep' -v | awk '{print $1}'` > /dev/null &"
-				os.system(cmd)
-			cmd = self.wwwroot+"_db/idevcopy "+event+" "+self.wwwroot+event+'/video/main.mp4 > /dev/null &'
-			#successful command will return 0x
-			# print cmd
-			# os.spawnl(os.P_NOWAIT,self.wwwroot+"_db/idevcopy","/",event,self.wwwroot+event+'/video/main.mp4','>','/dev/null')
-			os.system(cmd)
+			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
+			db.qstr('SELECT * FROM `tags`')
+			# self.str().pout("")
+			xmlOutput = '<?xml version="1.0" encoding="UTF-8"?>\n'+\
+						'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'+\
+						'<plist version="1.0">\n<dict>\n'
+			# types of fields stored in xml .plist
+			# since fields are declared as e.g.: <key>fieldName</key> <string>fieldvalue</string>
+			fieldTypes = {'bookmark':'integer',	'coachpick':'integer',
+						'colour':'string', 'comment':'string',
+						'displaytime':'string',	'duration':'string',
+						'event':'string', 'id':'integer',
+						'name':'string', 'playerpick':'integer',
+						'rating':'integer', 'starttime':'real',
+						'time':'real', 'type':'integer',
+						'url':'string',	'user':'string', 'teleurl':'string'
+						}
+			# get each tag, format it and output to xml
+			for t in db.getasc():
+				# format the tag (get thumbnail image, telestration url, etc.)
+				tag = self._tagFormat(event=event,tag=t)
+				# add tag key
+				xmlOutput+='\t<key>'+str(tag['id'])+'</key>\n'
+				# add tag entries
+				xmlOutput+='\t<dict>\n'
+				# get standard fields into the plist
+				# go through each field and add it in the proper format
+				for field in tag:
+					if ((field in fieldTypes) and (field in tag)):
+						xmlOutput+='\t\t<key>'+field+'</key>\n'
+						xmlOutput+='\t\t<'+fieldTypes[field]+'>'+str(tag[field])+'</'+fieldTypes[field]+'>\n'
+				# add unique fields into the plist
+				xmlOutput+='\t\t<key>deleted</key>\n'
+				xmlOutput+='\t\t<'+str(tag['deleted']).lower()+'/>\n'
+				xmlOutput+='\t\t<key>own</key>\n'
+				xmlOutput+='\t\t<'+str(tag['own']).lower()+'/>\n'
+				# output lines
+				xmlOutput+='\t\t<key>line</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for line in tag['line']:
+					xmlOutput+='\t\t\t<string>'+line+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# output period
+				xmlOutput+='\t\t<key>period</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for period in tag['period']:
+					xmlOutput+='\t\t\t<string>'+period+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# output strength
+				xmlOutput+='\t\t<key>strength</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for strength in tag['strength']:
+					xmlOutput+='\t\t\t<string>'+strength+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# output player
+				xmlOutput+='\t\t<key>player</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for player in tag['player']:
+					xmlOutput+='\t\t\t<string>'+player+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# finish tag
+				xmlOutput+='\t</dict>\n'
+			# finish the xml
+			xmlOutput += '</dict>\n</plist>'
+			db.close()
+			# plist file is ready, write it to the folder:
+			self.disk().file_set_contents(self.wwwroot+event+'/tags.plist',xmlOutput)
 			return {"success":True}
 		except Exception as e:
 			import sys 
@@ -280,15 +334,17 @@ class pxp(m.MVC):
 			status = "live"
 		elif(state==2):
 			status = "paused"
-		elif(os.path.exists(self.wwwroot+'live/video/list.m3u8')):
-			status = "vod"
+		# elif(os.path.exists(self.wwwroot+'live/video/list.m3u8')): #no need for vod mode 
+		# 	status = "vod"
 		else:
 			status = "off"
 		# status = "live"
 		if (textOnly):
 			return status
-		return {"status":status}
+		return {"status":status,"code":state}
 	#end encoderstatus
+	def encoderstatjson(self):
+		return self.encoderstatus(textOnly = False)
 	#######################################################
 	#pauses a live encode
 	#######################################################
@@ -468,8 +524,14 @@ class pxp(m.MVC):
 			return {"success":False,"msg":"Invalid email or password"}
 		# log him in
 		usrData = rows[0]
-		sess.data['user']=usrData[0]
+		sess.data['user']=usrData[0] #user hid
+		# store plain text email in the session (to display logged in user)
 		sess.data['email']=email
+		# encrypted email
+		sess.data['ee']=encEm
+		# encrypted password
+		sess.data['ep']=encPs
+
 		# return {io.get("email"):io.get("pass")}
 		return {"success":True}
 	#logs the user out
@@ -480,6 +542,18 @@ class pxp(m.MVC):
 		sess.data['email']=False
 		# del sess.data['user']
 		return {"success":True}
+	def sync2cloud(self,sess):
+		try:
+			if not ('ee' in sess.data and 'ep' in sess.data):
+				return {"success":False,"action":"reload"}
+			#the dict({},**{}) is to combine 2 dictionaries into 1: 
+			#{"success":True/False} and {"action":"reload"})
+			return dict(self._syncEnc(sess.data['ee'],sess.data['ep']),**{"action":"reload"}) 
+		except Exception as e:
+			# import sys
+			# self._x(sys.exc_traceback.tb_lineno)
+			# print e
+			pass
 	#######################################################
   	#get any new events that happened since the last update (e.g. new tags, removed tags, etc.)
 	#######################################################
@@ -496,6 +570,46 @@ class pxp(m.MVC):
 		#event
 		evt = jp['event']
 		return self._syncTab(user=usr, device=dev, event=evt)
+	#######################################################
+	#return list of teams in the system with team setups
+	#######################################################
+	def teamsget(self):
+		try:
+			db = self.dbsqlite(self.wwwroot+'_db/pxp_main.db')
+			result = {"teams":{},"teamsetup":{}}
+			# get the teams from the database
+			sql = "SELECT * FROM `teams`"
+			db.qstr(sql)
+			#convert this data to json-readable:
+			# will be similar to : 
+			# "0ade7c2cf97f75d009975f4d720d1fa6c19f4897": {"txt_name": "Real_Madrid", "hid": "0ade7c2cf97f75d009975f4d720d1fa6c19f4897", "name": "Real Madrid"}
+			for team in db.getasc():
+				result['teams'][team['hid']] = {}
+				for field in team:
+					result['teams'][team['hid']][field] = team[field]
+			# get team setup (players, positions, etc.)
+			sql = "SELECT * FROM `teamsetup`"
+			db.qstr(sql)
+			#convert this data to json-readable
+
+			# get players for each team
+			# will be {"team_HID":[{p1},{p2},{p3}]} where pX is {'player':'13','jersey':55,....}
+			idx = 0
+			for player in db.getasc():
+				if(not player['team'] in result['teamsetup']):
+					idx = 0
+					result['teamsetup'][player['team']] = []
+				result['teamsetup'][player['team']].append({})
+				for field in player:
+					result['teamsetup'][player['team']][idx][field] = player[field]
+				idx+=1
+			db.close()
+		except Exception as e:
+			import sys
+			# self._x("")
+			# print e
+			# print sys.exc_traceback.tb_lineno
+		return result
 	#######################################################
 	#modify a tag - set as coachpick, bookmark, etc
 	#######################################################
@@ -932,7 +1046,7 @@ class pxp(m.MVC):
 		adFiles = glob.glob(self.wwwroot+"/ads/*.ts")
 		if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
 			return True
-		adFile = adFiles[randrange(0,len(adFiles)-1)] #TS file containing small size ad video (random ad)
+		adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
 
 
 		#convert mp4 back to .ts for merging with an ad
@@ -1010,27 +1124,7 @@ class pxp(m.MVC):
 	#returns encoder state (0 - off, 1 - live, 2 - paused)
 	#######################################################
 	def _encState(self):
-		return int(self.disk().sockRead(udpPort=2224))
-		# import socket
-		# UDP_IP = "127.0.0.1"
-		# UDP_PORT = 2224
-		# sock = socket.socket(socket.AF_INET, # Internet
-		#                      socket.SOCK_DGRAM) # UDP
-		# sock.settimeout(0.5) #wait for 0.2 seconds - if there is no response, server is not streaming
-		# #bind to the port and listen
-		# try:
-		# 	sock.bind((UDP_IP, UDP_PORT))
-		# 	data, addr = sock.recvfrom(1)
-		# 	data = int(data)
-		# except Exception as e:
-		# 	#failed to bind to that port
-		# 	data = 0
-		# #close the socket
-		# try:
-		# 	sock.close()
-		# except:
-		# 	pass		
-		# return data
+		return int(self.disk().sockRead(udpPort=2224,timeout=0.5))
 	#end encState
 	#######################################################
 	#return salted hash sha256 of the password
@@ -1273,14 +1367,14 @@ class pxp(m.MVC):
 		db = self.dbsqlite()
 		#open the main database (where everything except tags is stored)
 		if(not db.open(self.wwwroot+"_db/pxp_main.db")):
-			return False
+			return {"success":False}
 		url = 'http://www.myplayxplay.net/max/sync/ajax'
 		# name them v1 and v2 to make sure it's not obvious what is being sent
 		# v3 is a dummy variable
 		# v0 is the authorization code (it will determine if this is encoder or another device)
 		cfg = self._cfgGet(self.wwwroot+"_db/")
 		if(not cfg): 
-			return False
+			return {"success":False}
 		authorization = cfg[1]
 		customerID = cfg[2]
 		params ={   'v0':authorization,
@@ -1356,6 +1450,7 @@ class pxp(m.MVC):
 			db.qstr(sql_del)
 			db.qstr(sql_ins)
 		#foreach table
+		db.qstr("INSERT OR IGNORE INTO `teams`(`hid`,`name`,`txt_name`) VALUES('00000','Unspecified','Unspecified')")
 		db.close()	
 		#now sync tags - go to each event folder and add tags to those databases
 
@@ -1484,7 +1579,7 @@ class pxp(m.MVC):
 		elif(not tag):
 			# no tag id or other information given - return empty dictionary
 			return {}
-		# some sanity checks for the round function
+		# some sanity checks before the round function
 		if (not tag['duration']):
 			tag['duration']=0.01
 		if (not tag['time']):
@@ -1493,7 +1588,7 @@ class pxp(m.MVC):
 		tag['duration']=str(round(tag['duration']))[:-2]
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(tag['time'])))
 		tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
-		tag['own'] = tag['user']==user
+		tag['own'] = tag['user']==user #whether this is user's own tag
 		if(event=='live' and os.path.exists(self.wwwroot+event+'/evt.txt')):
 			tag['event'] = self.disk().file_get_contents(self.wwwroot+event+'/evt.txt').strip()
 		else:
@@ -1519,22 +1614,6 @@ class pxp(m.MVC):
 			else:
 				outDict[field]=tag[field]
 		return outDict
-		# return {
-		#		 'type':tag['type'],
-		#		 'id':tag['id'],
-		#		 'url':'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg',
-		#		 'name':tag['name'],
-		#		 'starttime':tag['starttime'],
-		#		 'duration':tag['duration'],
-		#		 'displaytime':,
-		#		 'time':tag['time'],
-		#		 'coach':tag['coachpick'],
-		#		 'colour':tag['colour'],
-		#		 'own':own,
-		#		 'deleted':(tag['deleted']==1 or tag['type']==3),
-		#		 'comment':tag['comment'],
-		#		 'success':success
-		#	 }
 	#end tagFormat
 	#######################################################
 	#returns file name for the video that contains appropriate time 
@@ -1585,5 +1664,6 @@ class pxp(m.MVC):
 			return secname
 		return fileName
 	#end calcThumb
-
+	def _x(self,txt):
+		self.str().pout(txt)
 #end pxp class

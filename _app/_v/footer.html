@@ -91,6 +91,22 @@
 		  data: params,
 		  success: function(data, textStatus, xhr) {
 		    console.log(data);
+		    res = { };
+		    try{
+		    	res = eval("("+data+")");
+		    }
+		    catch(e){
+		    	res['success'] = false;
+		    }
+		    console.log(res);
+	    	switch(res['action']){
+	    		case 'reload': 	
+	    			window.location.reload();
+	    		break;
+	    		default :
+	    		break;
+
+	    	}
 		    ajaxInProgress = false;
 		  },
 		  error: function(xhr, textStatus, errorThrown) {

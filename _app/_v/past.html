@@ -121,15 +121,22 @@ function processQueue(itemDone, itemError) {
 	dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
 	// send a request to download the file
 	$.ajax({
-	  url: 'dlstart.php',
+	  url: 'ajax/prepdown',
 	  data: {'event':evt},
 	  success: function(data, textStatus, xhr){
 	  	console.log(data);
-	    //called when successful - start checking for progress after 1 second
-	    setTimeout(getProgress,1000);
+		$.ajax({
+		  url: 'dlstart.php',
+		  data: {'event':evt},
+		  success: function(data, textStatus, xhr){
+		  	console.log(data);
+		    //called when successful - start checking for progress after 1 second
+		    setTimeout(getProgress,1000);
+		  }
+		});
 	  }
 	});
-	
+		
 }
 
 function pbarWidth(obj,width) {
