@@ -19,9 +19,11 @@
 		// $(form).find('#loader').show();
 		//reset the warning on the form
 		// $(form).find("#msg").html(''); 
+
+		timestamp = new Date(); //added to prevent response caching on Safari (great job Apple! #fail )
 		$(form).find('.warning').hide();
 		action = $(form).attr('action');
-		post_data = $(form).serialize();
+		post_data = $(form).serialize()+"&timestamp="+timestamp.getTime();
 		ajaxInProgress = true;
 		$.ajax({
 		    url: 'ajax/'+action,
@@ -40,9 +42,7 @@
 					rez.msg = data;
 					rez.action = '';
 				}
-				// console.log(rez.success)
 				if(rez.success){
-					// callback();
 					if(callback){
 						eval(callback+"();");
 					}

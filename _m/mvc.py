@@ -305,6 +305,21 @@ class MVC():
 		class c_session(object):
 			# data = None
 			def __init__(self, glob, expires=None, cookie_path=None):
+				self.start(glob, expires, cookie_path)
+			#end __init__
+			def close(self):
+				self.data.close()
+			def destroy(self):
+				try:
+					self.data.close()
+				except:
+					pass
+				try:
+					self.data = None
+				except:
+					pass
+			#end close
+			def start(self, glob, expires=None, cookie_path=None):
 				try:
 					string_cookie = os.environ.get('HTTP_COOKIE', '')
 					self.cookie = Cookie.SimpleCookie()
@@ -334,17 +349,14 @@ class MVC():
 					# pass
 					print sys.exc_traceback.tb_lineno
 					print e
-			#end __init__
-			def close(self):
-				self.data.close()
-			#end close
+			#end start
 			def set_expires(self, expires=None):
 				if expires == '':
 					self.data['cookie']['expires'] = ''
 				elif isinstance(expires, int):
-					self.data['cookie']['expires'] = expires
-				 
+					self.data['cookie']['expires'] = expires				 
 				self.cookie['sid']['expires'] = self.data['cookie']['expires']		
+			#end set_expires
 		return c_session(self,expires,cookie_path)
 	#end session class
 	#string class

@@ -287,11 +287,6 @@ class pxp(m.MVC):
 				<div class="col_3">OSX, Windows</div>
 				<div class="col_3">Windows</div>
 			</div>
-			<div class="row">
-				<div class="col_6 bold">System cost</div>
-				<div class="col_3">$1500</div>
-				<div class="col_3">$4000</div>
-			</div>
 			* on 1s HLS fragment size
 		</div>
 		<div class="col_3">
@@ -352,7 +347,8 @@ class pxp(m.MVC):
 		import os
 		msg = ""
 		try:
-			rez = os.system(self.wwwroot+"_db/encpause ")
+			# rez = os.system(self.wwwroot+"_db/encpause ")
+			rez = os.system("echo '3' > /tmp/pxpcmd")
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_pause",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 		except Exception as e:
@@ -368,7 +364,8 @@ class pxp(m.MVC):
 		import os
 		msg = ""
 		try:
-			rez = os.system(self.wwwroot+"_db/encresume ")
+			# rez = os.system(self.wwwroot+"_db/encresume ")
+			rez = os.system("echo '4' > /tmp/pxpcmd")
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_resume",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 		except Exception as e:
@@ -413,10 +410,16 @@ class pxp(m.MVC):
 			league = io.get('league')
 			if not (hmteam and vsteam and league):
 				return {'success':False}
+			# make sure everything is off before starting a new stream
+			os.system("/usr/bin/killall mediastreamsegmenter")
+			#send 2 kill signals to ffmpeg
+			os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
+			os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
+
 			# start the capture
-			rez = os.system(self.wwwroot+"_db/encstart >/dev/null &")
-			# add entry to the database that the encoding has started
-			msg = self._logSql(ltype="enc_start",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
+			# rez = os.system(self.wwwroot+"_db/encstart >/dev/null &")
+			rez = os.system("echo '1' > /tmp/pxpcmd")
+
 			# create new event in the database
 			# get time for hid and for database
 			timestamp = dt.fromtimestamp(tm()).strftime('%Y-%m-%d %H:%M:%S')
@@ -424,17 +427,39 @@ class pxp(m.MVC):
 			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 			sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`) VALUES(?,?,?,?,?)"
 			db.query(sql,(evthid,timestamp,hmteam,vsteam,league))
+			# get hid of the teams
+			# home team
+			sql = "SELECT `hid` FROM `teams` WHERE `name` LIKE ?"
+			db.query(sql,(hmteam,))
+			hmteamHID = db.getasc()
+			hmteamHID = hmteamHID[0]['hid']
+			# visitor team
+			sql = "SELECT `hid` FROM `teams` WHERE `name` LIKE ?"
+			db.query(sql,(vsteam,))
+			vsteamHID = db.getasc()
+			vsteamHID = vsteamHID[0]['hid']
+			# get hid of the leagu
+			sql = "SELECT `hid` FROM `leagues` WHERE `name` LIKE ?"
+			db.query(sql,(league,))
+			leagueHID = db.getasc()
+			leagueHID = leagueHID[0]['hid']
+			db.close()
+			# add entry to the database that the encoding has started
+			msg = self._logSql(ltype="enc_start",lid=(hmteamHID+','+vsteamHID+','+leagueHID),dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 			#the name of the directory will be YYYY-MM-DD_HH-MM-SS
 			evtName = dt.fromtimestamp(tm()).strftime('%Y-%m-%d_%H-%M-%S')+'_H'+hmteam[:3]+'_V'+vsteam[:3]+'_L'+league[:3]
 			#store the event name (for processing when it's stopped)
 			cmd = "echo '"+evtName+"' > "+self.wwwroot+"live/evt.txt"
 			rez = not os.system(cmd)
+			msg = ""
 		except Exception as e:
-			self.str().pout(e)
-			print sys.exc_traceback.tb_lineno
+			import sys
+			# self.str().pout(e)
+			# print sys.exc_traceback.tb_lineno
 			rez = False
+			msg = str(e)+' '+sys.exc_traceback.tb_lineno
 		# rez = False
-		return {"success":rez}
+		return {"success":rez,"msg":msg}
 	#end encstart
 	#######################################################
 	#stops a live encode
@@ -444,11 +469,12 @@ class pxp(m.MVC):
 		from time import sleep
 		msg = ""
 		try:
-			rez = os.system(self.wwwroot+"_db/encstop")
-			os.system("/bin/kill `ps ax | grep mediastreamsegmenter | grep 'grep' -v | awk '{print $1}'`")
+			# rez = os.system(self.wwwroot+"_db/encstop")
+			rez = os.system("echo '2' > /tmp/pxpcmd")
+			os.system("/usr/bin/killall mediastreamsegmenter")
 			#send 2 kill signals to ffmpeg
-			os.system("/bin/kill `ps ax | grep ffmpeg | grep 'grep' -v | awk '{print $1}'`")
-			os.system("/bin/kill `ps ax | grep ffmpeg | grep 'grep' -v | awk '{print $1}'`")
+			os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
+			os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
 			msg = self._logSql(ltype="enc_stop",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 			# rename the live directory to the proper event name
 			sleep(5) #wait for 5 seconds for ffmpeg to finish its job
@@ -498,40 +524,46 @@ class pxp(m.MVC):
 		hlsPresent = os.path.exists(self.wwwroot+'live/video/list.m3u8')
 		return {"success":(self._encState()==1) and hlsPresent}
 	def login(self, sess):
-		io = self.io()
-		email = io.get("email")
-		passw = io.get("pass")
-		if not (email and passw):
-			return self.str().err("Email and password must be specified")
-		encEm = self.enc().sha(email)
-		encPs = self._hash(passw)
-		# make sure the encoder has been initialized
-		if not self._inited():
-			# it wasn't initialized yet - activate it in the cloud
-			res = self._init(email,passw)
-			if (not res==1):
-				return {"success":False, "msg":res}
-			# activation was successful, perform a sync
-			self._syncEnc(encEm,encPs)
-		#if not inited
+		try:
+			io = self.io()
+			email = io.get("email")
+			passw = io.get("pass")
+			if not (email and passw):
+				return self.str().err("Email and password must be specified")
+			encEm = self.enc().sha(email)
+			encPs = self._hash(passw)
+			# make sure the encoder has been initialized
+			if not self._inited():
+				# it wasn't initialized yet - activate it in the cloud
+				res = self._init(email,passw)
+				if (not res==1):
+					return self.str().err(res)
+				# activation was successful, perform a sync
+				self._syncEnc(encEm,encPs)
+			#if not inited
 
-		# check if user is in the database
-		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
-		sql = "SELECT `hid` FROM `users` WHERE `email` LIKE ? AND `password` LIKE ?"
-		db.query(sql,(email,encPs))
-		rows = db.getrows()
-		if(len(rows)<1):
-			return {"success":False,"msg":"Invalid email or password"}
-		# log him in
-		usrData = rows[0]
-		sess.data['user']=usrData[0] #user hid
-		# store plain text email in the session (to display logged in user)
-		sess.data['email']=email
-		# encrypted email
-		sess.data['ee']=encEm
-		# encrypted password
-		sess.data['ep']=encPs
-
+			# check if user is in the database
+			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+			sql = "SELECT `hid` FROM `users` WHERE `email` LIKE ? AND `password` LIKE ?"
+			db.query(sql,(email,encPs))
+			rows = db.getrows()
+			if(len(rows)<1):
+				return self.str().err("Invalid email or password")
+			# log him in
+			#first, make sure there are no old session variables
+			sess.destroy()
+			sess.start(glob=self, expires=24*60*60,cookie_path="/")
+			usrData = rows[0]
+			sess.data['user']=usrData[0] #user hid
+			# store plain text email in the session (to display logged in user)
+			sess.data['email']=email
+			# encrypted email
+			sess.data['ee']=encEm
+			# encrypted password
+			sess.data['ep']=encPs
+		except Exception as e:
+			import sys
+			return self.str().err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 		# return {io.get("email"):io.get("pass")}
 		return {"success":True}
 	#logs the user out
@@ -576,7 +608,7 @@ class pxp(m.MVC):
 	def teamsget(self):
 		try:
 			db = self.dbsqlite(self.wwwroot+'_db/pxp_main.db')
-			result = {"teams":{},"teamsetup":{}}
+			result = {"teams":{},"teamsetup":{},"leagues":{}}
 			# get the teams from the database
 			sql = "SELECT * FROM `teams`"
 			db.qstr(sql)
@@ -587,11 +619,10 @@ class pxp(m.MVC):
 				result['teams'][team['hid']] = {}
 				for field in team:
 					result['teams'][team['hid']][field] = team[field]
+
 			# get team setup (players, positions, etc.)
 			sql = "SELECT * FROM `teamsetup`"
 			db.qstr(sql)
-			#convert this data to json-readable
-
 			# get players for each team
 			# will be {"team_HID":[{p1},{p2},{p3}]} where pX is {'player':'13','jersey':55,....}
 			idx = 0
@@ -603,6 +634,14 @@ class pxp(m.MVC):
 				for field in player:
 					result['teamsetup'][player['team']][idx][field] = player[field]
 				idx+=1
+
+			sql = "SELECT * FROM `leagues`"
+			db.qstr(sql)
+			for league in db.getasc():
+				result['leagues'][league['hid']] = {}
+				for field in league:
+					result['leagues'][league['hid']][field] = league[field]
+
 			db.close()
 		except Exception as e:
 			import sys
@@ -670,7 +709,7 @@ class pxp(m.MVC):
 			db.close() #close db here because next statement will return
 			if (bookmark):
 				# user wants to make a bookmark - extract the video
-				success = success and self._bookmark(tagid=tid,event=event)
+				success = success and self._extractclip(tagid=tid,event=event)
 			return self._tagFormat(event=event, user=user, tagID=tid)
 		db.close()
 		return {'success':success}
@@ -688,6 +727,7 @@ class pxp(m.MVC):
 	# 	'period':'<period number>',
 	# 	['coachpick':'<0/1>'],
 	# 	['type':'<0/1/2/3...>'], 
+	#	['bookmark':'<0/1>'],
 	# 	[<other options may be added>]
 	# }
 	#event can be an HID of an event or 'live' for live event
@@ -995,7 +1035,7 @@ class pxp(m.MVC):
 	#######################################################
 	# extracts video clip and saves it as mp4 file
 	#######################################################
-	def _bookmark(self, tagid, event):
+	def _extractclip(self, tagid, event):
 		from random import randrange
 		import glob
 		# the process is as follows:
@@ -1068,7 +1108,7 @@ class pxp(m.MVC):
 		return True
 	#end bookmark
 	#######################################################
-	# XORs config file (simple 'encryption') to prevent onlookers
+	# XORs config file (simple 'encryption') to prevent tampering
 	#######################################################
 	def _cfgGet(self, cfgDir):
 		cfgFile = cfgDir+".cfg"
@@ -1092,7 +1132,7 @@ class pxp(m.MVC):
 		return ""
 
 	#######################################################
-	# XORs config file (simple 'encryption') to prevent onlookers
+	# XORs config file (simple 'encryption') to prevent tampering
 	#######################################################
 	def _cfgSet(self, cfgDir,lines):
 		# parameters are in this function so that user can't view them with dir() function
@@ -1316,7 +1356,7 @@ class pxp(m.MVC):
 		os.rename(self.wwwroot+"live",self.wwwroot+event)
 		# remove all .ts files - leave them on the server for streaming
 		# cmd = "find "+self.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
-		os.system(cmd)
+		# os.system(cmd)
 		# re-create the directories for live:
 		self._initLive()
 	#end postProcess
@@ -1384,7 +1424,8 @@ class pxp(m.MVC):
 					'v4':customerID
 				}
 		resp = self.io().send(url,params, jsn=True)		
-		# self.str().pout("")
+		# self.str().jout(resp)
+		# self._x("")
 		# return self.str().err()
 		tables = ['users','leagues','teams','events', 'teamsetup']
 		for table in tables:
@@ -1447,7 +1488,12 @@ class pxp(m.MVC):
 				sql_ins = 'INSERT INTO `'+table+'`(`'+('`, `'.join(firstRow.keys()))+'`) VALUES("'+('", "'.join(values))+'") '
 			if(len(add_arr)<1):
 				sql_ins = "SELECT 1" #nothing to add - simply run a dummy query
-			db.qstr(sql_del)
+			if(table=='events'): #only delete events that were deleted in the cloud
+				db.qstr(sql_del)
+			else:#delete all the data from the table (except for events)
+				db.qstr("DELETE FROM `"+table+"`")
+			# if(table=='teamsetup'):
+			# 	print sql_ins
 			db.qstr(sql_ins)
 		#foreach table
 		db.qstr("INSERT OR IGNORE INTO `teams`(`hid`,`name`,`txt_name`) VALUES('00000','Unspecified','Unspecified')")
@@ -1537,15 +1583,27 @@ class pxp(m.MVC):
 			#end for tags:
 	
 			#get any other events (other than tags)
-			sql = "SELECT type, id FROM logs WHERE logID>? AND NOT(type LIKE 'mod_tags' OR type LIKE 'sync%')"
+			sql = "SELECT `type`, `id` FROM `logs` WHERE `logID`>? AND NOT(`type` LIKE 'mod_tags' OR `type` LIKE 'sync%')"
 			db.query(sql,(lastup,))
 			evts = db.getasc()
+			# get the teams playing
+			sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
+			db.qstr(sql)
+			teamHIDs = db.getasc()
+			teamHIDs = teamHIDs[0]['id'].split(',')
+			if(len(teamHIDs)>2):#in case this is an old event, and the league HID is not listed along with team HIDs (comma-delimeted) in the log table, add empty value for the league
+				leagueHID = teamHIDs[2]
+				del(teamHIDs[2]) #remove league id from the teams list
+			else:
+				leagueHID = ""
 			#close the database (so that log can use it)
 			db.close();
 			evts.append({"camera":self.encoderstatus()})
 			outJSON = {
 				'tags':tagsOut,
-				'events':evts
+				'events':evts,
+				'teams':teamHIDs,
+				'league':leagueHID
 				# 'camera':self.encoderstatus()
 			}
 			for key in outJSON.keys():
@@ -1564,56 +1622,62 @@ class pxp(m.MVC):
 	#######################################################
 	def _tagFormat(self, event=False, user=False, tagID=False, tag=False, db=False):
 		import os, datetime
-		outDict = {}
-		if(tagID): #tag id was given - retreive it from the database
-			sql = "SELECT * FROM `tags` WHERE `id`=?"
-			if(not db):
-				autoclose = True #db was not passed, open and close it in this function
-				db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
+		try:
+			outDict = {}
+			if(tagID): #tag id was given - retreive it from the database
+				sql = "SELECT * FROM `tags` WHERE `id`=?"
+				if(not db):
+					autoclose = True #db was not passed, open and close it in this function
+					db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
+				else:
+					autoclose = False #db was passed as argument - do not close it here
+				db.query(sql,(tagID,))
+				tag = db.getasc()[0]
+				if(autoclose):
+					db.close()
+			elif(not tag):
+				# no tag id or other information given - return empty dictionary
+				return {}
+			# some sanity checks before the round function
+			if (not tag['duration']):
+				tag['duration']=0.01
+			if (not tag['time']):
+				tag['time']=0.01
+			#format some custom fields
+			tag['duration']=str(round(tag['duration']))[:-2]
+			tag['displaytime'] = str(datetime.timedelta(seconds=round(tag['time'])))
+			tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
+			tag['own'] = tag['user']==user #whether this is user's own tag
+			if(event=='live' and os.path.exists(self.wwwroot+event+'/evt.txt')):
+				tag['event'] = self.disk().file_get_contents(self.wwwroot+event+'/evt.txt').strip()
 			else:
-				autoclose = False #db was passed as argument - do not close it here
-			db.query(sql,(tagID,))
-			tag = db.getasc()[0]
-			if(autoclose):
-				db.close()
-		elif(not tag):
-			# no tag id or other information given - return empty dictionary
-			return {}
-		# some sanity checks before the round function
-		if (not tag['duration']):
-			tag['duration']=0.01
-		if (not tag['time']):
-			tag['time']=0.01
-		#format some custom fields
-		tag['duration']=str(round(tag['duration']))[:-2]
-		tag['displaytime'] = str(datetime.timedelta(seconds=round(tag['time'])))
-		tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
-		tag['own'] = tag['user']==user #whether this is user's own tag
-		if(event=='live' and os.path.exists(self.wwwroot+event+'/evt.txt')):
-			tag['event'] = self.disk().file_get_contents(self.wwwroot+event+'/evt.txt').strip()
-		else:
-			tag['event'] = event
-		#set deleted attribute for a tag
-		if not 'deleted' in tag:
-			tag['deleted']=0
-		tag['deleted'] = (tag['deleted']==1 or tag['type']==3) #this will be removed in the future and set to type==3 only
-		tag['success'] = True
-		if(int(tag['type'])==4): #add telestration url for telestration tags only
-			tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
-		if(os.path.exists(self.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
-			tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
-		if('hid' in tag):
-			del(tag['hid'])
-		for field in tag:
-			field = field.replace("_"," ") #replace all _ with spaces in the field names
-			if(tag[field]== None):
-				tag[field] = ''
-			if(field=='line' or field=='player' or field=='period' or field=='strength'):
-			# if(field=='player'):
-				outDict[field]=tag[field].split(",")
-			else:
-				outDict[field]=tag[field]
-		return outDict
+				tag['event'] = event
+			#set deleted attribute for a tag
+			if not 'deleted' in tag:
+				tag['deleted']=0
+			tag['deleted'] = (tag['deleted']==1 or tag['type']==3) #this will be removed in the future and set to type==3 only
+			tag['success'] = True
+			if(int(tag['type'])==4): #add telestration url for telestration tags only
+				tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
+			if(os.path.exists(self.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
+				tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
+			if('hid' in tag):
+				del(tag['hid'])
+			for field in tag:
+				field = field.replace("_"," ") #replace all _ with spaces in the field names
+				if(tag[field]== None):
+					tag[field] = ''
+				if(field=='line' or field=='player' or field=='period' or field=='strength'):
+				# if(field=='player'):
+					outDict[field]=tag[field].split(",")
+				else:
+					outDict[field]=tag[field]
+			return outDict
+		except Exception as e:
+			import sys
+			self._x(sys.exc_traceback.tb_lineno)
+			print e
+			return {"success":False,"fct":"tagFormat"}
 	#end tagFormat
 	#######################################################
 	#returns file name for the video that contains appropriate time 

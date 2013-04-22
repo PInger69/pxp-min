@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 m = ls("MVC","_m/mvc.py")
 # m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
-	version = 0.72
+	version = 0.75
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -45,11 +45,11 @@ class Controller(m.MVC):
 					# redirect to login
 					sess.data['uri'] = functionName
 					print "Location: login\n"
-					# make sure he does not proceed any further
-					return		
+					# make sure the user does not proceed any further
+					return
 			if(functionName=='login' and sess and ('user' in sess.data) and sess.data['user']):
 				#user just logged in, redirect him to home
-				if('uri' in sess.data):
+				if('uri' in sess.data and not (sess.data['uri'] == 'login' or sess.data['uri']=='logout')):
 					print "Location: "+sess.data['uri']+"\n"
 				else:
 					print "Location: home\n"
@@ -64,7 +64,7 @@ class Controller(m.MVC):
 				self.page(functionName)
 		except Exception as e:
 			import sys, inspect
-			self.str().jout({"msg":str(e),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run"})
+			self.str().jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run"})
 			# print inspect.trace()
 		# db = self.dbsqlite(self.wwwroot+"live/pxp.db")
 		# sql = "INSERT INTO tags (user, player) VALUES('zzz', '9')"
