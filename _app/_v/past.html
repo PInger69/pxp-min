@@ -7,9 +7,21 @@
 		<div class="col_2">League</div>
 		<div class="col_2">Video</div>
 		<div class="col_2">
-			<button id="download" class="green small col_12" type="reset">
+			<div class="cw_11 center">
+				<button id="download" class="green small cw_12" type="reset">
+				<i class="icon-download-alt"></i> download			
+			</div>
+			<div class="cw_1 right">
+					<a href="#" class="removeSel large red"><i class="icon-remove"></i></a>
+			</div>
+
+<!-- 			<button id="download" class="green small cw_10 center" type="reset">
 				<i class="icon-download-alt"></i> download
 			</button>
+			<div class="cw_1 right">
+				<a href="#" class="removeEvt large red"><i class="icon-remove"></i></a>
+			</div>
+ -->
 		</div>
 	</div>	
 @for ev in events:
@@ -38,14 +50,14 @@
 		<div class="col_2">
 			<div class="cw_11 center">
 				@if 'mp4' in ev:
-					<input type="checkbox" class="center" event="@ev['name']">
+					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']">
 				@else:
 					&nbsp;
 				@end
 			</div>
 			<div class="cw_1 right">
 				@if not 'live' in ev:
-					<a href="#" class="removeEvt large red" name="@ev['name']" event="@ev['hid']"><i class="icon-remove"></i></a>
+					<a href="#" class="removeEvt large red" event="@ev['name']" eventID="@ev['hid']"><i class="icon-remove"></i></a>
 				@end
 			</div>
 		</div>
@@ -161,7 +173,7 @@ function fOnLoad (argument) {
 		$(this).parents('.wnd-container').fadeOut();
 	});
 	// attach media player to any media links (allows graceful breakdown for js-disabled cases)
-    $('.media').click(function(e){
+    $('.media').click(function (e){
     	e.preventDefault();
 	    self = this;
 	    // html overlay
@@ -187,22 +199,32 @@ function fOnLoad (argument) {
     	$('input:checked').each(function (){
     		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
     		dlQueue.push($(this).parent('div'));
-    	}).attr('disabled','disabled')
+    	}).attr('disabled','disabled');
     	// start download
     	processQueue();
 
     });
+    $('.removeSel').click(function (e){
+    	// remove selected events
+    	if(confirm('This will delete all the selected events. Are you sure?')){
+	    	$('input:checked').each(function (){
+	    		ajaxCall("evtdelete/?name="+$(this).attr('event')+"&event="+$(this).attr('eventID'));
+	    		// remove event row from the table
+	    		$(this).parents('.row').hide();
+	    	});
+    	}//if confirm
+    });//removeSel.click
     $('.removeEvt').click(function (e) {
     	e.preventDefault();
     	if(dlQueue.length>0){
     		return;
     	}
     	if(confirm('This will delete the event and the video. Are you sure?')){
-    		ajaxCall("evtdelete/?name="+$(this).attr('name')+"&event="+$(this).attr('event'));
+    		ajaxCall("evtdelete/?name="+$(this).attr('event')+"&event="+$(this).attr('eventID'));
     		// remove event row from the table
     		$(this).parents('.row').hide();
     	}
     	return false;
-    })
-}
+    });//removeEvt.click
+}//fOnLoad
 </script>

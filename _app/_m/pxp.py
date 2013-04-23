@@ -80,11 +80,11 @@ class pxp(m.MVC):
 			# # remove old plist if it exists
 			# if(os.path.exists(self.wwwroot+event+'/tags.plist')):
 			# 	os.remove(self.wwwroot+event+'/tags.plist')
-			if not event:
-				return {"success":False}
+			if not event: #event was not specified
+				return self._err()
 			# make sure it has no : or / \ in the name
-			if('/' in event or '\\' in event):
-				return {"success":False}#invalid name
+			if('/' in event or '\\' in event): #invalid name
+				return self._err()
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			db.qstr('SELECT * FROM `tags`')
 			# self.str().pout("")
@@ -155,7 +155,7 @@ class pxp(m.MVC):
 			return {"success":True}
 		except Exception as e:
 			import sys 
-			return {"success":False,"line":sys.exc_traceback.tb_lineno,"msg":e}
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end download
 	#######################################################
 	# easter egg - prints the comparison features list 
@@ -307,7 +307,7 @@ class pxp(m.MVC):
 		if((not event) or (len(event)<5) or ('\\' in event) or ('/' in event)):
 			#either event was not specified or there's invalid characters in the name 
 			#e.g. user tried to get clever by deleting other directories
-			return {"success":False,"msg":"Invalid event"}
+			return self._err("Invalid event")
 		# remove the event from the database
 		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 		sql = "UPDATE `events` SET `deleted`=1 WHERE `hid` LIKE ?"
@@ -388,7 +388,6 @@ class pxp(m.MVC):
 		# rez = False
 		return {"success":not rez, "msg":rez}
 	#end encresume
-	
 	#######################################################
 	#starts a new encode
 	#######################################################
@@ -409,7 +408,7 @@ class pxp(m.MVC):
 			vsteam = io.get('vsteam')
 			league = io.get('league')
 			if not (hmteam and vsteam and league):
-				return {'success':False}
+				return self._err("Please specify teams and league")
 			# make sure everything is off before starting a new stream
 			os.system("/usr/bin/killall mediastreamsegmenter")
 			#send 2 kill signals to ffmpeg
@@ -508,7 +507,7 @@ class pxp(m.MVC):
 		strParam = self.uri().segment(3,"{}")
 		jp = json.loads(strParam)
 		if not ('user' in jp and 'event' in jp and 'device' in jp):
-			return self.str().err("Specify user, event, and device")
+			return self._err("Specify user, event, and device")
 
 		#get user id
 		usr = jp['user']
@@ -529,7 +528,7 @@ class pxp(m.MVC):
 			email = io.get("email")
 			passw = io.get("pass")
 			if not (email and passw):
-				return self.str().err("Email and password must be specified")
+				return self._err("Email and password must be specified")
 			encEm = self.enc().sha(email)
 			encPs = self._hash(passw)
 			# make sure the encoder has been initialized
@@ -537,7 +536,7 @@ class pxp(m.MVC):
 				# it wasn't initialized yet - activate it in the cloud
 				res = self._init(email,passw)
 				if (not res==1):
-					return self.str().err(res)
+					return self._err(res)
 				# activation was successful, perform a sync
 				self._syncEnc(encEm,encPs)
 			#if not inited
@@ -548,7 +547,7 @@ class pxp(m.MVC):
 			db.query(sql,(email,encPs))
 			rows = db.getrows()
 			if(len(rows)<1):
-				return self.str().err("Invalid email or password")
+				return self._err("Invalid email or password")
 			# log him in
 			#first, make sure there are no old session variables
 			sess.destroy()
@@ -563,7 +562,7 @@ class pxp(m.MVC):
 			sess.data['ep']=encPs
 		except Exception as e:
 			import sys
-			return self.str().err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
+			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 		# return {io.get("email"):io.get("pass")}
 		return {"success":True}
 	#logs the user out
@@ -593,7 +592,7 @@ class pxp(m.MVC):
 		strParam = self.uri().segment(3,"{}")
 		jp = json.loads(strParam)
 		if not ('user' in jp and 'event' in jp and 'device' in jp):
-			return self.str().err("Specify user, event, and device")
+			return self._err("Specify user, event, and device")
 
 		#get user id
 		usr = jp['user']
@@ -656,7 +655,7 @@ class pxp(m.MVC):
 		strParam = self.uri().segment(3,"{}")
 		jp = json.loads(strParam)
 		if not ('user' in jp and 'event' in jp and 'id' in jp):
-			return self.str().err("Specify user, event, and tag id")
+			return self._err("Specify user, event, and tag id")
 		#determine the info that user wants to update
 		params = ()
 		sqlInsert = []
@@ -685,14 +684,14 @@ class pxp(m.MVC):
 				params +=(jp[mod],)
 		#end for mod in jp
 		if len(sqlInsert)<1:#nothing was specified 
-			return {'success':False}
+			return self._err()
 		# parameters to add to the sql - tag id (no need to check user at the moment)
 		params += (tid,)
 		#update the tag
 		sql = "UPDATE `tags` SET "+(', '.join(sqlInsert))+" WHERE id=?"
 		#make sure the database exists
 		if(not os.path.exists(self.wwwroot+event+'/pxp.db')):
-			return {'success':False}
+			return self._err()
 		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 		# if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyon else to get this file
 			#update the tag info in the database
@@ -753,7 +752,7 @@ class pxp(m.MVC):
 			tagStr = self.uri().segment(3)
 		#just making sure the tag was supplied
 		if(not tagStr):
-			return self.str().err("Tag string not specified")
+			return self._err("Tag string not specified")
 		sql = ""
 		db = self.dbsqlite()
 		try:
@@ -762,7 +761,7 @@ class pxp(m.MVC):
 			if (t and (not 'name' in t)):
 				t = t[0] # this is an array of dictionaries - get the first element
 			if (not 'event' in t):
-				return self.str().err("Specify event") #event was not defined - can't open the database
+				return self._err("Specify event") #event was not defined - can't open the database
 			if (not os.path.exists(self.wwwroot+t['event']+'/pxp.db')):
 				# this is the first tag in the event 
 				self.disk().mkdir(self.wwwroot+t['event'])
@@ -832,22 +831,27 @@ class pxp(m.MVC):
 					sqlVars += (t['player'],)
 				sqlAddFld += ", player"
 				sqlAddVal += ", ?"
-			#check if lines/zones were specified
+			#check if lines/zones were specified (ignore it if the tag type is not 'line')
 			if(('line' in t) and (t['type']==1)):
 				sqlVars += (t['line'],)
 				sqlAddFld += ", line"
 				sqlAddVal += ", ?"
-			#if period was set (0, 1, 2...)
+			#if period was set (0, 1, 2...), add it(ignore it if the tag type is not 'period/half')
 			if(('period' in t) and (t['type']==7)):
 				sqlVars += (t['period'],)
 				sqlAddFld += ", period"
 				sqlAddVal += ", ?"
-			#if strength was set (i.e. 5vs6 etc.)
+			#if strength was set (i.e. 5vs6 etc.), add it (ignore it if the tag type is not 'strength')
 			if(('strength' in t) and (t['type']==9)):
 				sqlVars += (t['strength'],)
 				sqlAddFld += ", strength"
 				sqlAddVal += ", ?"
-			# create the query to add a new tag
+			#if zone was set (i.e. OZ, NZ, DZ for hockey), add it
+			if('zone' in t):
+				sqlVars += (t['zone'],)
+				sqlAddFld += ", zone"
+				sqlAddVal += ", ?"
+			# create a query to add the new tag
 			sql = "INSERT INTO tags (name, user, starttime, type, time, colour, coachpick"+sqlAddFld+") VALUES(?, ?, ?, ?, ?, ?, ?"+sqlAddVal+")"
 			#run it
 			success = success and db.query(sql,sqlVars)
@@ -856,7 +860,7 @@ class pxp(m.MVC):
 
 			if(not success):#something went wrong, roll back the sql statement
 				db.rollback()
-				return {'success':False}
+				return self._err()
 			# get tag time, tag duration and video start time (of the tag)
 			sql = "SELECT time, duration, starttime FROM tags WHERE id=?"
 			success = success and db.query(sql,(lastID,))
@@ -868,7 +872,7 @@ class pxp(m.MVC):
 			else:
 				# could not get the tag info - probably invalid tag ID (should never happen)
 				db.rollback()
-				return {'success':False}
+				return self._err()
 
 			#get the time of the current tag
 			tagTime = t['tagtime']
@@ -992,7 +996,7 @@ class pxp(m.MVC):
 			self.str().pout(sys.exc_traceback.tb_lineno)
 			print e
 			db.rollback()
-			return self.str().err()
+			return self._err()
 	#end tagSet()
 	#######################################################
 	def teleset(self):
@@ -1028,7 +1032,7 @@ class pxp(m.MVC):
 		except Exception as e:
 			# print sys.exc_traceback.tb_lineno
 			# print e
-			return self.str().err("No tag info specified")
+			return self._err("No tag info specified")
 ###############################################
 ##	           utility functions             ##
 ###############################################
@@ -1166,6 +1170,8 @@ class pxp(m.MVC):
 	def _encState(self):
 		return int(self.disk().sockRead(udpPort=2224,timeout=0.5))
 	#end encState
+	def _err(self, msgText):
+		return {"success":False,"msg":msgText}
 	#######################################################
 	#return salted hash sha256 of the password
 	#######################################################
@@ -1407,14 +1413,14 @@ class pxp(m.MVC):
 		db = self.dbsqlite()
 		#open the main database (where everything except tags is stored)
 		if(not db.open(self.wwwroot+"_db/pxp_main.db")):
-			return {"success":False}
+			return self._err()
 		url = 'http://www.myplayxplay.net/max/sync/ajax'
 		# name them v1 and v2 to make sure it's not obvious what is being sent
 		# v3 is a dummy variable
 		# v0 is the authorization code (it will determine if this is encoder or another device)
 		cfg = self._cfgGet(self.wwwroot+"_db/")
 		if(not cfg): 
-			return {"success":False}
+			return self._err()
 		authorization = cfg[1]
 		customerID = cfg[2]
 		params ={   'v0':authorization,
@@ -1426,7 +1432,7 @@ class pxp(m.MVC):
 		resp = self.io().send(url,params, jsn=True)		
 		# self.str().jout(resp)
 		# self._x("")
-		# return self.str().err()
+		# return self._err()
 		tables = ['users','leagues','teams','events', 'teamsetup']
 		for table in tables:
 			if (resp and (not (table in resp)) or (len(resp[table])<1)):
@@ -1590,7 +1596,8 @@ class pxp(m.MVC):
 			sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
 			db.qstr(sql)
 			teamHIDs = db.getasc()
-			teamHIDs = teamHIDs[0]['id'].split(',')
+			if (len(teamHIDs)>0): #this will be the case when there is a blank db in the event (encode was not started)
+				teamHIDs = teamHIDs[0]['id'].split(',')
 			if(len(teamHIDs)>2):#in case this is an old event, and the league HID is not listed along with team HIDs (comma-delimeted) in the log table, add empty value for the league
 				leagueHID = teamHIDs[2]
 				del(teamHIDs[2]) #remove league id from the teams list
@@ -1613,8 +1620,8 @@ class pxp(m.MVC):
 				self._logSql(ltype='sync_tablet',lid=device,uid=user,dbfile=self.wwwroot+event+'/pxp.db')
 			return outJSON
 		except Exception as e:
-			# print e
-			return {"success":False,"msg":str(e)}
+			import sys
+			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 	#end syncTab()
 	#######################################################
 	# formats the tag in a proper json format and returns it as json dictionary
@@ -1675,9 +1682,7 @@ class pxp(m.MVC):
 			return outDict
 		except Exception as e:
 			import sys
-			self._x(sys.exc_traceback.tb_lineno)
-			print e
-			return {"success":False,"fct":"tagFormat"}
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end tagFormat
 	#######################################################
 	#returns file name for the video that contains appropriate time 

@@ -40,7 +40,7 @@ class MVC():
 		    def getasc(self):
 		    	try:
 			        if not self.c:
-			            return False        
+			            return []
 			        rows = []
 			        #get column names
 			        cols = []
@@ -371,8 +371,6 @@ class MVC():
 			def pout(self, text):
 				print("Content-Type: text/html\n")
 				print text
-			def err(self, msgText=""):
-				return {"success":False,"msg":msgText}
 		return c_str()
 	#url class
 	def uri(self):
