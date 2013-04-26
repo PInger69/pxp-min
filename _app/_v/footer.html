@@ -10,6 +10,8 @@
 	var encStatus = ""; 	//encoder status: live, off, paused
 	var btnHtml = "";   	//html for the submit button prior to clicking
 	var ajaxInProgress = false;	//whether the page can be reloaded - true if there is an ajax call in progress
+	var shutDownCounter = 0; //counts after receiving an error from the server (happens when server goes offline)
+	var shuttingDown = false;
 	function ajaxSubmit(form, callback){
 		if(callback==undefined){
 			callback = false;
@@ -80,6 +82,7 @@
 		// console.log(pr);
 		// return;
 		ajaxInProgress = true;
+		shuttingDown = action=='encshutdown';
 		params = {};
 		for(elem in pr){
 			// console.log(pr[elem]);
@@ -99,6 +102,11 @@
 		    	res['success'] = false;
 		    }
 		    console.log(res);
+		    if (!res['success'] && shuttingDown){
+		  		shuttingDown = false;
+		  		alert('user permissions do not allow encoder shut down');
+		  		window.location.reload();
+		    }
 	    	switch(res['action']){
 	    		case 'reload': 	
 	    			window.location.reload();
@@ -110,6 +118,10 @@
 		    ajaxInProgress = false;
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
+		  	// if (shuttingDown){
+		  	// 	shuttingDown = false;
+		  	// 	alert('user permissions do not allow encoder shut down');
+		  	// }
 		    console.log(textStatus);
 		    ajaxInProgress = false;
 		  }
@@ -148,6 +160,15 @@
 			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
+		  	if (shutDownCounter>9){//after a few seconds the encoder should be off 
+			    $('html').prepend("<div class='overlay hide'></div>");
+			    $('.overlay').fadeIn();
+			    $('#shutdownNotice').fadeIn();
+		  		return;
+		  	}
+		  	if(shuttingDown){
+		  		shutDownCounter++;
+		  	}
 			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
 		    console.log(textStatus);
 		  }

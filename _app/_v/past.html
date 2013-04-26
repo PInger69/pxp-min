@@ -185,7 +185,11 @@ function fOnLoad (argument) {
 	    jwplayer("vidPlayer").setup({
 	        file: $(self).attr('href'),
 	        width: 853,
-	        height: 480
+	        height: 480,
+	        analytics: {
+	        	enabled:false,
+	        	cookies:false
+	        }
 	    });	
 	    // start playing
 	    jwplayer("vidPlayer").play();

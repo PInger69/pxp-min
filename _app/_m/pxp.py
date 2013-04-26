@@ -40,7 +40,36 @@ class pxp(m.MVC):
 			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a192b7953b04c54574d18c28d46e6395428ab","tagtime":"'+str(rr(10,vidlen))+'","event":"live","period":"1"}'
 			print self.tagset(tstr)
 	#######################################################
+	#######################################################
+	# creates a coach pick
+	#######################################################
+	def coachpick(self,sess):
+		import glob
+		# make sure there is a live event
+		if (not os.path.exists(self.wwwroot+'live/video')):
+			return self._err("no live event")
+		# get logged in user
+		user = sess.data['user'] # user HID
+		# get his tag colour from the database
+		db = self.dbsqlite(self.wwwroot+'_db/pxp_main.db')
+		sql = "SELECT `tagColour` FROM `users` WHERE `hid` LIKE ?"
 
+		db.query(sql,(user,))
+		users = db.getasc()
+		# make sure this user is in the database
+		if(len(users)<1):
+			return self._err("invalid user")
+		colour = users[0]['tagColour']
+		# find last created segment (to get the time)
+		segFiles = glob.glob(self.wwwroot+"live/video/segm*.ts")
+		if(len(segFiles)<2):
+			return self._err("there is no video yet")
+		lastSeg = len(segFiles)-2 #segments start at segm0
+		# set time
+		tagTime = lastSeg * 0.984315
+		# create tag
+		tagStr = '{"name":"Coach Tag","colour":"'+colour+'","user":"'+user+'","tagtime":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
+		return dict(self.tagset(tagStr),**{"action":"reload"})
 	#######################################################
 	# gets download progress from the progress.txt file
 	# sums up all the individual progresses and outputs a number
@@ -579,7 +608,7 @@ class pxp(m.MVC):
 				return {"success":False,"action":"reload"}
 			#the dict({},**{}) is to combine 2 dictionaries into 1: 
 			#{"success":True/False} and {"action":"reload"})
-			return dict(self._syncEnc(sess.data['ee'],sess.data['ep']),**{"action":"reload"}) 
+			return dict(self._syncEnc(sess.data['ee'],sess.data['ep']),**{"action":"reload"})
 		except Exception as e:
 			# import sys
 			# self._x(sys.exc_traceback.tb_lineno)
@@ -754,6 +783,8 @@ class pxp(m.MVC):
 		if(not tagStr):
 			return self._err("Tag string not specified")
 		sql = ""
+		# self._x(tagStr)
+		# return self._err(os.environ)
 		db = self.dbsqlite()
 		try:
 			t = json.loads(tagStr)
@@ -982,10 +1013,11 @@ class pxp(m.MVC):
 					roundedSec = int(self._thumbName(t['tagtime'],number=True))
 					#get the accurate time within the .ts file 
 					#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
-					sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
-					if sec<0: #sanity check - should never happen
-						sec = 0
-					self._mkThumb(vidFile, imgFile, sec)				
+					# sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
+					# if sec<0: #sanity check - should never happen
+					# do it at 0 for now, we'll figure out how to increase accuracy later on 
+					sec = 0
+					self._mkThumb(vidFile, imgFile, sec)
 				#log that a tag was created
 				success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=t['user'],db=db)
 			#if lastID
@@ -993,10 +1025,8 @@ class pxp(m.MVC):
 				tagOut = {"success":success}
 			return tagOut
 		except Exception as e:
-			self.str().pout(sys.exc_traceback.tb_lineno)
-			print e
 			db.rollback()
-			return self._err()
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end tagSet()
 	#######################################################
 	def teleset(self):
@@ -1037,7 +1067,7 @@ class pxp(m.MVC):
 ##	           utility functions             ##
 ###############################################
 	#######################################################
-	# extracts video clip and saves it as mp4 file
+	# extracts video clip and saves it as mp4 file (for bookmarks)
 	#######################################################
 	def _extractclip(self, tagid, event):
 		from random import randrange
@@ -1163,14 +1193,22 @@ class pxp(m.MVC):
 	def _cln(self, text):
 		import string
 		return string.replace(text,'"','""')
-	#end cln
+	#end cln	
+	def _diskStat(self):
+		import os
+		st = os.statvfs("/")
+		diskFree = st.f_bavail * st.f_frsize
+		diskTotal = st.f_blocks * st.f_frsize
+		diskUsed = diskTotal-diskFree
+		diskPrct = int(diskUsed*100/diskTotal)
+ 		return {"total":self._sizeFmt(diskTotal),"free":self._sizeFmt(diskFree),"used":self._sizeFmt(diskUsed),"percent":str(diskPrct)}
 	#######################################################
 	#returns encoder state (0 - off, 1 - live, 2 - paused)
 	#######################################################
 	def _encState(self):
 		return int(self.disk().sockRead(udpPort=2224,timeout=0.5))
 	#end encState
-	def _err(self, msgText):
+	def _err(self, msgText=""):
 		return {"success":False,"msg":msgText}
 	#######################################################
 	#return salted hash sha256 of the password
@@ -1278,10 +1316,7 @@ class pxp(m.MVC):
 			return result
 		except Exception as e:
 			import sys
-			self.str().pout("")
-			print e
-			print sys.exc_traceback.tb_lineno
-			return {"msg":str(e),"line":str(sys.exc_traceback.tb_lineno),"fct":"listEvents"}
+			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvents")
 	#end listevents
 	#######################################################
 	#returns a list of teams in the system
@@ -1413,14 +1448,14 @@ class pxp(m.MVC):
 		db = self.dbsqlite()
 		#open the main database (where everything except tags is stored)
 		if(not db.open(self.wwwroot+"_db/pxp_main.db")):
-			return self._err()
+			return self._err("no database")
 		url = 'http://www.myplayxplay.net/max/sync/ajax'
 		# name them v1 and v2 to make sure it's not obvious what is being sent
 		# v3 is a dummy variable
 		# v0 is the authorization code (it will determine if this is encoder or another device)
 		cfg = self._cfgGet(self.wwwroot+"_db/")
 		if(not cfg): 
-			return self._err()
+			return self._err("not initialized")
 		authorization = cfg[1]
 		customerID = cfg[2]
 		params ={   'v0':authorization,
@@ -1429,10 +1464,13 @@ class pxp(m.MVC):
 					'v3':encEmail.encode("rot13"),
 					'v4':customerID
 				}
-		resp = self.io().send(url,params, jsn=True)		
+		# return self._err("zz")
+		resp = self.io().send(url,params, jsn=True)
+		if not resp:
+			return self._err("connection error")
+		# return resp
 		# self.str().jout(resp)
 		# self._x("")
-		# return self._err()
 		tables = ['users','leagues','teams','events', 'teamsetup']
 		for table in tables:
 			if (resp and (not (table in resp)) or (len(resp[table])<1)):
@@ -1728,6 +1766,10 @@ class pxp(m.MVC):
 		# sc = math.floor(seekTo-hr*3600-mn*60)
 		# tagTime = str(hr)[:-2].zfill(2)+":"+str(mn)[:-2].zfill(2)+":"+str(sc)[:-2].zfill(2)
 		# s = hl.sha1(str(seekTo))
+		if secname=='0':
+			#when the time is 0.0 then the 0 frame of the first video may not work properly
+			#set it to second fragment (semg1.ts)
+			secname='1'
 		fileName = "segm"+secname+".ts"
 		if(number):#only return the number without the rest of the filename
 			return secname

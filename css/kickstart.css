@@ -599,7 +599,7 @@ clear:both;
 	position: relative;
 	overflow: hidden;
 }
-.meter > span:after, .animate > span > span {
+.meter.animate > span:after, .animate > span > span {
 	content: "";
 	position: absolute;
 	top: 0; left: 0; bottom: 0; right: 0;
@@ -629,19 +629,7 @@ clear:both;
 	-moz-border-radius: 5px;
 	-webkit-border-radius: 5px;
 	border-radius: 5px;
-/*	   -webkit-border-top-right-radius: 8px;
-	-webkit-border-bottom-right-radius: 8px;
-	       -moz-border-radius-topright: 8px;
-	    -moz-border-radius-bottomright: 8px;
-	           border-top-right-radius: 8px;
-	        border-bottom-right-radius: 8px;
-	    -webkit-border-top-left-radius: 20px;
-	 -webkit-border-bottom-left-radius: 20px;
-	        -moz-border-radius-topleft: 20px;
-	     -moz-border-radius-bottomleft: 20px;
-	            border-top-left-radius: 20px;
-	         border-bottom-left-radius: 20px;
-*/	overflow: hidden;
+	overflow: hidden;
 }
 
 .animate > span:after {

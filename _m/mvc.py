@@ -247,23 +247,25 @@ class MVC():
 			#end get
 			def send(self,url,params,jsn=False):
 				import httplib, urllib, urlparse, json
-				headers = {"Content-type": "application/x-www-form-urlencoded", "Accept": "text/plain"}
-				parsed = urlparse.urlparse(url)
-				conn = httplib.HTTPConnection(parsed.netloc)
-				conn.request("POST", parsed.path, urllib.urlencode(params),headers)
-				r1 = conn.getresponse()
-				# from httplib2 import Http
-				# from urllib import urlencode
-				# h = Http()
-				# resp, content = h.request(url, "POST", urlencode(params))
-				# if resp['status']=='200':
-				if(jsn):
-					try:
-						return json.loads(r1.read())
-					except:
-						return False
-				return r1.read()
-				pass				
+				try:
+					headers = {"Content-type": "application/x-www-form-urlencoded", "Accept": "text/plain"}
+					parsed = urlparse.urlparse(url)
+					conn = httplib.HTTPConnection(parsed.netloc)
+					conn.request("POST", parsed.path, urllib.urlencode(params),headers)
+					r1 = conn.getresponse()
+					# from httplib2 import Http
+					# from urllib import urlencode
+					# h = Http()
+					# resp, content = h.request(url, "POST", urlencode(params))
+					# if resp['status']=='200':
+					if(jsn):
+						try:
+							return json.loads(r1.read())
+						except:
+							return False
+					return r1.read()
+				except:
+					return False
 			def upload(self, filePath):
 				form = self.frm
 				# A nested FieldStorage instance holds the file

@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 m = ls("MVC","_m/mvc.py")
 # m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
-	version = 0.77
+	version = 0.8
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -56,7 +56,7 @@ class Controller(m.MVC):
 				return
 			# check if it exists
 			if callable(fn):# it exists - go to that method
-				if(functionName=='login' or functionName=='sync2cloud'):
+				if(functionName=='login' or functionName=='sync2cloud' or functionName=='coachpick'):
 					self.str().jout(fn(sess))
 				else:
 					self.str().jout(fn())
@@ -82,6 +82,7 @@ class Controller(m.MVC):
 	def page(self,page):
 		# output the page
 		self.d["page"]=page
+		self.d["disk"]=self.p._diskStat()
 		if(page=="home"):
 			self.d['leagues']=self.p._listLeagues()
 			self.d['teams']=self.p._listTeams()
@@ -110,9 +111,8 @@ class Controller(m.MVC):
 			if(pgName=='egg.html'):
 				print self.p.egg()
 			else:
-				pass
-				template = engine.get_template(pgName)			
-				print(template.render(params))	
+				template = engine.get_template(pgName)
+				print(template.render(params))
 		except Exception as e:
 			print e
 		template = engine.get_template('footer.html')
