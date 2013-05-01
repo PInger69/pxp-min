@@ -198,7 +198,7 @@ class MVC():
 				except Exception as e:
 					# print e
 					#failed to bind to that port
-					data = 0
+					data = -1
 				#close the socket
 				try:
 					sock.close()

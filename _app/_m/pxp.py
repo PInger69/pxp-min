@@ -77,8 +77,6 @@ class pxp(m.MVC):
 	def dlprogress(self):
 		#get progress for each device
 
-		# problem with sockets: may miss the 100% mark
-		# progresses = self.disk().sockRead(udpPort=2221, sizeToRead=512)
 		progresses = self.disk().file_get_contents("/tmp/pxpidevprogress")
 		copyStatus = self.disk().file_get_contents("/tmp/pxpidevstatus")
 
@@ -97,95 +95,6 @@ class pxp(m.MVC):
 			totalPercent += percentNum
 		return {"progress":int(totalPercent/numDevices),"status":copyStatus}
 	#end dlprogress
-	#######################################################
-	# prepares the download - converts tags to a plist
-	#######################################################
-	def prepdown(self):
-		import pty
-		# pty.fork()
-		io = self.io()
-		event = io.get('event')
-		try:
-			# # remove old plist if it exists
-			# if(os.path.exists(self.wwwroot+event+'/tags.plist')):
-			# 	os.remove(self.wwwroot+event+'/tags.plist')
-			if not event: #event was not specified
-				return self._err()
-			# make sure it has no : or / \ in the name
-			if('/' in event or '\\' in event): #invalid name
-				return self._err()
-			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
-			db.qstr('SELECT * FROM `tags`')
-			# self.str().pout("")
-			xmlOutput = '<?xml version="1.0" encoding="UTF-8"?>\n'+\
-						'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'+\
-						'<plist version="1.0">\n<dict>\n'
-			# types of fields stored in xml .plist
-			# since fields are declared as e.g.: <key>fieldName</key> <string>fieldvalue</string>
-			fieldTypes = {'bookmark':'integer',	'coachpick':'integer',
-						'colour':'string', 'comment':'string',
-						'displaytime':'string',	'duration':'string',
-						'event':'string', 'id':'integer',
-						'name':'string', 'playerpick':'integer',
-						'rating':'integer', 'starttime':'real',
-						'time':'real', 'type':'integer',
-						'url':'string',	'user':'string', 'teleurl':'string'
-						}
-			# get each tag, format it and output to xml
-			for t in db.getasc():
-				# format the tag (get thumbnail image, telestration url, etc.)
-				tag = self._tagFormat(event=event,tag=t)
-				# add tag key
-				xmlOutput+='\t<key>'+str(tag['id'])+'</key>\n'
-				# add tag entries
-				xmlOutput+='\t<dict>\n'
-				# get standard fields into the plist
-				# go through each field and add it in the proper format
-				for field in tag:
-					if ((field in fieldTypes) and (field in tag)):
-						xmlOutput+='\t\t<key>'+field+'</key>\n'
-						xmlOutput+='\t\t<'+fieldTypes[field]+'>'+str(tag[field])+'</'+fieldTypes[field]+'>\n'
-				# add unique fields into the plist
-				xmlOutput+='\t\t<key>deleted</key>\n'
-				xmlOutput+='\t\t<'+str(tag['deleted']).lower()+'/>\n'
-				xmlOutput+='\t\t<key>own</key>\n'
-				xmlOutput+='\t\t<'+str(tag['own']).lower()+'/>\n'
-				# output lines
-				xmlOutput+='\t\t<key>line</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for line in tag['line']:
-					xmlOutput+='\t\t\t<string>'+line+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# output period
-				xmlOutput+='\t\t<key>period</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for period in tag['period']:
-					xmlOutput+='\t\t\t<string>'+period+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# output strength
-				xmlOutput+='\t\t<key>strength</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for strength in tag['strength']:
-					xmlOutput+='\t\t\t<string>'+strength+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# output player
-				xmlOutput+='\t\t<key>player</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for player in tag['player']:
-					xmlOutput+='\t\t\t<string>'+player+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# finish tag
-				xmlOutput+='\t</dict>\n'
-			# finish the xml
-			xmlOutput += '</dict>\n</plist>'
-			db.close()
-			# plist file is ready, write it to the folder:
-			self.disk().file_set_contents(self.wwwroot+event+'/tags.plist',xmlOutput)
-			return {"success":True}
-		except Exception as e:
-			import sys 
-			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
-	#end download
 	#######################################################
 	# easter egg - prints the comparison features list 
 	#######################################################
@@ -358,6 +267,8 @@ class pxp(m.MVC):
 			status = "live"
 		elif(state==2):
 			status = "paused"
+		elif(state==-1):
+			status = "unknown"
 		# elif(os.path.exists(self.wwwroot+'live/video/list.m3u8')): #no need for vod mode 
 		# 	status = "vod"
 		else:
@@ -482,11 +393,7 @@ class pxp(m.MVC):
 			msg = ""
 		except Exception as e:
 			import sys
-			# self.str().pout(e)
-			# print sys.exc_traceback.tb_lineno
-			rez = False
-			msg = str(e)+' '+sys.exc_traceback.tb_lineno
-		# rez = False
+			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 		return {"success":rez,"msg":msg}
 	#end encstart
 	#######################################################
@@ -602,6 +509,95 @@ class pxp(m.MVC):
 		sess.data['email']=False
 		# del sess.data['user']
 		return {"success":True}
+	#######################################################
+	# prepares the download - converts tags to a plist
+	#######################################################
+	def prepdown(self):
+		import pty
+		# pty.fork()
+		io = self.io()
+		event = io.get('event')
+		try:
+			# # remove old plist if it exists
+			# if(os.path.exists(self.wwwroot+event+'/tags.plist')):
+			# 	os.remove(self.wwwroot+event+'/tags.plist')
+			if not event: #event was not specified
+				return self._err()
+			# make sure it has no : or / \ in the name
+			if('/' in event or '\\' in event): #invalid name
+				return self._err()
+			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
+			db.qstr('SELECT * FROM `tags`')
+			# self.str().pout("")
+			xmlOutput = '<?xml version="1.0" encoding="UTF-8"?>\n'+\
+						'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'+\
+						'<plist version="1.0">\n<dict>\n'
+			# types of fields stored in xml .plist
+			# since fields are declared as e.g.: <key>fieldName</key> <string>fieldvalue</string>
+			fieldTypes = {'bookmark':'integer',	'coachpick':'integer',
+						'colour':'string', 'comment':'string',
+						'displaytime':'string',	'duration':'string',
+						'event':'string', 'id':'integer',
+						'name':'string', 'playerpick':'integer',
+						'rating':'integer', 'starttime':'real',
+						'time':'real', 'type':'integer',
+						'url':'string',	'user':'string', 'teleurl':'string'
+						}
+			# get each tag, format it and output to xml
+			for t in db.getasc():
+				# format the tag (get thumbnail image, telestration url, etc.)
+				tag = self._tagFormat(event=event,tag=t)
+				# add tag key
+				xmlOutput+='\t<key>'+str(tag['id'])+'</key>\n'
+				# add tag entries
+				xmlOutput+='\t<dict>\n'
+				# get standard fields into the plist
+				# go through each field and add it in the proper format
+				for field in tag:
+					if ((field in fieldTypes) and (field in tag)):
+						xmlOutput+='\t\t<key>'+field+'</key>\n'
+						xmlOutput+='\t\t<'+fieldTypes[field]+'>'+str(tag[field])+'</'+fieldTypes[field]+'>\n'
+				# add unique fields into the plist
+				xmlOutput+='\t\t<key>deleted</key>\n'
+				xmlOutput+='\t\t<'+str(tag['deleted']).lower()+'/>\n'
+				xmlOutput+='\t\t<key>own</key>\n'
+				xmlOutput+='\t\t<'+str(tag['own']).lower()+'/>\n'
+				# output lines
+				xmlOutput+='\t\t<key>line</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for line in tag['line']:
+					xmlOutput+='\t\t\t<string>'+line+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# output period
+				xmlOutput+='\t\t<key>period</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for period in tag['period']:
+					xmlOutput+='\t\t\t<string>'+period+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# output strength
+				xmlOutput+='\t\t<key>strength</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for strength in tag['strength']:
+					xmlOutput+='\t\t\t<string>'+strength+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# output player
+				xmlOutput+='\t\t<key>player</key>\n'
+				xmlOutput+='\t\t<array>\n'
+				for player in tag['player']:
+					xmlOutput+='\t\t\t<string>'+player+'</string>\n'
+				xmlOutput+='\t\t</array>\n'
+				# finish tag
+				xmlOutput+='\t</dict>\n'
+			# finish the xml
+			xmlOutput += '</dict>\n</plist>'
+			db.close()
+			# plist file is ready, write it to the folder:
+			self.disk().file_set_contents(self.wwwroot+event+'/tags.plist',xmlOutput)
+			return {"success":True}
+		except Exception as e:
+			import sys 
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+	#end prepdown
 	def sync2cloud(self,sess):
 		try:
 			if not ('ee' in sess.data and 'ep' in sess.data):
@@ -649,33 +645,39 @@ class pxp(m.MVC):
 					result['teams'][team['hid']][field] = team[field]
 
 			# get team setup (players, positions, etc.)
-			sql = "SELECT * FROM `teamsetup`"
+			sql = "SELECT * FROM `teamsetup` ORDER BY `team`, `jersey`"
 			db.qstr(sql)
 			# get players for each team
 			# will be {"team_HID":[{p1},{p2},{p3}]} where pX is {'player':'13','jersey':55,....}
 			idx = 0
 			for player in db.getasc():
+				# print player
+				# print "--------------\n<br>"
+				# if the team was not added to the array yet, add it
 				if(not player['team'] in result['teamsetup']):
-					idx = 0
 					result['teamsetup'][player['team']] = []
+				# create a blank player setup for this team (an empty dictionary - will be populated in the for loop after)
 				result['teamsetup'][player['team']].append({})
+				# simply populate the player setup dictionary that was just added
 				for field in player:
-					result['teamsetup'][player['team']][idx][field] = player[field]
-				idx+=1
+					#index of the last player (the new one)
+					lastPlayerIdx = len(result['teamsetup'][player['team']])-1
+					result['teamsetup'][player['team']][lastPlayerIdx][field] = player[field]
 
 			sql = "SELECT * FROM `leagues`"
+
 			db.qstr(sql)
 			for league in db.getasc():
 				result['leagues'][league['hid']] = {}
 				for field in league:
 					result['leagues'][league['hid']][field] = league[field]
-
 			db.close()
 		except Exception as e:
 			import sys
 			# self._x("")
 			# print e
 			# print sys.exc_traceback.tb_lineno
+			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 		return result
 	#######################################################
 	#modify a tag - set as coachpick, bookmark, etc
@@ -787,9 +789,10 @@ class pxp(m.MVC):
 		# return self._err(os.environ)
 		db = self.dbsqlite()
 		try:
+			# convert the json string to dictionary
 			t = json.loads(tagStr)
 			# t might be an array of dictionaires (size 1) or a dictionary itself
-			if (t and (not 'name' in t)):
+			if (len(t)>0 and (not 'name' in t)):
 				t = t[0] # this is an array of dictionaries - get the first element
 			if (not 'event' in t):
 				return self._err("Specify event") #event was not defined - can't open the database
@@ -807,6 +810,7 @@ class pxp(m.MVC):
 				t['type'] = int(t['type'])
 			if(not 'coachpick' in t): #will be only set if coach tags it 
 				t['coachpick']=0
+
 			#a new tag was received - add it
 			# TODO: check if this user already has a tag with the same name in the same place
 			if(t['type']&1): #odd types are tag 'start'
@@ -918,7 +922,7 @@ class pxp(m.MVC):
 			#name contains the line designation, i.e. d_2, or o_1
 
 			types = {
-				#numbers are: stop, start codes for line, period, strength
+				#numbers are: [stop, start] codes for line, period, strength
 				"line"		: ['2','1'], 
 				"player"	: ['6','5'],
 				"period"	: ['8','7'],
@@ -926,11 +930,13 @@ class pxp(m.MVC):
 			}
 			#go through every type of metadata for each tag (e.g. line, period)
 			#and update that attribute for the current tag based on what was the last line/zone, period/half etc. selected
+			# self._x("")
 			for tp in types:
 				if (tp in t): #this 
 					continue
 				#get the sql query with proper types
 				sql = "SELECT `"+tp+"` FROM `tags` WHERE `starttime`<=? AND ((`type`="+types[tp][0]+" AND (`starttime`+`duration`)>=?) OR (`type`="+types[tp][1]+" AND `duration`=0)) ORDER BY `starttime` "
+				# print sql+' '+str(tagTime)+" \n<br/>"
 				db.query(sql,(tagTime,tagTime))
 				rows = db.getrows()
 				# return
@@ -991,7 +997,7 @@ class pxp(m.MVC):
 				db.qstr(sql)
 			#if type is odd
 
-			# check if the tag that was just created wasn't deleted in the cleanup
+			# check if the tag that was just created wasn't deleted in the cleanup (will happen for tags of less than 5s long)
 			sql = "SELECT * FROM `tags` WHERE `id`=?"
 			db.query(sql,(lastID,))
 			if(success and lastID and len(db.getrows())>0): 
@@ -1002,15 +1008,18 @@ class pxp(m.MVC):
 
 				# get the tag information
 				tagOut = self._tagFormat(event=t['event'], user=t['user'], tagID=lastID, db=db)	
+				if 'success' in tagOut:
+					if not tagOut['success']:
+						return tagOut
 				t['tagtime'] = tagOut['time']
-				vidSegmfileName = self._thumbName(t['tagtime'])
+				vidSegmfileName = self._thumbName(t['tagtime'],event=t['event'])
 				#create a tag image if it doesn't exist already
 				pathToEvent = self.wwwroot+t['event']+'/'
 				imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
 				if(not os.path.exists(imgFile)):
 					vidFile = pathToEvent+"video/"+str(vidSegmfileName)
 					# self._thumbName(t['tagtime'],number=True)
-					roundedSec = int(self._thumbName(t['tagtime'],number=True))
+					# roundedSec = int(self._thumbName(t['tagtime'],number=True,event=t['event']))
 					#get the accurate time within the .ts file 
 					#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
 					# sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
@@ -1066,81 +1075,6 @@ class pxp(m.MVC):
 ###############################################
 ##	           utility functions             ##
 ###############################################
-	#######################################################
-	# extracts video clip and saves it as mp4 file (for bookmarks)
-	#######################################################
-	def _extractclip(self, tagid, event):
-		from random import randrange
-		import glob
-		# the process is as follows:
-		# 1) grab .ts files that encompass the tag duration
-		# 2) concatenate them
-		# 3) resize and convert to 540xHHH (keeping aspect ratio) mp4 file
-		# 4) convert it back to .ts file 
-		# 5) concatenate the 540x ad and the 540x video clip into one .ts
-		# 6) convert the resulting .ts into mp4 file
-		# get tag ID
-		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
-		# get the time from the database
-		sql = "SELECT starttime, duration FROM tags WHERE id=?"
-		db.query(sql,(tagid,))
-		row = db.getrow()
-		db.close()
-		startTime = float(row[0])
-		endTime   = float(row[0])+float(row[1])
-		strFile = self._thumbName(startTime,number=True) #index of the starting .ts file
-		endFile = self._thumbName(endTime,number=True) #index of the ending .ts file
-
-		bigTsFile = self.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file containing all .ts segments 
-		bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
-		tempTs = self.wwwroot+event+"/video/int_"+str(tagid)+".ts"#TS file containing resized video clip
-
-
-		vidFiles = "" #small .ts files to concatenate
-		#select .ts files that should be merged
-		for i in range(int(strFile),int(endFile)):
-			vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
-		if (os.path.exists(bigMP4File)):
-			return True # no need to re-create bookmarks that already exist
-
-		# concatenate the videos
-		cmd = "/bin/cat "+vidFiles+">"+bigTsFile
-		os.system(cmd)
-		# convert to mp4
-		#using ffmpeg
-		# cmd = "/usr/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
-		#using handbrake
-		cmd = "/usr/bin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File
-		os.system(cmd)
-		#remove the temporary ts file
-		os.remove(bigTsFile)
-
-		# randomy select an ad to add to the video
-		# this list contains all the ads videos in the directory
-		adFiles = glob.glob(self.wwwroot+"/ads/*.ts")
-		if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
-			return True
-		adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
-
-
-		#convert mp4 back to .ts for merging with an ad
-		cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 3000k -f mpegts "+tempTs #use 3Mbps bitrate to ensure high ad quality
-		# self.str().pout(cmd)
-		os.system(cmd)
-		# remove the mp4
-		os.remove(bigMP4File)
-		# merge the ad and the video file
-		cmd = "/bin/cat "+adFile+" "+tempTs+" >"+bigTsFile
-		os.system(cmd)
-		# remove temporary ts:
-		os.remove(tempTs)
-		# convert the result to an mp4 file again:
-		cmd = "/usr/bin/handbrake -i "+bigTsFile+" -o "+bigMP4File
-		os.system(cmd)
-		# remove the temporary ts file
-		os.remove(bigTsFile)
-		return True
-	#end bookmark
 	#######################################################
 	# XORs config file (simple 'encryption') to prevent tampering
 	#######################################################
@@ -1206,10 +1140,96 @@ class pxp(m.MVC):
 	#returns encoder state (0 - off, 1 - live, 2 - paused)
 	#######################################################
 	def _encState(self):
-		return int(self.disk().sockRead(udpPort=2224,timeout=0.5))
+		# using file as means to transfer status works better than sockets as there are no timeouts with these
+		return int(self.disk().file_get_contents("/tmp/pxpstreamstatus")) #int(self.disk().sockRead(udpPort=2224,timeout=0.5))
 	#end encState
 	def _err(self, msgText=""):
 		return {"success":False,"msg":msgText}
+	#######################################################
+	# extract number from a string (returns 0 if no numbers found)
+	#######################################################
+	def _exNum(self, text):
+		import re
+		try:
+			return int(re.search('\d+', text).group())
+		except:
+			return 0
+	#end exNum
+	#######################################################
+	# extracts video clip and saves it as mp4 file (for bookmarks)
+	#######################################################
+	def _extractclip(self, tagid, event):
+		from random import randrange
+		import glob
+		# the process is as follows:
+		# 1) grab .ts files that encompass the tag duration
+		# 2) concatenate them
+		# 3) resize and convert to 540xHHH (keeping aspect ratio) mp4 file
+		# 4) convert it back to .ts file 
+		# 5) concatenate the 540x ad and the 540x video clip into one .ts
+		# 6) convert the resulting .ts into mp4 file
+		# get tag ID
+		db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
+		# get the time from the database
+		sql = "SELECT starttime, duration FROM tags WHERE id=?"
+		db.query(sql,(tagid,))
+		row = db.getrow()
+		db.close()
+		startTime = float(row[0])
+		endTime   = float(row[0])+float(row[1])
+		strFile = self._thumbName(startTime,number=True,event=event) #index of the starting .ts file
+		endFile = self._thumbName(endTime,number=True,event=event) #index of the ending .ts file
+
+		bigTsFile = self.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file containing all .ts segments 
+		bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
+		tempTs = self.wwwroot+event+"/video/int_"+str(tagid)+".ts"#TS file containing resized video clip
+
+
+		vidFiles = "" #small .ts files to concatenate
+		#select .ts files that should be merged
+		for i in range(int(strFile),int(endFile)):
+			vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
+		if (os.path.exists(bigMP4File)):
+			return True # no need to re-create bookmarks that already exist
+
+		# concatenate the videos
+		cmd = "/bin/cat "+vidFiles+">"+bigTsFile
+		os.system(cmd)
+		# convert to mp4
+		#using ffmpeg
+		# cmd = "/usr/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
+		#using handbrake
+		cmd = "/usr/bin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File
+		os.system(cmd)
+		#remove the temporary ts file
+		os.remove(bigTsFile)
+
+		# randomy select an ad to add to the video
+		# this list contains all the ads videos in the directory
+		adFiles = glob.glob(self.wwwroot+"/ads/*.ts")
+		if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
+			return True
+		adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
+
+
+		#convert mp4 back to .ts for merging with an ad
+		cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 3000k -f mpegts "+tempTs #use 3Mbps bitrate to ensure high ad quality
+		# self.str().pout(cmd)
+		os.system(cmd)
+		# remove the mp4
+		os.remove(bigMP4File)
+		# merge the ad and the video file
+		cmd = "/bin/cat "+adFile+" "+tempTs+" >"+bigTsFile
+		os.system(cmd)
+		# remove temporary ts:
+		os.remove(tempTs)
+		# convert the result to an mp4 file again:
+		cmd = "/usr/bin/handbrake -i "+bigTsFile+" -o "+bigMP4File
+		os.system(cmd)
+		# remove the temporary ts file
+		os.remove(bigTsFile)
+		return True
+	#end extractClip
 	#######################################################
 	#return salted hash sha256 of the password
 	#######################################################
@@ -1280,7 +1300,17 @@ class pxp(m.MVC):
 	#######################################################
 	def _listEvents(self):
 		try:
-			sql = "SELECT IFNULL(homeTeam,'---') AS `homeTeam`, IFNULL(visitTeam,'---') AS `visitTeam`, IFNULL(league,'---') AS `league`, IFNULL(`date`,'2000-01-01') AS `date`, IFNULL(`hid`,'000') AS `hid`, strftime('%Y-%m-%d_%H-%M-%S',`date`) AS `dateFmt` FROM `events` WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 ORDER BY `date` DESC"
+			sql = "SELECT IFNULL(events.homeTeam,'---') AS `homeTeam`, \
+						  IFNULL(events.visitTeam,'---') AS `visitTeam`, \
+						  IFNULL(events.league,'---') AS `league`, \
+						  IFNULL(events.date,'2000-01-01') AS `date`, \
+						  IFNULL(events.hid,'000') AS `hid`, \
+						  strftime('%Y-%m-%d_%H-%M-%S',events.date) AS `dateFmt`, \
+						  leagues.sport AS `sport` \
+					FROM `events` \
+					LEFT JOIN `leagues` ON events.league=leagues.name \
+					WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 \
+					ORDER BY `date` DESC"
 			if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
 				return False
 			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
@@ -1689,8 +1719,8 @@ class pxp(m.MVC):
 			if (not tag['time']):
 				tag['time']=0.01
 			#format some custom fields
-			tag['duration']=str(round(tag['duration']))[:-2]
-			tag['displaytime'] = str(datetime.timedelta(seconds=round(tag['time'])))
+			tag['duration']=str(round(float(tag['duration'])))[:-2]
+			tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
 			tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
 			tag['own'] = tag['user']==user #whether this is user's own tag
 			if(event=='live' and os.path.exists(self.wwwroot+event+'/evt.txt')):
@@ -1725,14 +1755,15 @@ class pxp(m.MVC):
 	#######################################################
 	#returns file name for the video that contains appropriate time 
 	#######################################################
-	def _thumbName(self,seekTo,number=False):
+	def _thumbName(self,seekTo,number=False,event="live"):
 		import math
-		# global self.wwwroot
-		# listPath = self.wwwroot+"/list.m3u8"
+		# path to the list.m3u8 file - playlist for the hls
+		listPath = self.wwwroot+event+"/video/list.m3u8"
 		#open m3u8 file:
-		# f = open(listPath,"r")
-		#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at 00:00:50 time. reachedTime contains the number of seconds since file0
-		# reachedTime = 0.0
+		f = open(listPath,"r")
+
+		#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at roughly 00:00:50 time. reachedTime contains the number of seconds since file0
+		reachedTime = 0.0
 		try:
 			seekTo = float(seekTo) # make sure this is not a string
 		except:
@@ -1743,36 +1774,28 @@ class pxp(m.MVC):
 		# fileSequence531.ts
 		#and so on - a line with time precedes the file 
 
-		# fileName = ""
-		# for line in f:
-		#	 cleanStr = line.strip()
-		#	 if(cleanStr[:7]=='#EXTINF'):#this line contains time information
-		#		 reachedTime += float(cleanStr[8:-1]) #get the number (without the trailing comma)
-		#	 elif(cleanStr[-3:]=='.ts' and seekTo<=reachedTime):#this line contains filename
-		#		 #found the right time - this file contains the frame we need
-		#		 fileName = cleanStr
-		#		 break
-		# f.close()
-
-		# time of the thumbnail
-		# sec = round(seekTo)
-		# for the file name
+		fileName = False
+		for line in f:
+			 cleanStr = line.strip()
+			 if(cleanStr[:7]=='#EXTINF'):#this line contains time information
+				 reachedTime += float(cleanStr[8:-1]) #get the number (without the trailing comma) - this is the duration of this segment file
+			 elif(cleanStr[-3:]=='.ts' and seekTo<=reachedTime):#this line contains filename
+				 #found the right time - this file contains the frame we need
+				 fileName = cleanStr
+				 break
+		f.close()
+		if (not fileName):
+			return 0
 		# each .ts file contains slightly less than 1 second
-		#round down to the nearest file
-		secname = str(int(seekTo/0.984315)) 
-		# convert time to hh:mm:ss
-		# hr = math.floor(seekTo/3600)
-		# mn = math.floor((seekTo-hr*3600)/60)
-		# sc = math.floor(seekTo-hr*3600-mn*60)
-		# tagTime = str(hr)[:-2].zfill(2)+":"+str(mn)[:-2].zfill(2)+":"+str(sc)[:-2].zfill(2)
-		# s = hl.sha1(str(seekTo))
-		if secname=='0':
-			#when the time is 0.0 then the 0 frame of the first video may not work properly
-			#set it to second fragment (semg1.ts)
-			secname='1'
-		fileName = "segm"+secname+".ts"
+		# round down to the nearest file
+		# secname = str(int(seekTo/0.984315)) 
+		# if secname=='0':
+		# 	#when the time is 0.0 then the 0 frame of the first video may not work properly
+		# 	#set it to second fragment (semg1.ts)
+		# 	secname='1'
+		# fileName = "segm"+secname+".ts"
 		if(number):#only return the number without the rest of the filename
-			return secname
+			return self._exNum(fileName)
 		return fileName
 	#end calcThumb
 	def _x(self,txt):
