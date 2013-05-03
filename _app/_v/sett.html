@@ -4,3 +4,34 @@ only for big boys!
 <input type="file" name="file" id="file"><br>
 <input type="submit" name="submit" value="Submit">
 </form> -->
+<script type="text/javascript">
+function outTime() {
+	var d = new Date();
+	return d.getHours()+":"+d.getMinutes()+":"+d.getSeconds()+"."+d.getMilliseconds();
+}
+
+function getEncStat() {
+	$.ajax({
+	  url: 'ajax/encoderstatjson',
+	  type: 'GET',
+	  success: function(data, textStatus, xhr) {
+	    setTimeout(getEncStat,500);
+	  	try{
+			var d = eval("("+data+")");
+		  	if (d['status']=='live') {
+		  		// console.log(d['status']);
+		  		return;
+		  	}
+		    console.log(outTime()+' '+d['status']);
+		}
+		catch(e){
+			console.log(outTime()+" "+data);
+		}
+	  }
+	});
+	
+}
+function fOnLoad() {
+	getEncStat();
+}
+</script>

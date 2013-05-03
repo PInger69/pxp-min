@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 m = ls("MVC","_m/mvc.py")
 # m = lp("MVC","_m/mvc.pyc")
 class Controller(m.MVC):
-	version = 0.82
+	version = 0.83
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -88,7 +88,7 @@ class Controller(m.MVC):
 			self.d['teams']=self.p._listTeams()
 			self.d['encStatus']=self.p.encoderstatus()
 		if(page=="past"):
-			self.d['events']=self.p._listEvents()#+self.p._listEvents()+self.p._listEvents()+self.p._listEvents()
+			self.d['events']=self.p._listEvents(showDeleted=False)
 		self._out(page+'.html',self.d)
 ######################################
 ##		 internal functions	   		##

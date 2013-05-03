@@ -66,9 +66,12 @@
 		    }
 		});
 	}//ajaxSubmit
-	function ajaxCall(action,params){
+	function ajaxCall(action,params,callback){
 		if(params==undefined){
 			params = "";
+		}
+		if(callback==undefined){
+			callback = false;
 		}
 		try{
 			//params contains the list of IDs of elements whose values should be passed as parameters
@@ -111,11 +114,15 @@
 	    		case 'reload': 	
 	    			window.location.reload();
 	    		break;
-	    		default :
+	    		default :	    		
 	    		break;
 
-	    	}
+	    	}	    	
 		    ajaxInProgress = false;
+		    if(res['success'] && callback!=false){
+		    	console.log('call');
+		    	callback();
+		    }
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
 		  	// if (shuttingDown){

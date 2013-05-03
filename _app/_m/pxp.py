@@ -82,6 +82,9 @@ class pxp(m.MVC):
 
 		totalPercent = 0
 		numDevices   = 1 #number of devices connected - do not set this to zero to avoid 0/0 case
+		# check if the idevcopy is running 
+		if(not (self.disk().psOn("idevcopy") or progresses)):
+			return {"progress":0,"status":-1}
 		if (not progresses): #file doesn't exist
 			return {"progress":totalPercent, "status":copyStatus}
 		progresses = progresses.strip().split("\n")
@@ -255,7 +258,7 @@ class pxp(m.MVC):
 		success = True
 		if(os.path.exists(self.wwwroot+folder)):
 			success = not os.system("rm -r "+self.wwwroot+folder)
-		return {"Success":success}
+		return {"success":success}
 	#end evtdelete
 	#######################################################
 	# returns encoder status as a string, 
@@ -527,7 +530,8 @@ class pxp(m.MVC):
 			if('/' in event or '\\' in event): #invalid name
 				return self._err()
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
-			db.qstr('SELECT * FROM `tags`')
+			# select all even-type tags (deleted are odd, so won't be downloaded)
+			db.qstr('SELECT * FROM `tags` WHERE  (`type` & 1) = 0')
 			# self.str().pout("")
 			xmlOutput = '<?xml version="1.0" encoding="UTF-8"?>\n'+\
 						'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'+\
@@ -1298,19 +1302,21 @@ class pxp(m.MVC):
 	#######################################################
 	#returns a list of events in the system
 	#######################################################
-	def _listEvents(self):
+	def _listEvents(self, showDeleted=True):
 		try:
+			query = "" if showDeleted else ' AND events.deleted=0'
 			sql = "SELECT IFNULL(events.homeTeam,'---') AS `homeTeam`, \
 						  IFNULL(events.visitTeam,'---') AS `visitTeam`, \
 						  IFNULL(events.league,'---') AS `league`, \
 						  IFNULL(events.date,'2000-01-01') AS `date`, \
 						  IFNULL(events.hid,'000') AS `hid`, \
 						  strftime('%Y-%m-%d_%H-%M-%S',events.date) AS `dateFmt`, \
-						  leagues.sport AS `sport` \
+						  leagues.sport AS `sport`, \
+						  events.deleted AS `deleted` \
 					FROM `events` \
 					LEFT JOIN `leagues` ON events.league=leagues.name \
-					WHERE strftime('%s',`date`)<= strftime('%s','now') AND `deleted`=0 \
-					ORDER BY `date` DESC"
+					WHERE strftime('%s',events.date)<= strftime('%s','now')"+query+"\
+					ORDER BY events.date DESC"
 			if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
 				return False
 			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
@@ -1626,7 +1632,7 @@ class pxp(m.MVC):
 			return [] #return empty list if user did not provide the correct info or event does not exist
 		db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
 		try:
-			if(allData):#selecting all tags from this game
+			if(allData):#selecting all tags from this game (assumption here - user has no tags yet, so he doesn't need to see deleted tags)
 				lastup = 0
 				sql = "SELECT * FROM `tags` WHERE NOT `type`=3"
 				db.qstr(sql)
@@ -1646,14 +1652,15 @@ class pxp(m.MVC):
 			#format tags for output
 			tagsOut = {}
 			for tag in tags:
-				if (int(tag['type'])&1):
+				if ((int(tag['type'])&1) and (not int(tag['type'])==3)):
 					#only even type tags are sent (normal, telestration, period/half/zone/line end tags)
+					#also deleted tags are sent - to delete them from other tablets
 					continue
 				if(str(tag['time'])=='nan'):
 					tag['time']=0
 				tagJSON = self._tagFormat(tag=tag,event=event, db=db)
-				if(allData or not user==tag['user']):
-					tagsOut[tag['id']]=(tagJSON)
+				# if(allData or not user==tag['user']):
+				tagsOut[tag['id']]=(tagJSON)
 			#end for tags:
 	
 			#get any other events (other than tags)

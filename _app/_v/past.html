@@ -76,6 +76,7 @@
 <script type="text/javascript" src="js/jwplayer.js"></script>
 <script type="text/javascript">
 var dlQueue = []; //queue used for processing multiple downloads
+var rmQueue = []; //queue used for processing multiple deletions
 function getProgress() {
 	// get download progress
 	$.ajax({
@@ -98,39 +99,58 @@ function getProgress() {
 		}//end success
 	});	
 }
+
+function rmQueueNext() {
+	if(rmQueue.length<1){
+		return;
+	}
+	obj = rmQueue.pop();
+	// remove event row from the table
+	$(obj).parents('.row').hide();
+	// send the call to delete the event
+	ajaxCall("evtdelete/?name="+$(obj).attr('event')+"&event="+$(obj).attr('eventID'),"",rmQueueNext);
+
+}
+// process download queue
 function processQueue(itemDone, itemError) {
 	if(itemDone==undefined) itemDone=false;
-	if(itemError==undefined) itemError=false;
+	if(itemError==undefined) itemError=0;
 	if(itemDone) { //just finished downloading an element - remove the progress bar
 		switch(itemError){
+			case -1: //idevcopy app crashed - retry download
+			break;
+			case false:
+			case 0:
+				status = '<i class="icon-ok green large"></i>';
+			break;
 			case 1:
 				status = 'not enough space';
 			break;
 			case 4:
 				status = 'connect iPad via USB';
 			break;
-			case false:
-			case 0:
-				status = '<i class="icon-ok green large"></i>';
-			break;
 			default: 
 				status='error ('+itemError+')';
 			break;
 		}
-		dlQueue[0].html(status); //either an error occurred or the progress has finished - put the status instead of the progress bar
-		dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
+		if(itemError>=0){
+			dlQueue[0].html(status); //either an error occurred or the progress has finished - put the status instead of the progress bar
+			dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
+		}
 	}
-	if(dlQueue.length<=0) {//no more items in the queue - all downloads are complete
-		$('#download').removeAttr('disabled');
-		$('#download').html('<i class="icon-download-alt"></i> download');
-		return; 
+	if(itemError>=0){
+		if(dlQueue.length<=0) {//no more items in the queue - all downloads are complete
+			$('#download').removeAttr('disabled');
+			$('#download').html('<i class="icon-download-alt"></i> download');
+			return; 
+		}
+		// grab the next video in the queue (first element)
+		vid = dlQueue[0].find('input'); //dlqueue contains div's that contain checkboxes - hence the .find() method
+		// get the name of the event (for ipad)
+		evt = $(vid).attr('event');
+		// replace checkbox with a progress bar
+		dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
 	}
-	// grab the next video in the queue (first element)
-	vid = dlQueue[0].find('input'); //dlqueue contains div's that contain checkboxes - hence the .find() method
-	// get the name of the event (for ipad)
-	evt = $(vid).attr('event');
-	// replace checkbox with a progress bar
-	dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
 	// send a request to download the file
 	$.ajax({
 	  url: 'ajax/prepdown',
@@ -148,8 +168,7 @@ function processQueue(itemDone, itemError) {
 		});
 	  }
 	});
-		
-}
+}//end processQueue
 
 function pbarWidth(obj,width) {
 	obj.animate({
@@ -209,13 +228,16 @@ function fOnLoad (argument) {
 
     });
     $('.removeSel').click(function (e){
+    	e.preventDefault();
+    	if(dlQueue.length>0){
+    		return;
+    	}
     	// remove selected events
     	if(confirm('This will delete all the selected events. Are you sure?')){
 	    	$('input:checked').each(function (){
-	    		ajaxCall("evtdelete/?name="+$(this).attr('event')+"&event="+$(this).attr('eventID'));
-	    		// remove event row from the table
-	    		$(this).parents('.row').hide();
+	    		rmQueue.push(this);
 	    	});
+	    	rmQueueNext();
     	}//if confirm
     });//removeSel.click
     $('.removeEvt').click(function (e) {
