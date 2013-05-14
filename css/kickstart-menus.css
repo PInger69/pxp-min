@@ -131,7 +131,7 @@ z-index:600;
 .menu li.menu-toggle{display:none;}
 
 
-@media all and (max-width: 768px) {
+@media all and (max-width: 860px) {
 	
 	.grid .menu li,
 	.grid .menu.vertical li,

@@ -190,6 +190,7 @@ function fOnLoad (argument) {
 			$(this).remove();
 		});
 		$(this).parents('.wnd-container').fadeOut();
+		jwplayer("vidPlayer").stop();
 	});
 	// attach media player to any media links (allows graceful breakdown for js-disabled cases)
     $('.media').click(function (e){

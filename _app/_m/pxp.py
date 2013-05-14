@@ -46,10 +46,12 @@ class pxp(m.MVC):
 	def coachpick(self,sess):
 		import glob
 		# make sure there is a live event
-		if (not os.path.exists(self.wwwroot+'live/video')):
+		if(not os.path.exists(self.wwwroot+'live/video')):
 			return self._err("no live event")
 		# get logged in user
 		user = sess.data['user'] # user HID
+		if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
+			return self._err("not initialized")
 		# get his tag colour from the database
 		db = self.dbsqlite(self.wwwroot+'_db/pxp_main.db')
 		sql = "SELECT `tagColour` FROM `users` WHERE `hid` LIKE ?"
@@ -83,7 +85,7 @@ class pxp(m.MVC):
 		totalPercent = 0
 		numDevices   = 1 #number of devices connected - do not set this to zero to avoid 0/0 case
 		# check if the idevcopy is running 
-		if(not (self.disk().psOn("idevcopy") or progresses)):
+		if(not (self.disk().psOn("idevcopy") or progresses or copyStatus)):
 			return {"progress":0,"status":-1}
 		if (not progresses): #file doesn't exist
 			return {"progress":totalPercent, "status":copyStatus}
@@ -132,6 +134,11 @@ class pxp(m.MVC):
 				<div class="col_6 bold">Encoder installation time</div>
 				<div class="col_3">10 minutes (automatic)</div>
 				<div class="col_3">2 - 4 hours (manual)</div>
+			</div>
+			<div class="row">
+				<div class="col_6 bold">Video bitrate (quality)</div>
+				<div class="col_3">2 - 2.5 mbps</div>
+				<div class="col_3">1 mbps</div>
 			</div>
 			<div class="row">
 				<div class="col_6 bold">Encode start time</div>
@@ -242,6 +249,8 @@ class pxp(m.MVC):
 	#######################################################
 	def evtdelete(self):
 		import os
+		if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
+			return self._err("not initialized")
 		io = self.io()
 		folder = io.get('name') #name of the folder containing the content
 		event  = io.get('event') #hid of the event  stored in the database
@@ -339,6 +348,8 @@ class pxp(m.MVC):
 		from datetime import datetime as dt
 		from time import time as tm
 		try:
+			if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
+				return self._err("not initialized")
 			#make sure not overwriting an old event
 			if(os.path.exists(self.wwwroot+"live/evt.txt")):
 				self._postProcess()
@@ -635,6 +646,8 @@ class pxp(m.MVC):
 	#######################################################
 	def teamsget(self):
 		try:
+			if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
+				return self._err("not initialized")
 			db = self.dbsqlite(self.wwwroot+'_db/pxp_main.db')
 			result = {"teams":{},"teamsetup":{},"leagues":{}}
 			# get the teams from the database
@@ -814,7 +827,6 @@ class pxp(m.MVC):
 				t['type'] = int(t['type'])
 			if(not 'coachpick' in t): #will be only set if coach tags it 
 				t['coachpick']=0
-
 			#a new tag was received - add it
 			# TODO: check if this user already has a tag with the same name in the same place
 			if(t['type']&1): #odd types are tag 'start'
@@ -829,6 +841,7 @@ class pxp(m.MVC):
 				else:
 					extraVars = ()
 					sqlAddVal = ""
+				# update a tag (duration will be current time minus start time). if duration is negative (user seeked back and hit tag) it will be set to zero
 				sql = "UPDATE tags SET starttime=time, duration=CASE WHEN (?-time)>0 THEN (?-time) ELSE 0 END, type=? WHERE type=?"+sqlAddVal
 				success = success and db.query(sql,(t['tagtime'],t['tagtime'],t['type']+1,t['type'])+extraVars)
 				# success = success and db.numrows()>0
@@ -1016,20 +1029,27 @@ class pxp(m.MVC):
 					if not tagOut['success']:
 						return tagOut
 				t['tagtime'] = tagOut['time']
-				vidSegmfileName = self._thumbName(t['tagtime'],event=t['event'])
 				#create a tag image if it doesn't exist already
 				pathToEvent = self.wwwroot+t['event']+'/'
 				imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
 				if(not os.path.exists(imgFile)):
-					vidFile = pathToEvent+"video/"+str(vidSegmfileName)
-					# self._thumbName(t['tagtime'],number=True)
-					# roundedSec = int(self._thumbName(t['tagtime'],number=True,event=t['event']))
-					#get the accurate time within the .ts file 
-					#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
-					# sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
-					# if sec<0: #sanity check - should never happen
-					# do it at 0 for now, we'll figure out how to increase accuracy later on 
-					sec = 0
+					if(t['event']=='live'):
+						# for live events the thumbnail must be extracted from a .TS file
+						# get the name of the .ts segment containing the right time					
+						vidSegmfileName = self._thumbName(t['tagtime'],event=t['event'])
+						vidFile = pathToEvent+"video/"+str(vidSegmfileName)
+						# self._thumbName(t['tagtime'],number=True)
+						# roundedSec = int(self._thumbName(t['tagtime'],number=True,event=t['event']))
+						#get the accurate time within the .ts file 
+						#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
+						# sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
+						# if sec<0: #sanity check - should never happen
+						# do it at 0 for now, we'll figure out how to increase accuracy later on 
+						sec = 0
+					else:
+						# for past events, the thumbnail can be extracted from the main.mp4
+						vidFile = pathToEvent+"video/main.mp4"
+						sec = t['tagtime']
 					self._mkThumb(vidFile, imgFile, sec)
 				#log that a tag was created
 				success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=t['user'],db=db)
@@ -1179,29 +1199,39 @@ class pxp(m.MVC):
 		db.query(sql,(tagid,))
 		row = db.getrow()
 		db.close()
+		# start time of the clip
 		startTime = float(row[0])
-		endTime   = float(row[0])+float(row[1])
-		strFile = self._thumbName(startTime,number=True,event=event) #index of the starting .ts file
-		endFile = self._thumbName(endTime,number=True,event=event) #index of the ending .ts file
+		# duration of the clip (needed for extraction from .MP4)
+		duration = float(row[1])
 
 		bigTsFile = self.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file containing all .ts segments 
 		bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
 		tempTs = self.wwwroot+event+"/video/int_"+str(tagid)+".ts"#TS file containing resized video clip
-
-
-		vidFiles = "" #small .ts files to concatenate
-		#select .ts files that should be merged
-		for i in range(int(strFile),int(endFile)):
-			vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
+		mainMP4File = self.wwwroot+event+"/video/main.mp4"
 		if (os.path.exists(bigMP4File)):
 			return True # no need to re-create bookmarks that already exist
 
-		# concatenate the videos
-		cmd = "/bin/cat "+vidFiles+">"+bigTsFile
-		os.system(cmd)
-		# convert to mp4
+		if(event=='live'):
+			# end time of the clip (needed for extraction from .TS fragments)
+			endTime   = startTime+duration
+			strFile = self._thumbName(startTime,number=True,event=event) #index of the starting .ts file
+			endFile = self._thumbName(endTime,number=True,event=event) #index of the ending .ts file
+			# only way to extract video for live events is to concatenate .ts segments
+			vidFiles = "" #small .ts files to concatenate
+			#select .ts files that should be merged
+			for i in range(int(strFile),int(endFile)):
+				vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
+
+			# concatenate the videos
+			cmd = "/bin/cat "+vidFiles+">"+bigTsFile
+			os.system(cmd)		
+		else:
+			# for past events, the mp4 file is ready for processing, extract clip from it
+			cmd = "/usr/local/bin/ffmpeg -ss "+startTime+" -t "+duration+" -i "+mainMP4File+" -b:v 7000k -f mpegts "+bigTsFile
+			os.system(cmd)
+		# convert to mp4, resizing it
 		#using ffmpeg
-		# cmd = "/usr/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
+		# cmd = "/usr/local/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
 		#using handbrake
 		cmd = "/usr/bin/handbrake -X 540 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File
 		os.system(cmd)
@@ -1213,11 +1243,10 @@ class pxp(m.MVC):
 		adFiles = glob.glob(self.wwwroot+"/ads/*.ts")
 		if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
 			return True
+
 		adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
-
-
-		#convert mp4 back to .ts for merging with an ad
-		cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 3000k -f mpegts "+tempTs #use 3Mbps bitrate to ensure high ad quality
+		#convert small mp4 back to .ts for merging with an ad
+		cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 7000k -f mpegts "+tempTs #use high bitrate to ensure high ad quality
 		# self.str().pout(cmd)
 		os.system(cmd)
 		# remove the mp4
@@ -1318,7 +1347,7 @@ class pxp(m.MVC):
 					WHERE strftime('%s',events.date)<= strftime('%s','now')"+query+"\
 					ORDER BY events.date DESC"
 			if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
-				return False
+				return []
 			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 			db.qstr(sql)
 			result = db.getasc()
@@ -1329,7 +1358,7 @@ class pxp(m.MVC):
 				live = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
 			else:
 				live = ""
-			# self.str().pout("")
+			# self._x("")
 			for row in result:
 				# event name
 				# print row	
@@ -1339,9 +1368,13 @@ class pxp(m.MVC):
 				# check if there is a streaming file in there
 				if(os.path.exists(evtDir+'/video/list.m3u8')):
 					result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/list.m3u8'
+				# print evtDir+'/video/main.mp4 -- '
+				# print os.path.exists(evtDir+'/video/main.mp4')
+				# print "<br/>"
 				# check if the video file is there
-				if(os.path.exists(evtDir+'/video/main.mp4')):
+				if(os.path.exists(evtDir+'/video/main.mp4') and (evtName != live)):
 					#it is - provide a path to it
+					result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
 					result[i]['mp4']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
 					result[i]['vid_size']=self._sizeFmt(os.stat(evtDir+"/video/main.mp4").st_size)
 				# check if this is a live event
@@ -1360,7 +1393,7 @@ class pxp(m.MVC):
 	def _listLeagues(self):
 		sql = "SELECT * FROM `leagues` ORDER BY `name` ASC"
 		if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
-			return False
+			return []
 		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 		db.qstr(sql)
 		result = db.getasc()
@@ -1373,7 +1406,7 @@ class pxp(m.MVC):
 	def _listTeams(self):
 		sql = "SELECT * FROM `teams` ORDER BY `name` ASC"
 		if(not os.path.exists(self.wwwroot+"_db/pxp_main.db")):
-			return False
+			return []
 		db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 		db.qstr(sql)
 		result = db.getasc()
@@ -1418,7 +1451,7 @@ class pxp(m.MVC):
 		cmd = "/usr/local/bin/ffmpeg"
 		#automatically calculates height based on defined width:
 		# -itsoffset is slower than -ss but insignificant for small files
-		params = " -itsoffset "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
+		params = " -ss "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
 		os.system(cmd+params) # need to wait for response otherwise the tablet will try to download image file that does not exist yet
 	
 	#######################################################
@@ -1431,6 +1464,8 @@ class pxp(m.MVC):
 		os.remove(self.wwwroot+"live/evt.txt")
 		# rename the live to that directory
 		os.rename(self.wwwroot+"live",self.wwwroot+event)
+		# update mp4 headers to make the mp4 streamable
+		os.system("/usr/local/bin/qtfaststart "+self.wwwroot+event+'/video/main.mp4')
 		# remove all .ts files - leave them on the server for streaming
 		# cmd = "find "+self.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
 		# os.system(cmd)
@@ -1439,15 +1474,17 @@ class pxp(m.MVC):
 	#end postProcess
 
 	def _sizeFmt(self,size):
+		s = float(size)
 		#size names
 		sizeSuffix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
 		for x in sizeSuffix:			
-			if size < 1024 or x==sizeSuffix[len(sizeSuffix)-1]:
+			if s < 1024 or x==sizeSuffix[len(sizeSuffix)-1]:
 				#either reached the capacity (i.e. size will be under 1024)
 				#or reached the end of suffixes (highly unlikely)
-				return "%d %s" % (size, x)
+				return "%0.2f %s" % (s, x)
 			#shift left by 10 is equivalent to dividing by 1024 with round down
-			size = size >> 10
+			# size = size >> 10
+			s = s / 1024
 		return ""
 	#######################################################
 	#adds tags to an event during the sync procedure (gets called once for each event)
@@ -1775,11 +1812,12 @@ class pxp(m.MVC):
 			seekTo = float(seekTo) # make sure this is not a string
 		except:
 			return 0
+
 		#starting from the top, add up the times until reached desired time - that's the file
 		#assuming m3u8 file is in this format:
 		# #EXTINF:0.98431,
 		# fileSequence531.ts
-		#and so on - a line with time precedes the file 
+		#and so on - a line with time precedes the line with file name
 
 		fileName = False
 		for line in f:

@@ -102,10 +102,10 @@ border:1px dotted #ccc;
 	
 }
 
-@media all and (min-width: 768px) and (max-width: 1024px) {
+@media all and (min-width: 860px) and (max-width: 1024px) {
 	
 	.grid *[class*="col_"]{}
-	.grid{max-width: 768px;}
+	.grid{max-width: 860px;}
 	.show-desktop	{display:none;}
 	.hide-desktop	{display:block;}
 	.show-tablet	{display:block;}
@@ -116,7 +116,7 @@ border:1px dotted #ccc;
 }
 
 
-@media all and (min-width: 480px) and (max-width: 768px) {
+@media all and (min-width: 480px) and (max-width: 860px) {
 
 	.grid *[class*="col_"]{
 	float:none;

@@ -32,6 +32,6 @@ def iff(cond,if_true,if_false=""):
 		<li @iff(page=="coach",'class="current"')><a href="coach"><i class="icon-user icon-large"></i>Coach</a>	</li>
 		<li @iff(page=="login",'class="current"')><a href="@iff(user,'logout','login')"><i class="icon-@iff(user,'signout','signin') icon-large"></i>@iff(user,'Log out ('+str(email)+')','login')</a></li>
 		@if page=='home':
-		<li class="right"><a><span class="icon-facetime-video"></span> <span id="cam-status">Getting camera info...</span></a></li>
+		<li class="right"><a><span class="icon-facetime-video"></span> <span id="cam-status" style="font-size:10pt;">Getting camera info...</span></a></li>
 		@end
 	</ul>
