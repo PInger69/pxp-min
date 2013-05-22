@@ -33,7 +33,6 @@
 		    data: post_data,
 		    success: function(data, textStatus, xhr){
 				//response from the server received
-				console.log(data);
 				ajaxInProgress = false;
 				try{
 					rez = eval("("+data+")");//parse json
@@ -82,16 +81,14 @@
 		catch(e){
 			pr = new Array();
 		}
-		// console.log(pr);
 		// return;
 		ajaxInProgress = true;
 		shuttingDown = action=='encshutdown';
 		params = {};
 		for(elem in pr){
-			// console.log(pr[elem]);
 			params[pr[elem]] = $('#'+pr[elem]).val();
 		}
-		// console.log(params);;
+
 		$.ajax({
 		  url: 'ajax/'+action,
 		  data: params,
@@ -104,7 +101,6 @@
 		    catch(e){
 		    	res['success'] = false;
 		    }
-		    console.log(res);
 		    if (!res['success'] && shuttingDown){
 		  		shuttingDown = false;
 		  		alert('user permissions do not allow encoder shut down');
@@ -120,7 +116,6 @@
 	    	}	    	
 		    ajaxInProgress = false;
 		    if(res['success'] && callback!=false){
-		    	console.log('call');
 		    	callback();
 		    }
 		  },
@@ -140,7 +135,6 @@
 		$.ajax({
 		  url: 'ajax/getcamera',
 		  success: function(data, textStatus, xhr) {
-			// console.log(data);
 			try{
 				rez = eval("("+data+")");//parse json
 			}

@@ -7,12 +7,15 @@
 		<div class="col_2">League</div>
 		<div class="col_2">Video</div>
 		<div class="col_2">
-			<div class="cw_11 center">
-				<button id="download" class="green small cw_12" type="reset">
-				<i class="icon-download-alt"></i> download			
+			<div class="cw_4">&nbsp;
 			</div>
-			<div class="cw_1 right">
-					<a href="#" class="removeSel large red"><i class="icon-remove"></i></a>
+			<div class="cw_4 center">
+				<button id="download" class="green small cw_12" type="reset">
+				<i class="icon-download-alt"></i>
+			</div>
+			<div class="cw_4 right">
+				<button class="removeSel small red cw_12"><i class="icon-remove"></i></button>
+				<!-- <a href="#" class="removeSel large red"><i class="icon-remove"></i></a> -->
 			</div>
 
 <!-- 			<button id="download" class="green small cw_10 center" type="reset">
@@ -38,7 +41,7 @@
 		<div class="col_2">
 			@ev['league']
 		</div>
-		<div class="col_2">
+		<div class="col_2 vidColumn">
 			@if 'mp4' in ev:
 				<a class="media" href="@ev['mp4']">play</a> (@ev['vid_size'])
 			@elif 'live' in ev:
@@ -77,6 +80,7 @@
 <script type="text/javascript">
 var dlQueue = []; //queue used for processing multiple downloads
 var rmQueue = []; //queue used for processing multiple deletions
+var rmBtnHtml = "";
 function getProgress() {
 	// get download progress
 	$.ajax({
@@ -101,15 +105,19 @@ function getProgress() {
 }
 
 function rmQueueNext() {
+	//remove the event that was just deleted
+	deletedEvt = rmQueue.shift(); 
+	// remove event row from the table
+	$(deletedEvt).parents('.row').hide();
 	if(rmQueue.length<1){
+    	$('.removeSel').html(rmBtnHtml);
 		return;
 	}
-	obj = rmQueue.pop();
-	// remove event row from the table
-	$(obj).parents('.row').hide();
+	evtToDelete = rmQueue[0];
+	console.log(evtToDelete);
+	$(evtToDelete).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
 	// send the call to delete the event
-	ajaxCall("evtdelete/?name="+$(obj).attr('event')+"&event="+$(obj).attr('eventID'),"",rmQueueNext);
-
+	ajaxCall("evtdelete/?name="+$(evtToDelete).attr('event')+"&event="+$(evtToDelete).attr('eventID'),"",rmQueueNext);
 }
 // process download queue
 function processQueue(itemDone, itemError) {
@@ -141,7 +149,7 @@ function processQueue(itemDone, itemError) {
 	if(itemError>=0){
 		if(dlQueue.length<=0) {//no more items in the queue - all downloads are complete
 			$('#download').removeAttr('disabled');
-			$('#download').html('<i class="icon-download-alt"></i> download');
+			$('#download').html('<i class="icon-download-alt"></i>');
 			return; 
 		}
 		// grab the next video in the queue (first element)
@@ -226,11 +234,10 @@ function fOnLoad (argument) {
     	}).attr('disabled','disabled');
     	// start download
     	processQueue();
-
     });
     $('.removeSel').click(function (e){
     	e.preventDefault();
-    	if(dlQueue.length>0){
+    	if(dlQueue.length>0 || rmQueue.length>0){
     		return;
     	}
     	// remove selected events
@@ -238,7 +245,13 @@ function fOnLoad (argument) {
 	    	$('input:checked').each(function (){
 	    		rmQueue.push(this);
 	    	});
-	    	rmQueueNext();
+	    	if(rmQueue.length>0){
+		    	rmBtnHtml = $(this).html();
+		    	$(this).html('<img src="css/img/ajax-loader.gif"/>');
+		    	$(rmQueue[0]).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+				// send the call to delete the event
+				ajaxCall("evtdelete/?name="+$(rmQueue[0]).attr('event')+"&event="+$(rmQueue[0]).attr('eventID'),"",rmQueueNext);
+			}
     	}//if confirm
     });//removeSel.click
     $('.removeEvt').click(function (e) {
@@ -246,10 +259,15 @@ function fOnLoad (argument) {
     	if(dlQueue.length>0){
     		return;
     	}
+    	var tableRow = this;
     	if(confirm('This will delete the event and the video. Are you sure?')){
-    		ajaxCall("evtdelete/?name="+$(this).attr('event')+"&event="+$(this).attr('eventID'));
+	    	$(this).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+    		ajaxCall("evtdelete/?name="+$(tableRow).attr('event')+"&event="+$(tableRow).attr('eventID'),"",
+    			function(){
+    				$(tableRow).parents('.row').hide();
+    		});
     		// remove event row from the table
-    		$(this).parents('.row').hide();
+    		// $(this).parents('.row').hide();
     	}
     	return false;
     });//removeEvt.click
