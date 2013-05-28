@@ -225,6 +225,9 @@ function fOnLoad (argument) {
     });
     // clicked download button
     $('#download').click(function(){
+    	if(dlQueue.length>0 || rmQueue.length>0){ //do not allow download when download or deletion is in progress
+    		return;
+    	}
     	$(this).attr('disabled','disabled'); //make sure user cannot click download again
     	$(this).html('<img src="css/img/ajax-loader.gif"/>')
     	// go through every checked video (checkbox) and add it to the queue
@@ -256,7 +259,7 @@ function fOnLoad (argument) {
     });//removeSel.click
     $('.removeEvt').click(function (e) {
     	e.preventDefault();
-    	if(dlQueue.length>0){
+    	if(dlQueue.length>0 || rmQueue.length>0){
     		return;
     	}
     	var tableRow = this;

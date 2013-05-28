@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 # m = lp("MVC","_m/mvc.pyc")
 m = ls("MVC","_m/mvc.py")
 class Controller(m.MVC):
-	version = 0.88
+	version = 0.89
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None

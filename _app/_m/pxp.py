@@ -625,6 +625,43 @@ class pxp(m.MVC):
 			import sys 
 			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end prepdown
+	def sumget(self):
+		try:
+			strParam = self.uri().segment(3,"{}")
+			jp = json.loads(strParam) #json params
+			if not ('user' in jp and 'id' in jp and 'type' in jp):
+				return self._err("Specify event or month")
+			# select the proper summary from the table
+			sql = "SELECT * FROM `summary` WHERE `type` LIKE ? AND `id` LIKE ?"
+			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+			db.query(sql,(jp['type'],jp['id']))
+			# fetch the data
+			summary = db.getasc()
+			db.close()
+			# return the summary if it's in the database
+			if(len(summary)>0):
+				return summary[0]
+			return {"summary":""}
+		except Exception as e:
+			import sys 
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+	def sumset(self):
+		try:
+			# get the information
+			strParam = self.uri().segment(3,"{}")
+			jp = json.loads(strParam) #json params
+			if not ('user' in jp and 'summary' in jp and 'id' in jp and 'type' in jp):
+				return self._err("Specify event or month and summary")
+			#add the info or update it (if already exists)
+			sql = "INSERT OR REPLACE INTO `summary`(`summary`,`type`,`id`) VALUES(?,?,?)"
+			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+			db.query(sql,(jp['summary'],jp['type'],jp['id']))
+			db.close()
+			return {"success":True}
+		except Exception as e:
+			import sys 
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+	#end sumset
 	def sync2cloud(self,sess):
 		try:
 			if not ('ee' in sess.data and 'ep' in sess.data):
@@ -637,6 +674,7 @@ class pxp(m.MVC):
 			# self._x(sys.exc_traceback.tb_lineno)
 			# print e
 			pass
+	#end sync2cloud
 	#######################################################
   	#get any new events that happened since the last update (e.g. new tags, removed tags, etc.)
 	#######################################################
@@ -750,8 +788,8 @@ class pxp(m.MVC):
 			params += (tid,)
 			#update the tag
 			sql = "UPDATE `tags` SET "+(', '.join(sqlInsert))+" WHERE id=?"
-			#make sure the database exists
-			if(not os.path.exists(self.wwwroot+event+'/pxp.db')):
+			#make sure the database exists and user is not trying to get at other folders
+			if(('/' in event) or ('\\' in event) or (not os.path.exists(self.wwwroot+event+'/pxp.db'))):
 				return self._err()
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyon else to get this file
@@ -828,8 +866,8 @@ class pxp(m.MVC):
 			# t might be an array of dictionaires (size 1) or a dictionary itself
 			if (len(t)>0 and (not 'name' in t)):
 				t = t[0] # this is an array of dictionaries - get the first element
-			if (not 'event' in t):
-				return self._err("Specify event") #event was not defined - can't open the database
+			if (not 'event' in t or '/' in t['event'] or '\\' in t['event']):
+				return self._err("Specify event") #event was not defined or is invalid - can't open the database
 			if (not os.path.exists(self.wwwroot+t['event']+'/pxp.db')):
 				# this is the first tag in the event 
 				self.disk().mkdir(self.wwwroot+t['event'])
@@ -1055,8 +1093,9 @@ class pxp(m.MVC):
 				if(not os.path.exists(imgFile)):
 					if(t['event']=='live'):
 						# for live events the thumbnail must be extracted from a .TS file
-						# get the name of the .ts segment containing the right time					
-						vidSegmfileName = self._thumbName(t['tagtime'],event=t['event'])
+						# get the name of the .ts segment containing the right time				
+						res = {}	
+						vidSegmfileName = self._thumbName(t['tagtime'],event=t['event'],results=res)
 						vidFile = pathToEvent+"video/"+str(vidSegmfileName)
 						# self._thumbName(t['tagtime'],number=True)
 						# roundedSec = int(self._thumbName(t['tagtime'],number=True,event=t['event']))
@@ -1065,7 +1104,7 @@ class pxp(m.MVC):
 						# sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
 						# if sec<0: #sanity check - should never happen
 						# do it at 0 for now, we'll figure out how to increase accuracy later on 
-						sec = 0
+						sec = res['remainder']
 					else:
 						# for past events, the thumbnail can be extracted from the main.mp4
 						vidFile = pathToEvent+"video/main.mp4"
@@ -1214,6 +1253,8 @@ class pxp(m.MVC):
 		# 6) convert the resulting .ts into mp4 file
 		# get tag ID
 		try:
+			if('/' in event or '\\' in event):
+				return self._err("invalid event")
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			# get the time from the database
 			sql = "SELECT starttime, duration FROM tags WHERE id=?"
@@ -1388,16 +1429,13 @@ class pxp(m.MVC):
 				evtName = row['dateFmt']+'_H'+row['homeTeam'][:3]+'_V'+row['visitTeam'][:3]+'_L'+row['league'][:3]
 				evtDir = self.wwwroot+evtName
 				result[i]['name']=evtName
-				# check if there is a streaming file in there
+				# check if there is a streaming file (playlist) exists
 				if(os.path.exists(evtDir+'/video/list.m3u8')):
 					result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/list.m3u8'
-				# print evtDir+'/video/main.mp4 -- '
-				# print os.path.exists(evtDir+'/video/main.mp4')
-				# print "<br/>"
-				# check if the video file is there
+				# check if the mp4 file exists
 				if(os.path.exists(evtDir+'/video/main.mp4') and (evtName != live)):
 					#it is - provide a path to it
-					result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
+					# result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
 					result[i]['mp4']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
 					result[i]['vid_size']=self._sizeFmt(os.stat(evtDir+"/video/main.mp4").st_size)
 				# check if this is a live event
@@ -1473,8 +1511,11 @@ class pxp(m.MVC):
 		#make the thumbnail
 		cmd = "/usr/local/bin/ffmpeg"
 		#automatically calculates height based on defined width:
-		# -itsoffset is slower than -ss but insignificant for small files
-		params = " -ss "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
+		if(videoFile[-3:]=='.ts'):#exctracting frame from a stream .ts file
+			# -itsoffset is slower than -ss but it allows exact seeking (past keyframes) and speed is insignificant for small files
+			params = " -itsoffset -"+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
+		else:
+			params = " -ss "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
 		os.system(cmd+params) # need to wait for response otherwise the tablet will try to download image file that does not exist yet
 	
 	#######################################################
@@ -1692,7 +1733,7 @@ class pxp(m.MVC):
 	def _syncTab(self, user, device, event, allData=False):
 		##get the user's ip
 		##userIP = os.environ['REMOTE_ADDR']
-		if (not user) or len(user)<1 or (not device) or len(device)<1 or (not event) or len(event)<1 or (not os.path.exists(self.wwwroot+event+"/pxp.db")):
+		if (not user) or len(user)<1 or (not device) or len(device)<1 or (not event) or len(event)<1 or ('/' in event) or ('\\' in event) or (not os.path.exists(self.wwwroot+event+"/pxp.db")):
 			return [] #return empty list if user did not provide the correct info or event does not exist
 		db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
 		try:
@@ -1774,6 +1815,8 @@ class pxp(m.MVC):
 				sql = "SELECT * FROM `tags` WHERE `id`=?"
 				if(not db):
 					autoclose = True #db was not passed, open and close it in this function
+					if('/' in event or '\\' in event):
+						return {} #invalid event
 					db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
 				else:
 					autoclose = False #db was passed as argument - do not close it here
@@ -1787,6 +1830,32 @@ class pxp(m.MVC):
 			elif(not tag):
 				# no tag id or other information given - return empty dictionary
 				return {}
+			if(event):
+				if(event=='live'):
+					# live event has information stored in a text file
+					evtname = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
+				#if event==live
+				else:# event name is just the event passed to the
+					evtname = event
+				#end if event live...else
+				# the event name is in this format: 2013-05-22_17-10-52_HUns_VBos_LEas
+				# the HID of the event in the database is just a hash of the timestamp:
+				#get the timestamp
+				timestamp = evtname[:10]+evtname[10:19].replace("-",":",-1).replace("_"," ")
+				#hash it
+				evthid = self.enc().sha(timestamp) #event hid
+				# open the database and get the right information
+				tmdb = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+				sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+				tmdb.query(sql,(evthid,))
+				evtInfo = tmdb.getasc()
+				tmdb.close()
+				# tag['test']=sql+' '+evtname
+				if(len(evtInfo)>0):
+					tag['homeTeam']=evtInfo[0]['homeTeam']
+					tag['visitTeam']=evtInfo[0]['visitTeam']
+			#end if event
+
 			# some sanity checks before the round function
 			if (not tag['duration']):
 				tag['duration']=0.01
@@ -1829,7 +1898,7 @@ class pxp(m.MVC):
 	#######################################################
 	#returns file name for the video that contains appropriate time 
 	#######################################################
-	def _thumbName(self,seekTo,number=False,event="live"):
+	def _thumbName(self,seekTo,number=False,event="live", results={}):
 		import math
 		# path to the list.m3u8 file - playlist for the hls
 		listPath = self.wwwroot+event+"/video/list.m3u8"
@@ -1848,29 +1917,24 @@ class pxp(m.MVC):
 		# #EXTINF:0.98431,
 		# fileSequence531.ts
 		#and so on - a line with time precedes the line with file name
-
+		results['remainder']=0
+		results['number']=0
 		fileName = False
 		for line in f:
-			 cleanStr = line.strip()
-			 if(cleanStr[:7]=='#EXTINF'):#this line contains time information
-				 reachedTime += float(cleanStr[8:-1]) #get the number (without the trailing comma) - this is the duration of this segment file
-			 elif(cleanStr[-3:]=='.ts' and seekTo<=reachedTime):#this line contains filename
-				 #found the right time - this file contains the frame we need
-				 fileName = cleanStr
-				 break
+			cleanStr = line.strip()
+			if(cleanStr[:7]=='#EXTINF'):#this line contains time information
+				reachedTime += float(cleanStr[8:-1]) #get the number (without the trailing comma) - this is the duration of this segment file
+			elif(cleanStr[-3:]=='.ts' and seekTo<=reachedTime):#this line contains filename
+				#found the right time - this file contains the frame we need
+				fileName = cleanStr
+				results['remainder']=reachedTime-seekTo
+				break
 		f.close()
 		if (not fileName):
 			return 0
-		# each .ts file contains slightly less than 1 second
-		# round down to the nearest file
-		# secname = str(int(seekTo/0.984315)) 
-		# if secname=='0':
-		# 	#when the time is 0.0 then the 0 frame of the first video may not work properly
-		# 	#set it to second fragment (semg1.ts)
-		# 	secname='1'
-		# fileName = "segm"+secname+".ts"
 		if(number):#only return the number without the rest of the filename
-			return self._exNum(fileName)
+			results['number']=self._exNum(fileName)
+			return results['number']
 		return fileName
 	#end calcThumb
 	def _x(self,txt):
