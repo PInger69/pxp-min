@@ -1,10 +1,17 @@
 @require(encStatus,teams,leagues,disk)
+@(
+#inline if statement for wheezy template
+def iff(cond,if_true,if_false=""):
+	if cond:
+		return if_true
+	return if_false
+)
 
 <div class="col_12">
 	<div class="row">		
 		<h3>encoder management</h3>
 	</div>
-@if encStatus=="off" or encStatus=="vod":
+@if encStatus=="off" or encStatus=="stopped":
 	<div class="row">
 		<p>Start a new event</p>
 	</div>
@@ -41,7 +48,7 @@
 @end
 		<div class="col_6">
 			<div class="row">
-@if encStatus=="off" or encStatus=="vod":
+@if encStatus=="off" or encStatus=="stopped":
 				<button class="medium green col_4 ajaxbtn" action="encstart" param="hmteam,vsteam,league">
 					<span class="icon-play"></span> Start
 				</button>
@@ -72,7 +79,7 @@
 	</div>
 	<div class="row">
 		<div class="col_4">
-			<div class="meter"><span style="width: @disk['percent']%"><span></span></span></div>	
+			<div class="meter @iff(int(disk['percent'])>50,iff(int(disk['percent'])>80,'red','orange'))"><span style="width: @disk['percent']%"><span></span></span></div>	
 		</div>
 		<div class="col_3">
 			Disk space: @disk['used']/@disk['total'] (@disk['percent']%) used.
@@ -90,10 +97,11 @@
 function fOnLoad(){
 	// get the encoder status at first, then it triggers camera status updates
 	$.ajax({
-		url: 'ajax/encoderstatus',
+		url: 'ajax/encoderstatjson',
 		success: function(data, textStatus, xhr) {
 			// try{
-				encStatus = eval("("+data+")");
+				jsStatus = eval("("+data+")");
+				encStatus = jsStatus.status;
 				// get the camera status
 				ajaxCamStatus();
 			// }

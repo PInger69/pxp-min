@@ -13,90 +13,99 @@ class MVC():
 	def dbsqlite(self,dbpath=False):
 		import sqlite3
 		class c_sqdb:
-		    con = None
-		    c   = None
-		    autocommit = True
-		    def __init__(self, dbpath=False):
-		    	if dbpath:
-		    		self.open(dbpath)
-		    def close(self):
-		        self.autocommit = True
-		        try:
-		            if self.c:
-		                self.c.close()
-		            if self.con:
-		                self.con.close()
-		        except:
-		            #put some error handlers later on
-		            pass
-		    #end close()
-		    def commit(self):
-		        self.autocommit = True
-		        if self.con:
-		            self.con.commit()
-		    #end commit()
+			con = None
+			c   = None
+			autocommit = True
+			def __init__(self, dbpath=False):
+				if dbpath:
+					self.open(dbpath)
+			def close(self):
+				self.autocommit = True
+				try:
+					if self.c:
+						self.c.close()
+					if self.con:
+						self.con.close()
+				except:
+					#put some error handlers later on
+					pass
+			#end close()
+			def commit(self):
+				self.autocommit = True
+				if self.con:
+					self.con.commit()
+			#end commit()
 		   
-		    #returns all rows of a query as a dictionary (associative array)
-		    def getasc(self):
-		    	try:
-			        if not self.c:
-			            return []
-			        rows = []
-			        #get column names
-			        cols = []
-			        for cn in self.c.description:
-			            cols.append(cn[0])
-			        #get all rows
-			        for row in self.getrows():
-			            entry = {}
-			            idx = 0
-			            for cn in cols:                
-			                entry[cn] = row[idx]
-			                idx += 1
-			            rows.append(entry)
-		        except:
-		        	pass
-		        return rows
-		    #end getasc()
+			#returns all rows of a query as a dictionary (associative array)
+			def getasc(self):
+				try:
+					if not self.c:
+						return []
+					rows = []
+					#get column names
+					cols = []
+					for colname in self.c.description:
+						cols.append(colname[0])
+					#get all rows
+					for row in self.getrows():
+						entry = {}
+						idx = 0
+						for colname in cols:				
+							entry[colname] = row[idx]
+							idx += 1
+						rows.append(entry)
+				except:
+					pass
+				return rows
+			#end getasc()
 		   
-		    #returns one row from the query
-		    def getrow(self):
-		        if self.c:
-		            return self.c.fetchone()
-		        return ()
-		    #end getrow()
+			#returns one row from the query
+			def getrow(self):
+				if self.c:
+					return self.c.fetchone()
+				return ()
+			#end getrow()
 		   
-		    #returns all the query rows as an array
-		    def getrows(self):
-		        if self.c:
-		            return self.c.fetchall()
-		        return []
-		    #end getrows()
+			#returns all the query rows as an array
+			def getrows(self):
+				if self.c:
+					return self.c.fetchall()
+				return []
+			#end getrows()
 		   
-		    #returns ID of the last inserted entry
-		    def lastID(self):
-		        if self.c:
-		            return self.c.lastrowid
-		        return False
-		    #end lastID()
+			#returns ID of the last inserted entry
+			def lastID(self):
+				if self.c:
+					return self.c.lastrowid
+				return False
+			#end lastID()
 
-		    #returns number of rows
-		    def numrows(self):
-		        if self.c:
-		            return self.c.rowcount
-		        return 0
-		    #end numrows()
+			#returns number of rows
+			def numrows(self):
+				if self.c:
+					return self.c.rowcount
+				return 0
+			#end numrows()
 		   
-		    #creates connection to the database
-		    def open(self, dbpath):
+			#creates connection to the database
+			def open(self, dbpath):
 				#open the connection:
 				try:
 					if self.con:#if a database connection is already open - close it
 						self.close()
 					#connect to the database
-					self.con = sqlite3.connect(dbpath)
-					self.c = self.con.cursor()
-					success = True
+					connectAttempts=0
+					success = False
+					while(connectAttempts<20 and not success):
+						connectAttempts += 1
+						try:
+							self.con = sqlite3.connect(dbpath,timeout=1)
+							self.c = self.con.cursor()
+							self.c.execute("select * from sqlite_sequence")
+							test = self.c.fetchall()
+							success = True
+						except Exception as e:
+							success = False
 					# cur.execute('SELECT SQLITE_VERSION()')
 					# data = cur.fetchone()
 				except sqlite3.Error, e:
@@ -105,41 +114,41 @@ class MVC():
 					success = False
 					#sys.exit(1)
 				return success
-		    #end open()
-		    
-		    #executes an sql query
-		    def query(self, sql, data, autocommit=True):
-		        error = False
-		        try:#to prevent sql errors from interrupting the script
-		            self.c.execute(sql,data)#run the query
-		            if autocommit:
-		                self.con.commit()#commit it - without this no changes will be made to the db
-		        except ValueError, e:
+			#end open()
+			
+			#executes an sql query
+			def query(self, sql, data, autocommit=True):
+				error = False
+				try:#to prevent sql errors from interrupting the script
+					self.c.execute(sql,data)#run the query
+					if autocommit:
+						self.con.commit()#commit it - without this no changes will be made to the db
+				except ValueError, e:
 
-		            error = True
-		        #success when there was at least 1 row affected
-		        return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
-		    #end query()
+					error = True
+				#success when there was at least 1 row affected
+				return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
+			#end query()
 		   	#executes a query string
-		    def qstr(self, query):
-		        error = False
-		        try:#to prevent sql errors from interrupting the script
-		            self.c.execute(query)#run the query
-		            if self.autocommit:
-		                self.con.commit()#commit it - without this no changes will be made to the db
-		        except ValueError, e:
-		            error = True
-		        #success when there was at least 1 row affected
-		        return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
-		    def rollback(self):
-		        self.autocommit = True
-		        if self.con:
-		            self.con.rollback()
-		    #end commit()
-		    #begin transaction - user must commit or rollback manually
-		    def transBegin(self):
-		        self.autocommit = False
-		    #end transBegin
+			def qstr(self, query):
+				error = False
+				try:#to prevent sql errors from interrupting the script
+					self.c.execute(query)#run the query
+					if self.autocommit:
+						self.con.commit()#commit it - without this no changes will be made to the db
+				except ValueError, e:
+					error = True
+				#success when there was at least 1 row affected
+				return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
+			def rollback(self):
+				self.autocommit = True
+				if self.con:
+					self.con.rollback()
+			#end commit()
+			#begin transaction - user must commit or rollback manually
+			def transBegin(self):
+				self.autocommit = False
+			#end transBegin
 		#end sqdb
 		return c_sqdb(dbpath)
 	#end dbsqlite
@@ -174,22 +183,22 @@ class MVC():
 			#end mkdir
 			#returns true if there is a specified process running
 			def psOn(self, process):
-			    import platform, os
-			    if (platform.system()=="Windows"):
-			        #get all the processes for windows matching the specified one:
-			        cmd = "tasklist | findstr /I "+process
-			    else:
-			        #system can be Linux, Darwin
-			        #get all the processess matching the specified one:
-			        cmd = "ps -ef | grep "+process+" | grep -v grep > /dev/null" #"ps -A | pgrep "+process+" > /dev/null"
-			    #result of the cmd is 0 if it was successful (i.e. the process exists)
-			    return os.system(cmd)==0
+				import platform, os
+				if (platform.system()=="Windows"):
+					#get all the processes for windows matching the specified one:
+					cmd = "tasklist | findstr /I "+process
+				else:
+					#system can be Linux, Darwin
+					#get all the processess matching the specified one:
+					cmd = "ps -ef | grep \""+process+"\" | grep -v grep > /dev/null" #"ps -A | pgrep "+process+" > /dev/null"
+				#result of the cmd is 0 if it was successful (i.e. the process exists)
+				return os.system(cmd)==0
 			#end psOn
 			# reads sizeToRead from a specified udp port
 			def sockRead(self, udpAddr="127.0.0.1", udpPort=2224, timeout=0.5, sizeToRead=1):
 				import socket
 				sock = socket.socket(socket.AF_INET, # Internet
-				                     socket.SOCK_DGRAM) # UDP
+									 socket.SOCK_DGRAM) # UDP
 				sock.settimeout(timeout) #wait for 'timeout' seconds - if there's no response, server isn't running
 				#bind to the port and listen
 				try:
@@ -377,44 +386,44 @@ class MVC():
 	#url class
 	def uri(self):
 		class c_uri:
-		    uriString = ""
-		    uriList = []
-		    uriQuery = ""
-		    def __init__(self):
-		    	import os
-		        # get uri string without the script name
-		        if "PATH_INFO" in os.environ:
-		            self.uriString = os.environ['PATH_INFO']
-		        else:
-		            self.uriString = ""
-		        self.uriList = self.uriString.split('/')
-		        if (not 'SCRIPT_NAME' in os.environ):
-		        	os.environ['SCRIPT_NAME'] = ""
-		        self.uriList[0]=os.path.basename(os.environ['SCRIPT_NAME'])
-		        self.uriList = filter(None,self.uriList)
-		        if "QUERY_STRING" in os.environ:
-		            self.uriQuery = os.environ["QUERY_STRING"]
-		    #end __init__
-		    #returns total number of segments minus the script name
-		    def numsegs(self):
-		        return len(self.uriList)-1
-		    #end numsegs
-		    #returns array of segments
-		    def segarr(self):
-		    	return self.uriList[1:]
-		    #returns a specified segment (segment 0 is the script name)
-		    def segment(self,segnum,ifempty=False):
-		        if len(self.uriList)<(segnum+1):
-		            #element doesn't exist, return the ifempty string (if it was specified)
-		            return ifempty
-		        return self.uriList[segnum]
-		    #end segment
-		    #returns query string (if one is present, false otherwise)
-		    def query(self):
-		        if len(self.uriQuery)>0:
-		            return self.uriQuery
-		        return False
-		    #end query
+			uriString = ""
+			uriList = []
+			uriQuery = ""
+			def __init__(self):
+				import os
+				# get uri string without the script name
+				if "PATH_INFO" in os.environ:
+					self.uriString = os.environ['PATH_INFO']
+				else:
+					self.uriString = ""
+				self.uriList = self.uriString.split('/')
+				if (not 'SCRIPT_NAME' in os.environ):
+					os.environ['SCRIPT_NAME'] = ""
+				self.uriList[0]=os.path.basename(os.environ['SCRIPT_NAME'])
+				self.uriList = filter(None,self.uriList)
+				if "QUERY_STRING" in os.environ:
+					self.uriQuery = os.environ["QUERY_STRING"]
+			#end __init__
+			#returns total number of segments minus the script name
+			def numsegs(self):
+				return len(self.uriList)-1
+			#end numsegs
+			#returns array of segments
+			def segarr(self):
+				return self.uriList[1:]
+			#returns a specified segment (segment 0 is the script name)
+			def segment(self,segnum,ifempty=False):
+				if len(self.uriList)<(segnum+1):
+					#element doesn't exist, return the ifempty string (if it was specified)
+					return ifempty
+				return self.uriList[segnum]
+			#end segment
+			#returns query string (if one is present, false otherwise)
+			def query(self):
+				if len(self.uriQuery)>0:
+					return self.uriQuery
+				return False
+			#end query
 		#end uri
 		return c_uri()
 	#end uri

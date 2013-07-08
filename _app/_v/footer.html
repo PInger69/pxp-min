@@ -59,19 +59,32 @@
 		    },//on success
 		    error: function(xhr, textStatus, errorThrown){
 				//called when there is an error
-				console.log(textStatus)
+
 				ajaxInProgress = false;
 				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
 		    }
 		});
 	}//ajaxSubmit
-	function ajaxCall(action,params,callback){
+	function ajaxCall(action,params,callback,ajaxbtn){
+		if(ajaxbtn==undefined){
+			ajaxbtn = false;
+		}
 		if(params==undefined){
 			params = "";
 		}
 		if(callback==undefined){
 			callback = false;
 		}
+		if(ajaxbtn){
+			action = ajaxbtn.attr('action');
+			params = ajaxbtn.attr('param');
+			var btnHTML = ajaxbtn.html();
+			// disable the ajax button to prevent further submissions
+			ajaxbtn.attr('disabled','disabled');
+			// show loader image
+			ajaxbtn.html('<img src="css/img/ajax-loader.gif"/>');
+		}
+
 		try{
 			//params contains the list of IDs of elements whose values should be passed as parameters
 			// perform the ajax request
@@ -93,7 +106,8 @@
 		  url: 'ajax/'+action,
 		  data: params,
 		  success: function(data, textStatus, xhr) {
-		    console.log(data);
+		    ajaxInProgress = false;
+
 		    res = { };
 		    try{
 		    	res = eval("("+data+")");
@@ -114,18 +128,23 @@
 	    		break;
 
 	    	}	    	
-		    ajaxInProgress = false;
 		    if(res['success'] && callback!=false){
 		    	callback();
 		    }
+		    if (ajaxbtn){
+		    	ajaxbtn.html(btnHTML);
+		    }
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
+		    ajaxInProgress = false;
+		    if (ajaxbtn){
+		    	ajaxbtn.html(btnHTML);
+		    }
 		  	// if (shuttingDown){
 		  	// 	shuttingDown = false;
 		  	// 	alert('user permissions do not allow encoder shut down');
 		  	// }
-		    console.log(textStatus);
-		    ajaxInProgress = false;
+
 		  }
 		});
 	}
@@ -133,8 +152,13 @@
 	function ajaxCamStatus(){
 		// check if the camera is connected and set the status accordingly
 		$.ajax({
+		  timeout:2000,
 		  url: 'ajax/getcamera',
+		  complete: function(xhr, textStatus) {
+
+		  },
 		  success: function(data, textStatus, xhr) {
+
 			try{
 				rez = eval("("+data+")");//parse json
 			}
@@ -152,9 +176,13 @@
 					$('#cam-status').text(rez.msg);
 				}
 				if(rez.encoder!=encStatus){
+
 					clearTimeout(cameraStateTmr);
 					if (!ajaxInProgress){
 						window.location.reload();
+					}
+					else{
+
 					}
 				}
 			}
@@ -171,7 +199,7 @@
 		  		shutDownCounter++;
 		  	}
 			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
-		    console.log(textStatus);
+
 		  }
 		});
 	}
@@ -197,13 +225,9 @@
 	        }
         });
 		$('.ajaxbtn').click(function(e) {
-			// disable the ajax button to prevent further submissions
-			$(this).attr('disabled','disabled');
-			// show loader image
-			$(this).html('<img src="css/img/ajax-loader.gif"/>');
 			// ajax buttons have 'action' attribute which is the name of the url to call
 			// some have param attribute - list of #id's of elements whose values to add to the call
-			ajaxCall($(this).attr('action'),$(this).attr('param'));
+			ajaxCall(false,false,false,$(this));
 		});
 	});
 </script>

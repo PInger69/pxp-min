@@ -3,14 +3,14 @@ from imp import load_compiled as lp
 # m = lp("MVC","_m/mvc.pyc")
 m = ls("MVC","_m/mvc.py")
 class Controller(m.MVC):
-	version = 0.89
+	version = "0.92.2"
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
 	def __init__(self):
 		import os
 		# ensure that the pxpStream app is running
-		if (not self.disk().psOn("pxpStream")):
+		if (not self.disk().psOn("pxpStream.app")):
 			os.system("/usr/bin/open /Applications/pxpStream.app")
 		# super(Controller, self).__init__()
 		self.d['version']=self.version
@@ -57,14 +57,19 @@ class Controller(m.MVC):
 			# check if it exists
 			if callable(fn):# it exists - go to that method
 				if(functionName=='login' or functionName=='sync2cloud' or functionName=='coachpick'):
-					self.str().jout(fn(sess))
+					result = fn(sess)
 				else:
-					self.str().jout(fn())
+					result = fn()
+				if type(result) is dict: 
+					#make sure the result is dictionary (not a string or int) before tyring to assign values to it
+					result['sender']='.min'
+					result['requrl']=self.uri().uriString
+				self.str().jout(result)
 			else: # the method does not exist - try to find a page with this name
 				self.page(functionName)
 		except Exception as e:
 			import sys, inspect
-			self.str().jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run"})
+			self.str().jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run","url":self.uri().uriString})
 			# print inspect.trace()
 		# db = self.dbsqlite(self.wwwroot+"live/pxp.db")
 		# sql = "INSERT INTO tags (user, player) VALUES('zzz', '9')"

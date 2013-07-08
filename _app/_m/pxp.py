@@ -1,5 +1,6 @@
 from imp import load_source as ls
 from imp import load_compiled as lp
+from time import sleep
 import os, json
 # m = lp("MVC","_m/mvc.pyc")
 m = ls("MVC","_m/mvc.py")
@@ -7,26 +8,6 @@ m = ls("MVC","_m/mvc.py")
 class pxp(m.MVC):
 	tagVidBegin = 10
 	#######################################################
-	#DEBUG#
-	def reset(self):
-		db = self.dbsqlite(self.wwwroot+"live/pxp.db")
-		self.str().pout("Emptying logs table...")
-		db.qstr("DELETE FROM `logs`")
-		print "complete\n<br/>Emptying tags table..."
-		db.qstr("DELETE FROM `tags`")
-		print "complete\n<br/>Updating indecies..."
-		db.qstr("DELETE FROM `sqlite_sequence`")
-		print "complete\n<br/>Deleting thumbnails..."
-		# delete thumbnails
-		os.system("rm "+self.wwwroot+"live/thumbs/*")
-		if not self.uri().segment(3,"")=='novideo':
-			print "complete\n<br/>Deleting videos..."
-			# delete vieos
-			cmd = "find "+self.wwwroot+"live/video/ -type f -print0 | xargs -0 rm"
-			os.system(cmd)
-		print "complete\n<br/>RESET COMPLETE"
-		return {}
-	#END DEBUG#
 	#create a bunch of random tags
 	def alll(self):
 		from random import randrange as rr
@@ -48,6 +29,8 @@ class pxp(m.MVC):
 		# make sure there is a live event
 		if(not os.path.exists(self.wwwroot+'live/video')):
 			return self._err("no live event")
+		if(self._stopping()):
+			return self._stopping(msg=True)
 		# get logged in user
 		user = sess.data['user'] # user HID
 		if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
@@ -69,8 +52,12 @@ class pxp(m.MVC):
 		lastSeg = len(segFiles)-2 #segments start at segm0
 		# set time
 		tagTime = lastSeg * 0.984315
+		try:
+			tagnum = int(self.uri().segment(3,"1"))
+		except Exception as e:
+			tagnum = 1
 		# create tag
-		tagStr = '{"name":"Coach Tag","colour":"'+colour+'","user":"'+user+'","tagtime":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
+		tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","tagtime":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
 		return dict(self.tagset(tagStr),**{"action":"reload"})
 	#######################################################
 	# gets download progress from the progress.txt file
@@ -250,7 +237,6 @@ class pxp(m.MVC):
 	def evtdelete(self):
 		import os
 		import subprocess
-		from time import sleep
 		# check to make sure the database event exists
 		if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
 			return self._err("not initialized")
@@ -281,18 +267,37 @@ class pxp(m.MVC):
 	# either json or plain text (depending on textOnly)
 	#######################################################
 	def encoderstatus(self,textOnly=True):
+		#       app starting
+		#       | encoder streaming
+		#       | | camera present
+		#       | | | pro recorder present
+		#       | | | |
+		# bits: 0 0 0 0
 		state = self._encState()
-		if(state==1):
-			status = "live"
-		elif(state==2):
-			status = "paused"
-		elif(state==-1):
-			status = "unknown"
-		# elif(os.path.exists(self.wwwroot+'live/video/list.m3u8')): #no need for vod mode 
-		# 	status = "vod"
+		if(self._stopping()):
+			state=0
+		if((state & (1+2+4))==7): #live is defined as: pro recoder + camera + streaming
+			# app is paused if mediasegmenter and ffmpeg are running, there is no stopping.txt file, and ports are set to 65535
+			# stopping = self._stopping()
+			# when app is stopping the encoder status will be set to 'off'
+			paused = (not self.disk().psOn("pxpStream.app") or self._portSame()) and self.disk().psOn("ffmpeg -f mpegts -i udp") and self.disk().psOn("mediastreamsegmenter")
+			stopped = not (self.disk().psOn("ffmpeg -f mpegts -i udp") or self.disk().psOn("mediastreamsegmenter"))
+			if (paused):
+				status = "paused"
+			# elif(stopping):
+			# 	status = "stopping"
+			elif(stopped):
+				status = "stopped"
+			else:
+				status = "live"
+		elif(not (state&1)):
+			status = "pro recoder disconnected"
+		elif(not (state&2)):
+			status = "camera disconnected"
+		elif(state & 8):
+			status = "streaming app is starting"
 		else:
-			status = "off"
-		# status = "live"
+			status = "preparing to stream"
 		if (textOnly):
 			return status
 		return {"status":status,"code":state}
@@ -305,14 +310,17 @@ class pxp(m.MVC):
 	def encpause(self):
 		import os
 		msg = ""
+		rez = False
 		try:
-			# rez = os.system(self.wwwroot+"_db/encpause ")
-			rez = os.system("echo '3' > /tmp/pxpcmd")
+			if(self._stopping()):
+				return self._stopping(msg=True)
+			# rez = os.system("echo '3' > /tmp/pxpcmd")
+			self._portSet(hls=65535,ffm=65535,chk=65535)
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_pause",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 		except Exception as e:
 			msg = str(e)
-			rez = False
+			rez = True
 		# rez = False
 		return {"success":not rez,"msg":msg}
 	#end encpause
@@ -322,13 +330,17 @@ class pxp(m.MVC):
 	def encresume(self):
 		import os
 		msg = ""
+		rez = False
 		try:
-			# rez = os.system(self.wwwroot+"_db/encresume ")
-			rez = os.system("echo '4' > /tmp/pxpcmd")
+			if(self._stopping()):
+				return self._stopping(msg=True)
+			# rez = os.system("echo '4' > /tmp/pxpcmd")
+			self._portSet()
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_resume",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
-		except Exception as e:
 			rez = False
+		except Exception as e:
+			rez = True
 		# rez = False
 		return {"success":not rez}
 	#end encresume
@@ -340,7 +352,10 @@ class pxp(m.MVC):
 		import getpass
 		msg = ""
 		try:
-			self.encstop()
+			if(os.path.exists(self.wwwroot+"live/evt.txt")):
+				self.encstop() #there is a live event - stop it before shut down
+			while(self._stopping()):
+				sleep(1) #wait until the live stream is stopped
 			rez = os.system("sudo /sbin/shutdown -h now")
 		except Exception as e:
 			rez = False
@@ -355,14 +370,17 @@ class pxp(m.MVC):
 		from datetime import datetime as dt
 		from time import time as tm
 		try:
+			success = False
 			if(not os.path.exists(self.wwwroot+'_db/pxp_main.db')):
 				return self._err("not initialized")
+			# if an event is being stopped, wait for it
+			while(self._stopping()):
+				sleep(1)
 			#make sure not overwriting an old event
 			if(os.path.exists(self.wwwroot+"live/evt.txt")):
-				self._postProcess()
+				self.encstop()
 			#make sure the 'live' directory was initialized
-			if(not os.path.exists(self.wwwroot+"live/thumbs")):
-				self._initLive()
+			self._initLive()
 			io = self.io()
 			# get the team and league informaiton
 			hmteam = io.get('hmteam')
@@ -376,9 +394,10 @@ class pxp(m.MVC):
 			os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
 			os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
 
-			# start the capture
+
 			# rez = os.system(self.wwwroot+"_db/encstart >/dev/null &")
-			rez = os.system("echo '1' > /tmp/pxpcmd")
+			# rez = os.system("echo '1' > /tmp/pxpcmd")
+
 
 			# create new event in the database
 			# get time for hid and for database
@@ -412,33 +431,56 @@ class pxp(m.MVC):
 			evtName = stampForFolder+'_H'+hmteam[:3]+'_V'+vsteam[:3]+'_L'+league[:3]
 			#store the event name (for processing when it's stopped)
 			cmd = "echo '"+evtName+"' > "+self.wwwroot+"live/evt.txt"
-			rez = not os.system(cmd)
+			success = not os.system(cmd)
+
+			self._portSet()
+			# start hls (media segmenter)
+			# & at the end puts it in the background mode - so that the execution won't halt because of it
+			success = success and not os.system("mediastreamsegmenter -p -t 1s -S 1 -B segm -i list.m3u8 -f "+self.wwwroot+"live/video 127.0.0.1:2222 >/dev/null &");
+
+			# start the mp4 capture using ffmpeg
+			# parameters:
+			# -f mpegts: format of the video
+			# -i 'udp....':  input file/stream (the udp port is the one that this app sends packets to
+			# -re : maintain the frame rate
+			# -y : overrite output file without asking
+			# -strict experimental: needed to have proper mp4 output
+			# -vcodec copy: do not reincode
+			# -f mp4: MP4 format
+			# /var/www/.....mp4: output file
+			# >/dev/null: redirect output to null (do not show it)
+			# &: put the execution in background mode
+			success = success and not os.system("ffmpeg -f mpegts -i 'udp://127.0.0.1:2223?fifo_size=1000000&overrun_nonfatal=1' -re -y -strict experimental -vcodec copy -f mp4 "+self.wwwroot+"live/video/main.mp4 >/dev/null &");
 			msg = ""
 		except Exception as e:
 			import sys
 			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
-		return {"success":rez,"msg":msg}
+		return {"success":success,"msg":msg}
 	#end encstart
 	#######################################################
 	#stops a live encode
 	#######################################################
 	def encstop(self):
-		import os
-		from time import sleep
+		from datetime import datetime as dt
+		from time import time as tm
 		msg = ""
 		try:
+			timestamp = dt.fromtimestamp(tm()).strftime('%Y-%m-%d %H:%M:%S')
 			# rez = os.system(self.wwwroot+"_db/encstop")
-			rez = os.system("echo '2' > /tmp/pxpcmd")
+			# make sure nobody creates new tags or does other things to this event anymore
+			os.system("echo '"+timestamp+"' > "+self.wwwroot+"live/stopping.txt")
+			# stop HLS segmenting
 			if(self.disk().psOn("mediastreamsegmenter")):
 				os.system("/usr/bin/killall mediastreamsegmenter")
+			# stop ffmpeg and wait for it to complete (to have a working mp4)
 			if(self.disk().psOn("ffmpeg")):
-				#ffmpeg needs 2 kill signals to stop
 				os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-				sleep(1) #pause for a second between signals
-				os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
+				# wait for ffmpeg to finish its job, and for handbrake (in case user was creating bookmarks)
+			while (self.disk().psOn('ffmpeg') or self.disk().psOn("handbrake")):
+				sleep(1) #wait for ffmpeg to finish its job
+			rez = os.system("echo '2' > /tmp/pxpcmd")
 			msg = self._logSql(ltype="enc_stop",dbfile=self.wwwroot+"live/pxp.db",forceInsert=True)
 			# rename the live directory to the proper event name
-			sleep(3) #wait for a few seconds for ffmpeg to finish its job
 			self._postProcess()
 		except Exception as e:
 			rez = False
@@ -450,7 +492,7 @@ class pxp(m.MVC):
 	#######################################################
 	def getcamera(self):
 		# check if streamer app is running
-		appon = self.disk().psOn('pxpStream')
+		appon = self.disk().psOn('pxpStream.app')
 		cfg = self.disk().file_get_contents(self.wwwroot+"_db/.cam")
 		if appon and cfg:
 			return {"success":True,"msg":cfg,"encoder":self.encoderstatus()}
@@ -470,20 +512,15 @@ class pxp(m.MVC):
 		jp = json.loads(strParam)
 		if not ('user' in jp and 'event' in jp and 'device' in jp):
 			return self._err("Specify user, event, and device")
-
 		#get user id
 		usr = jp['user']
 		#device ID
 		dev = jp['device']
 		#event
 		evt = jp['event']
+		if(self._stopping(evt)):
+			return self._stopping(msg=True)
 		return self._syncTab(user=usr, device=dev, event=evt, allData = True)
-	#######################################################
-	#returns true if there is an active feed present
-	#######################################################
-	def islive(self):
-		hlsPresent = os.path.exists(self.wwwroot+'live/video/list.m3u8')
-		return {"success":(self._encState()==1) and hlsPresent}
 	def login(self, sess):
 		try:
 			io = self.io()
@@ -552,6 +589,8 @@ class pxp(m.MVC):
 			# make sure it has no : or / \ in the name
 			if('/' in event or '\\' in event): #invalid name
 				return self._err()
+			if(self._stopping(event)):
+				return self._stopping(msg=True)
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			# select all even-type tags (deleted are odd, so won't be downloaded)
 			db.qstr('SELECT * FROM `tags` WHERE  (`type` & 1) = 0')
@@ -625,6 +664,7 @@ class pxp(m.MVC):
 			import sys 
 			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end prepdown
+	# returns summary for the month or game
 	def sumget(self):
 		try:
 			strParam = self.uri().segment(3,"{}")
@@ -645,6 +685,7 @@ class pxp(m.MVC):
 		except Exception as e:
 			import sys 
 			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+	#end sumget
 	def sumset(self):
 		try:
 			# get the information
@@ -690,6 +731,8 @@ class pxp(m.MVC):
 		dev = jp['device']
 		#event
 		evt = jp['event']
+		if(self._stopping(evt)):
+			return self._stopping(msg=True)
 		return self._syncTab(user=usr, device=dev, event=evt)
 	#######################################################
 	#return list of teams in the system with team setups
@@ -761,6 +804,10 @@ class pxp(m.MVC):
 			tid = jp['id']
 			user = jp['user']
 			event = jp['event']
+
+			# make sure event is not being stopped
+			if(self._stopping(event)):
+				return self._stopping(msg=True)
 			#user info, tag id and event name are not modifications - remove those from the dictionary
 			del jp['id']
 			del jp['user']
@@ -776,7 +823,7 @@ class pxp(m.MVC):
 					#when deleting a tag, simply change type to 3
 					sqlInsert.append("`type`=?")
 					params +=(3,)
-				else:
+				elif (mod!='requesttime'):
 					#any other modifications, just add them to the sql query
 					bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']=='1'))
 					sqlInsert.append("`"+mod+"`=?")
@@ -873,6 +920,8 @@ class pxp(m.MVC):
 				self.disk().mkdir(self.wwwroot+t['event'])
 				# copy the template db for tags
 				self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+t['event']+'/pxp.db')
+			if(self._stopping(t['event'])):
+				return self._stopping(msg=True)
 			db.open(self.wwwroot+t['event']+'/pxp.db')
 			db.transBegin() #in case we need to roll it back later
 			success = 1
@@ -942,6 +991,7 @@ class pxp(m.MVC):
 				sqlAddFld += ", player"
 				sqlAddVal += ", ?"
 			#check if lines/zones were specified (ignore it if the tag type is not 'line')
+			#this is line for hockey but zone for soccer/rugby
 			if(('line' in t) and (t['type']==1)):
 				sqlVars += (t['line'],)
 				sqlAddFld += ", line"
@@ -956,7 +1006,8 @@ class pxp(m.MVC):
 				sqlVars += (t['strength'],)
 				sqlAddFld += ", strength"
 				sqlAddVal += ", ?"
-			#if zone was set (i.e. OZ, NZ, DZ for hockey), add it
+			#if zone was set (i.e. OZ, NZ, DZ for hockey), add it 
+			#NOT THE SAME AS ZONE IS SOCCER/RUGBY!!
 			if('zone' in t):
 				sqlVars += (t['zone'],)
 				sqlAddFld += ", zone"
@@ -1128,6 +1179,8 @@ class pxp(m.MVC):
 			# create a tag first
 			tagStr = str(io.get("tag"))
 			event = json.loads(tagStr)['event']
+			if(self._stopping(event)):
+				return self._stopping(msg=True)
 			t = self.tagset(tagStr)
 			#upload a file with the tag name
 			imgID = str(t['id'])
@@ -1155,6 +1208,8 @@ class pxp(m.MVC):
 			# print sys.exc_traceback.tb_lineno
 			# print e
 			return self._err("No tag info specified")
+	#end teleset
+
 ###############################################
 ##	           utility functions             ##
 ###############################################
@@ -1359,18 +1414,16 @@ class pxp(m.MVC):
 				#save the config info
 				self._cfgSet(self.wwwroot+"_db/",[resp['authorization'],resp['customer']])
 				#download encoder control scripts
-				os.system("curl -#Lo "+self.wwwroot+"_db/encpause http://myplayxplay.net/.assets/min/encpause")
-				os.system("curl -#Lo "+self.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
-				os.system("curl -#Lo "+self.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
-				os.system("curl -#Lo "+self.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
+				# os.system("curl -#Lo "+self.wwwroot+"_db/encpause http://myplayxplay.net/.assets/min/encpause")
+				# os.system("curl -#Lo "+self.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
+				# os.system("curl -#Lo "+self.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
+				# os.system("curl -#Lo "+self.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
 				os.system("curl -#Lo "+self.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy")
 				#add execution privileges for the scripts
 				os.system("chmod +x "+self.wwwroot+"_db/*")
 				#download the blank database files
 				os.system("curl -#Lo "+self.wwwroot+"_db/event_template.db http://myplayxplay.net/.assets/min/event_template.db")
 				os.system("curl -#Lo "+self.wwwroot+"_db/pxp_main.db http://myplayxplay.net/.assets/min/pxp_main.db")
-				self._initLive()
-
 				return 1
 			#there was a response but it was an error with a message
 			return resp['msg']
@@ -1391,6 +1444,10 @@ class pxp(m.MVC):
 	def _initLive(self):
 		self.disk().mkdir(self.wwwroot+"live/thumbs")
 		self.disk().mkdir(self.wwwroot+"live/video")
+		if(os.path.exists(self.wwwroot+"live/pxp.db")):
+			os.system("rm -f "+self.wwwroot+"live/pxp.db")
+		if(self._stopping()):
+			os.system("rm -f "+self.wwwroot+"live/stopping.txt")
 		self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+'live/pxp.db')
 	#end initLive
 	#######################################################
@@ -1517,7 +1574,26 @@ class pxp(m.MVC):
 		else:
 			params = " -ss "+str(seconds)+"  -i "+videoFile+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile
 		os.system(cmd+params) # need to wait for response otherwise the tablet will try to download image file that does not exist yet
-	
+	#end mkThumb
+	#######################################################
+	#sets ports in /tmp/pxpports file
+	#######################################################
+	def _portSet(self, hls=2222, ffm=2223, chk=2224):
+		self.disk().file_set_contents("/tmp/pxpports","HLS="+str(hls)+"\nFFM="+str(ffm)+"\nCHK="+str(chk))
+	#end portSet	
+	#returns true if all ports are set to 65535 (all ports are set to 65535 when video is 'paused')
+	def _portSame(self, portCheckValue=65535):
+		equalports = True
+		portLines = (self.disk().file_get_contents("/tmp/pxpports"))
+		if not portLines:
+			return False
+		portLines = portLines.split("\n")
+		for line in portLines:
+			parts = line.split("=")
+			if len(parts)>1:
+				equalports = equalports and parts[1]==str(portCheckValue)
+		return equalports
+	#end portSame
 	#######################################################
 	#renames directories
 	#######################################################
@@ -1530,12 +1606,12 @@ class pxp(m.MVC):
 			# rename the live to that directory
 			os.rename(self.wwwroot+"live",self.wwwroot+event)
 			# update mp4 headers to make the mp4 streamable
-			os.system("/usr/local/bin/qtfaststart "+self.wwwroot+event+'/video/main.mp4')
-			# remove all .ts files - leave them on the server for streaming
+			# os.system("/usr/local/bin/qtfaststart "+self.wwwroot+event+'/video/main.mp4')
+			# remove all .ts files - leave them on the server for streaming past events
 			# cmd = "find "+self.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
 			# os.system(cmd)
-			# re-create the directories for live:
-			self._initLive()
+			# remove the stopping.txt file
+			os.system("rm "+self.wwwroot+event+"/stopping.txt")
 		except Exception as e:
 			import sys
 			return self._err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
@@ -1554,6 +1630,34 @@ class pxp(m.MVC):
 			# size = size >> 10
 			s = s / 1024
 		return ""
+	def _stopping(self, event="live", msg=False):
+		import psutil
+		if(not msg):
+			# TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:
+			# ADD PROVISION, WHEN STOPPING ONE EVENT BUT CREATING BOOKMARKS IN ANOTHER
+			# FFMPEG WILL BE ACTIVE, NEED TO TAKE THAT INTO CONSIDERATION:
+			# DO ANOTHER ps ax | grep COMMAND AND CHECK 
+			# IF THIS FFMPEG ALSO HAS THE 'event/video' AS PART OF ITS PARAMETERS
+			if(os.path.exists(self.wwwroot+event+"/stopping.txt")):
+				# check if the ffmpeg command is actually using any cpu
+				# find the pid's of ffmpeg and handbrake processes
+				pids = []
+				for proc in psutil.process_iter():
+					if (proc.name == 'ffmpeg' or proc.name == 'handbrake'):
+						pids.append(proc.pid)
+				# find the cpu usage
+				processActive = False
+				for pid in pids:
+					 proc = psutil.Process(pid)
+					 processActive = processActive or proc.get_cpu_percent()>=1
+				# if the ffmpeg is just hanging out, the event has been stopped, delete the file
+				if (not processActive):
+					os.system("rm "+self.wwwroot+event+"/stopping.txt")						
+				return processActive
+			#end if not stopping.txt
+			return False
+		#end if not msg
+		return self._err("Event is being stopped")
 	#######################################################
 	#adds tags to an event during the sync procedure (gets called once for each event)
 	#######################################################
@@ -1731,6 +1835,7 @@ class pxp(m.MVC):
 	#that were created in a specific event since the last sync)
 	#######################################################
 	def _syncTab(self, user, device, event, allData=False):
+		from collections import OrderedDict
 		##get the user's ip
 		##userIP = os.environ['REMOTE_ADDR']
 		if (not user) or len(user)<1 or (not device) or len(device)<1 or (not event) or len(event)<1 or ('/' in event) or ('\\' in event) or (not os.path.exists(self.wwwroot+event+"/pxp.db")):
@@ -1750,12 +1855,14 @@ class pxp(m.MVC):
 				#if allData...else
 				#get new events that happened since the last update
 				#get all tag changes that were made since the last update
-				sql = "SELECT DISTINCT(tags.id) AS dtid, tags.* FROM tags LEFT JOIN logs ON logs.id=tags.id WHERE (logs.logID>?) AND (logs.type LIKE 'mod_tags')"
+				sql = "SELECT DISTINCT(tags.id) AS dtid, tags.* FROM tags LEFT JOIN logs ON logs.id=tags.id WHERE (logs.logID>?) AND (logs.type LIKE 'mod_tags') ORDER BY tags.starttime, tags.duration "
 				db.query(sql,(lastup,))
 			#put them in a list of dictionaries:
 			tags = db.getasc()
 			#format tags for output
-			tagsOut = {}
+			tagsOut = OrderedDict()
+			# self._x("")
+			# print tags
 			for tag in tags:
 				if ((int(tag['type'])&1) and (not int(tag['type'])==3)):
 					#only even type tags are sent (normal, telestration, period/half/zone/line end tags)
@@ -1785,9 +1892,10 @@ class pxp(m.MVC):
 				leagueHID = ""
 			#close the database (so that log can use it)
 			db.close();
-			evts.append({"camera":self.encoderstatus()})
+			# evts.append({"camera":self.encoderstatus()})
 			outJSON = {
 				'tags':tagsOut,
+				'status':self.encoderstatus(),
 				'events':evts,
 				'teams':teamHIDs,
 				'league':leagueHID

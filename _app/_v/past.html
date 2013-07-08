@@ -7,14 +7,19 @@
 		<div class="col_2">League</div>
 		<div class="col_2">Video</div>
 		<div class="col_2">
-			<div class="cw_4">&nbsp;
+			<div class="cw_3"> &nbsp; </div>
+			<div class="cw_3 right"> 
+				<input type="checkbox" control="chkAll" class="chkAll">
 			</div>
-			<div class="cw_4 center">
+			<div class="cw_3 right"> 
 				<button id="download" class="green small cw_12" type="reset">
-				<i class="icon-download-alt"></i>
+					<i class="icon-download-alt"></i>
+				</button>
 			</div>
-			<div class="cw_4 right">
-				<button class="removeSel small red cw_12"><i class="icon-remove"></i></button>
+			<div class="cw_3 right">
+				<button class="removeSel small red cw_12">
+					<i class="icon-remove"></i>
+				</button>
 				<!-- <a href="#" class="removeSel large red"><i class="icon-remove"></i></a> -->
 			</div>
 
@@ -87,7 +92,7 @@ function getProgress() {
 		url: 'ajax/dlprogress',
 		type: 'GET',
 		success: function(data, textStatus, xhr){
-			console.log(data);
+
 			// response received for progress, get the % value
 			data = eval("("+data+")");
 			progress = parseInt(data['progress']);
@@ -114,7 +119,7 @@ function rmQueueNext() {
 		return;
 	}
 	evtToDelete = rmQueue[0];
-	console.log(evtToDelete);
+
 	$(evtToDelete).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
 	// send the call to delete the event
 	ajaxCall("evtdelete/?name="+$(evtToDelete).attr('event')+"&event="+$(evtToDelete).attr('eventID'),"",rmQueueNext);
@@ -164,12 +169,12 @@ function processQueue(itemDone, itemError) {
 	  url: 'ajax/prepdown',
 	  data: {'event':evt},
 	  success: function(data, textStatus, xhr){
-	  	console.log(data);
+
 		$.ajax({
 		  url: 'dlstart.php',
 		  data: {'event':evt},
 		  success: function(data, textStatus, xhr){
-		  	console.log(data);
+
 		    //called when successful - start checking for progress after 1 second
 		    setTimeout(getProgress,1000);
 		  }
@@ -231,7 +236,7 @@ function fOnLoad (argument) {
     	$(this).attr('disabled','disabled'); //make sure user cannot click download again
     	$(this).html('<img src="css/img/ajax-loader.gif"/>')
     	// go through every checked video (checkbox) and add it to the queue
-    	$('input:checked').each(function (){
+    	$('input:checked[control!=chkAll]').each(function (){    		
     		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
     		dlQueue.push($(this).parent('div'));
     	}).attr('disabled','disabled');
@@ -245,7 +250,7 @@ function fOnLoad (argument) {
     	}
     	// remove selected events
     	if(confirm('This will delete all the selected events. Are you sure?')){
-	    	$('input:checked').each(function (){
+	    	$('input:checked[control!=chkAll]').each(function (){
 	    		rmQueue.push(this);
 	    	});
 	    	if(rmQueue.length>0){
@@ -274,5 +279,14 @@ function fOnLoad (argument) {
     	}
     	return false;
     });//removeEvt.click
+    $('.chkAll:checkbox').change(function () {
+    	if($(this).is(":checked")){
+    		$(":checkbox").attr("checked","checked");
+    	}
+    	else{
+    		$(":checkbox").removeAttr("checked");
+    	}
+    	return false;
+    });
 }//fOnLoad
 </script>
