@@ -130,10 +130,13 @@ class MVC():
 				return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
 			#end query()
 		   	#executes a query string
-			def qstr(self, query):
+			def qstr(self, query, multiple=False):
 				error = False
 				try:#to prevent sql errors from interrupting the script
-					self.c.execute(query)#run the query
+					if(multiple):
+						self.c.executescript(query)#run the query
+					else:
+						self.c.execute(query)
 					if self.autocommit:
 						self.con.commit()#commit it - without this no changes will be made to the db
 				except ValueError, e:

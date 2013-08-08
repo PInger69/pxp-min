@@ -3,10 +3,12 @@ function start(){
 	$event = $_GET['event'];
 	if (!@$event)
 		return array("success"=>false);
-	# make sure it has no : or / \ in the name
-	if(strpos($event, '/')!==false || strpos($event, '\\')!==false){
+	# make sure it has no : or / in the name
+	if(strpos($event, '/')!==false || strpos($event,':')!==false){
 		return array("success"=>False);#invalid name
 	}
+	// escape spaces in names, just to be safe
+	$event=str_replace(array(" "), array("\ "), $event);
 	#command to start the download
 	# create a named pipe for reading the idevcopy output
 	# make sure the pipe doesn't exist already

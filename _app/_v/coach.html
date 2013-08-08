@@ -1,10 +1,15 @@
+@require(encoder)
 <div class="col_12">
 	<div class="row">
+@if encoder['status']=='live':
 			<button class="medium blue col_6 ajaxbtn" action="coachpick/1">
 				<span class="icon-user"></span> Coach Pick 1
 			</button>
 			<button class="medium blue col_6 ajaxbtn" action="coachpick/2">
 				<span class="icon-user"></span> Coach Pick 2
 			</button>
+@else:
+		<h5>start a live game first</h5>
+@end
 	</div>
 </div>

@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 # m = lp("MVC","_m/mvc.pyc")
 m = ls("MVC","_m/mvc.py")
 class Controller(m.MVC):
-	version = "0.92.2"
+	version = "0.93.1"
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -16,14 +16,18 @@ class Controller(m.MVC):
 		self.d['version']=self.version
 	#this function is executed first
 	def _run(self):
+		import os, sys
 		# get the method name that the user is trying to access
 		try:
 			self.p = self.loader().module("pxp").pxp()
 			self.sess = self.session(expires=24*60*60,cookie_path="/")
 			sess = self.sess
-			if (not 'email' in sess.data):
+			# sess = False
+			if (sess and not 'email' in sess.data):
 				sess.data['email']=False
-			if ('user' in sess.data):
+			# sess = {}
+			# sess['data'] = {}
+			if (sess and 'user' in sess.data):
 				# someone is logged in - set the session variable
 				self.d['user'] = sess.data['user']
 				self.d['email']= sess.data['email']
@@ -32,11 +36,15 @@ class Controller(m.MVC):
 				self.d['user'] = False
 				self.d['email'] = False
 			functionName = self.uri().segment(1,"home")
+			if len(sys.argv)>1:
+				functionName="ajax"
 			if (functionName[:1]=="_"): # methods starting with _ are private - user cannot access them
 				functionName = ""
 			elif (functionName=="ajax"): #call method from the pxp model
 				functionName = self.uri().segment(2,"")
-				fn = getattr(self.p, functionName, None)
+				if len(sys.argv)>1:
+					functionName="importold"
+				fn = getattr(self.p, functionName, None)				
 			else:#load view
 				fn = getattr(self, functionName, None)
 				# fn = getattr(self.p, functionName, None)		
@@ -88,10 +96,10 @@ class Controller(m.MVC):
 		# output the page
 		self.d["page"]=page
 		self.d["disk"]=self.p._diskStat()
+		self.d['encoder']=self.p.encoderstatus(textOnly=False)
 		if(page=="home"):
 			self.d['leagues']=self.p._listLeagues()
 			self.d['teams']=self.p._listTeams()
-			self.d['encStatus']=self.p.encoderstatus()
 		if(page=="past"):
 			self.d['events']=self.p._listEvents(showDeleted=False)
 		self._out(page+'.html',self.d)
@@ -122,4 +130,5 @@ class Controller(m.MVC):
 			print e
 		template = engine.get_template('footer.html')
 		print(template.render(params))
-#end pout#end Controller()
+	#end out
+#end Controller()

@@ -37,13 +37,13 @@
 		<div class="col_2">
 			@ev['date']
 		</div>
-		<div class="col_2">
+		<div class="col_2 word-break">
 			@ev['homeTeam']
 		</div>
-		<div class="col_2">
+		<div class="col_2 word-break">
 			@ev['visitTeam']
 		</div>
-		<div class="col_2">
+		<div class="col_2 word-break">
 			@ev['league']
 		</div>
 		<div class="col_2 vidColumn">
@@ -197,7 +197,7 @@ function fOnLoad (argument) {
 		}
 	}
 	// attach a click to the close button on a window
-	$('.wnd a[href$="close"]').live('click', function(e){
+	$('document').on('click', '.wnd a[href$="close"]', function(e){
 		e.preventDefault();
 		$('html').find('.overlay').fadeOut(function (e) {
 			$(this).remove();

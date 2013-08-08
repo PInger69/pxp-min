@@ -107,7 +107,6 @@
 		  data: params,
 		  success: function(data, textStatus, xhr) {
 		    ajaxInProgress = false;
-
 		    res = { };
 		    try{
 		    	res = eval("("+data+")");
@@ -152,13 +151,12 @@
 	function ajaxCamStatus(){
 		// check if the camera is connected and set the status accordingly
 		$.ajax({
-		  timeout:2000,
+		  timeout:4000,
 		  url: 'ajax/getcamera',
 		  complete: function(xhr, textStatus) {
-
+			  // console.log(textStatus);
 		  },
 		  success: function(data, textStatus, xhr) {
-
 			try{
 				rez = eval("("+data+")");//parse json
 			}
@@ -227,7 +225,16 @@
 		$('.ajaxbtn').click(function(e) {
 			// ajax buttons have 'action' attribute which is the name of the url to call
 			// some have param attribute - list of #id's of elements whose values to add to the call
-			ajaxCall(false,false,false,$(this));
+			if($(this).attr('action')=='encshutdown'){
+				if (confirm("Are you sure you want to turn off the encoder?"))
+				  {
+					  ajaxCall(false,false,false,$(this));
+				  }
+			}
+			else{
+				ajaxCall(false,false,false,$(this));
+			}
+			
 		});
 	});
 </script>
