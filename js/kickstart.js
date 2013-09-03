@@ -123,12 +123,18 @@ jQuery(document).ready(function($){
 	/*---------------------------------
 		Notice
 	-----------------------------------*/
-	$(document).on('click', '.notice a[class^="icon-remove"]', function(e){
+	$(document).on('click','.notice a[href$="close"]', function(e){
 		e.preventDefault();
 		var notice = $(this).parents('.notice');
 		$(this).hide();
 		notice.fadeOut('slow');
 	});
+	// $(document).on('click', '.notice a[class^="icon-remove"]', function(e){
+	// 	e.preventDefault();
+	// 	var notice = $(this).parents('.notice');
+	// 	$(this).hide();
+	// 	notice.fadeOut('slow');
+	// });
 
 	/*---------------------------------
 		ToolTip - TipTip

@@ -101,33 +101,37 @@
 		for(elem in pr){
 			params[pr[elem]] = $('#'+pr[elem]).val();
 		}
-
 		$.ajax({
 		  url: 'ajax/'+action,
 		  data: params,
 		  success: function(data, textStatus, xhr) {
 		    ajaxInProgress = false;
-		    res = { };
+		    result = { };
 		    try{
-		    	res = eval("("+data+")");
+		    	result = eval("("+data+")");
 		    }
 		    catch(e){
-		    	res['success'] = false;
+		    	result['success'] = false;
 		    }
-		    if (!res['success'] && shuttingDown){
+		    if (!result['success'] && shuttingDown){
 		  		shuttingDown = false;
 		  		alert('user permissions do not allow encoder shut down');
 		  		window.location.reload();
 		    }
-	    	switch(res['action']){
+	    	switch(result['action']){
 	    		case 'reload': 	
 	    			window.location.reload();
+	    		break;
+	    		case 'popup':
+	    			if(result['msg']){
+		    			alert(result['msg']);
+	    			}
 	    		break;
 	    		default :	    		
 	    		break;
 
 	    	}	    	
-		    if(res['success'] && callback!=false){
+		    if(result['success'] && callback!=false){
 		    	callback();
 		    }
 		    if (ajaxbtn){

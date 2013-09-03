@@ -6,7 +6,12 @@ import os, json
 m = ls("MVC","_m/mvc.py")
 
 class pxp(m.MVC):
-	tagVidBegin = 10
+	# number of seconds to show prior to the tag time
+	defaultTagPreroll = 10
+	# duration of the tag: 20 seconds (-10s preroll, +10s postroll)
+	defaultTagDuration = 20 
+	# minimum free space required in order to have an encode running
+	minFreeSpace = 1073741824 * 5 #5gb
 	#######################################################
 	#######################################################
 	################debug section goes here################
@@ -61,11 +66,12 @@ class pxp(m.MVC):
 	def importold(self):
 		from glob import glob
 		try:
+			# return #prevent accidental messups
 			self._x("Starting import...<br/>\n")
 			# name of the folder to parse:
 			cust = "SAC"
 			pathToOld = "/Users/dev/Downloads/"+cust
-			pathToNew = "/Volumes/Macintosh HD-1/private/var/www/html/events/"
+			pathToNew = "/var/www/html/events/"
 			# create a blank copy of the new format database
 			if(not os.path.exists(pathToNew+'_db/pxp_main.db')):
 				# create directories
@@ -75,6 +81,25 @@ class pxp(m.MVC):
 			oldEvents = glob(pathToOld+"/htdocs/event/*")
 			# go through each one, and convert it:
 			teamLookup = {
+				# TIGERS TEAMS
+				# 'AUR':'Aurora',
+				# 'ORA':'Orangeville',
+				# 'OTHER':'OTHER',
+				# 'BUR':'Burlington',
+				# 'WHI':'Whitby',
+				# 'TRE':'Trenton',
+				# 'LIN':'Lindsay',
+				# 'STM':'St Michaels',
+				# 'TLP':'Toronto Lakeshore',
+				# 'KIN':'Kingston',
+				# 'WEL':'Wellington',
+				# 'COB':'Cobourg',
+				# 'STO':'Stouffville',
+				# 'GEO':'Georgetown',
+				# 'NMK':'Newmarket',
+				# 'PIC':'Pickering',
+				# 'HAM':'Hamilton'
+				# SAC TEAMS
 				'LFA':'Lake Forest',
 				'SAC':'St. Andrews',
 				'UCC':'UCC',
@@ -93,7 +118,8 @@ class pxp(m.MVC):
 			}
 			leagueLookup = {
 				'CISAA':'CISAA Hockey',
-				'MPHL': 'Midwest Prep Hockey League'
+				'MPHL': 'Midwest Prep Hockey League',
+				'OJHL': 'Ontario Junior Hockey League'
 			}
 			for event in oldEvents:
 				evtFile = event[event.rfind('/')+1:]
@@ -216,7 +242,7 @@ class pxp(m.MVC):
 						else:
 							oldtag['name'] += ' loss'
 						tagzone = name[6:8].upper()
-					newTag = (oldtag['name'],oldtag['source'],oldtag['secs'],oldtag['period'],20,oldtag['coach'],oldtag['colour'],float(oldtag['secs'])-10,tagtype,players,strength,tagzone)
+					newTag = (oldtag['name'],oldtag['source'],oldtag['secs'],oldtag['period'],self.defaultTagDuration,oldtag['coach'],oldtag['colour'],float(oldtag['secs'])-10,tagtype,players,strength,tagzone)
 					sql = "INSERT INTO `tags`(name, user, time, period, duration, coachpick, colour, starttime, type, player, strength, zone) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
 					dbnew.query(sql,newTag)
 					newID = str(dbnew.lastID())
@@ -255,6 +281,21 @@ class pxp(m.MVC):
 	#######################################################
 	#######################################################
 
+	#######################################################
+	# checks if there is enough space on the hard drive
+	# if there isn't, stops whatever encode is going on
+	# currently. 
+	# @return boolean: true if there is enough free space
+	#######################################################
+	def checkspace(self):
+		# find how much free space is available
+		diskInfo = self._diskStat(humanReadable=False)
+		enoughSpace = diskInfo['free']>self.minFreeSpace
+		# if there's not enough, stop the current encode
+		if(not enoughSpace):
+			self.encstop()
+		return enoughSpace
+	#end checkspace
 	#######################################################
 	# creates a coach pick
 	#######################################################
@@ -622,9 +663,13 @@ class pxp(m.MVC):
 			# if an event is being stopped, wait for it
 			while(self._stopping()):
 				sleep(1)
-			#make sure not overwriting an old event
+			# make sure there is enough free space
+			if(not self.checkspace()):
+				return self._err("Not enough free space to start a new encode. Delete some of the old events from the encoder.")
+			# make sure not overwriting an old event
 			if(os.path.exists(self.wwwroot+"live/evt.txt")):
 				self.encstop()
+
 			#make sure the 'live' directory was initialized
 			self._initLive()
 			io = self.io()
@@ -646,11 +691,11 @@ class pxp(m.MVC):
 
 
 			# create new event in the database
-			# get time for hid and for database
+			# get time for hid and for database in YYYY-MM-DD HH:MM:SS format
 			timestamp = dt.fromtimestamp(tm()).strftime('%Y-%m-%d %H:%M:%S')
 			stampForFolder = timestamp.replace(":","-").replace(" ","_")
 
-			evthid = self.enc().sha(timestamp) #event hid
+			evthid = self.enc().sha(timestamp)+'_local' #local event hid
 			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 			sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`) VALUES(?,?,?,?,?)"
 			db.query(sql,(evthid,timestamp,hmteam,vsteam,league))
@@ -690,12 +735,12 @@ class pxp(m.MVC):
 			# -f ... 	: directory to output the segments
 			# -127.0.0.1:2222 	: listen on port 2222 of local host to incoming UDP packets
 			#>/dev/null &		: throw all output to null, & at the end puts it in background process (so python doesn't stop)
-			success = success and not os.system("mediastreamsegmenter -p -t 1s -S 1 -B segm -i list.m3u8 -f "+self.wwwroot+"live/video 127.0.0.1:2222 >/dev/null &");
+			success = success and not os.system("mediastreamsegmenter -p -t 1s -S 1 -B segm -i list.m3u8 -f "+self.wwwroot+"live/video 127.0.0.1:2222 >/dev/null &")
 
 			# start the mp4 capture using ffmpeg
 			# parameters:
 			# -f mpegts: format of the video
-			# -i 'udp....':  input file/stream (the udp port is the one that this app sends packets to
+			# -i 'udp....':  input file/stream (the udp port is the one to which this app sends packets)
 			# -re : maintain the frame rate
 			# -y : overrite output file without asking
 			# -strict experimental: needed to have proper mp4 output
@@ -704,7 +749,31 @@ class pxp(m.MVC):
 			# /var/www/.....mp4: output file
 			# >/dev/null: redirect output to null (do not show it)
 			# &: put the execution in background mode
-			success = success and not os.system("ffmpeg -f mpegts -i 'udp://127.0.0.1:2223?fifo_size=1000000&overrun_nonfatal=1' -re -y -strict experimental -vcodec copy -f mp4 "+self.wwwroot+"live/video/main.mp4 >/dev/null &");
+			success = success and not os.system("ffmpeg -f mpegts -i 'udp://127.0.0.1:2223?fifo_size=1000000&overrun_nonfatal=1' -re -y -strict experimental -vcodec copy -f mp4 "+self.wwwroot+"live/video/main.mp4 >/dev/null &")
+
+			if success:
+				# send a request to create a new event in the cloud
+				# 'homeTeam'	=>'req|aln|neq=visitorTeam|name='.$this->l['l_homeTeam'],
+				# 'visitorTeam'=>'req|aln|name='.$this->l['l_visitorTeam'],
+				# 'league'	=>'req|aln|name='.$this->l['l_league'],
+				# 'date'		=>'req|dtm|name='.$this->l['l_eventDate'],
+				# 'location'	=>'ign|max=64|name='.$this->l['l_location'],
+				# 'type'		=>'ign|num|name='.$this->l['l_eventType'],
+				# 'season'	=>'ign|aln|name='.$this->l['l_season'],
+				# 'v1'		=>'ign|aln',//email (sha1-hashed) 
+				# 'v2'		=>'ign|aln',//password (encrypted)
+				# 'hid'		=>'ign|aln'
+
+				cfg = self._cfgGet(self.wwwroot+"_db/")
+				params ={   'homeTeam':hmteamHID,
+							'visitorTeam':vsteamHID,
+							'league':leagueHID,
+							'date':timestamp,
+							'season':timestamp[:4],
+							'v0':cfg[1], #authentication code
+							'v1':cfg[2] #customer ID
+						}
+				# resp = self.io().send(url,params, jsn=True)				
 			msg = ""
 		except Exception as e:
 			import sys
@@ -719,6 +788,8 @@ class pxp(m.MVC):
 		from time import time as tm
 		msg = ""
 		try:
+			if(not os.path.exists(self.wwwroot+'live')):
+				return self._err('no live event to stop')
 			timestamp = dt.fromtimestamp(tm()).strftime('%Y-%m-%d %H:%M:%S')
 			# rez = os.system(self.wwwroot+"_db/encstop")
 			# make sure nobody creates new tags or does other things to this event anymore
@@ -1106,10 +1177,15 @@ class pxp(m.MVC):
 					#flag to check if this is a bookmark ("my clip")
 					bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']=='1'))
 					sqlInsert.append("`"+mod+"`=?")
-					params +=(jp[mod],)
+					if(type(jp[mod]) is dict):
+						params +=(json.dumps(jp[mod]),)
+					else:					
+						params +=(jp[mod],)
 			#end for mod in jp
 			if len(sqlInsert)<1:#nothing was specified 
 				return self._err()
+			if(bookmark and not self.checkspace()):
+				return self._err("Not enough free space. Delete some of the old events from the encoder.")
 			# parameters to add to the sql - tag id (no need to check user at the moment)
 			params += (tid,)
 			#update the tag
@@ -1120,7 +1196,7 @@ class pxp(m.MVC):
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyon else to get this file
 				#update the tag info in the database
-				success = db.query(sql,params) and db.numrows()>0
+				success = db.query(sql,params)
 				if success:
 					#add an entry to the event log that tag was updated or deleted
 					success = self._logSql(ltype='mod_tags',lid=tid,uid=user,db=db)
@@ -1131,6 +1207,7 @@ class pxp(m.MVC):
 				# db.query(sql,(tid,))
 				# tag = db.getasc()
 				db.close() #close db here because next statement will return
+
 				if (bookmark):
 					# user wants to make a bookmark - extract the video
 					success = success and self._extractclip(tagid=tid,event=event)
@@ -1176,7 +1253,7 @@ class pxp(m.MVC):
 	def tagset(self, tagStr=False):
 		import math
 		import json, os, sys
-		tagVidBegin = self.tagVidBegin
+		tagVidBegin = self.defaultTagPreroll
 		if (not tagStr):
 			tagStr = self.uri().segment(3)
 		#just making sure the tag was supplied
@@ -1201,13 +1278,17 @@ class pxp(m.MVC):
 				self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+t['event']+'/pxp.db')
 			if(self._stopping(t['event'])):
 				return self._stopping(msg=True)
-			db.open(self.wwwroot+t['event']+'/pxp.db')
-			db.transBegin() #in case we need to roll it back later
-			success = 1
 			if(not 'type' in t):
 				t['type'] = 0 #if type is not defined set it to default
 			else:
 				t['type'] = int(t['type'])
+			if(t['type']==3):
+				return self.err("Attempting to create deleted tag")
+
+			success = 1
+ 
+ 			db.open(self.wwwroot+t['event']+'/pxp.db')
+			db.transBegin() #in case we need to roll it back later
 			if(not 'coachpick' in t): #will be only set if coach tags it 
 				t['coachpick']=0
 			if(math.isnan(float(t['tagtime']))):
@@ -1256,9 +1337,9 @@ class pxp(m.MVC):
 				sqlVars += (0,)
 				sqlAddFld = ", duration"
 			else:
-			# duration not specified - add a default tag duration value (20 seconds) (-10s, +10s)
+			# duration not specified - add a default tag duration value
 				sqlAddVal = ",?" #added to the sql values
-				sqlVars += (20,) #added to the variables tuple
+				sqlVars += (self.defaultTagDuration,) #added to the variables tuple
 				sqlAddFld = ", duration"
 			# if players were specified add them to the sql as well
 			if('player' in t):
@@ -1285,6 +1366,14 @@ class pxp(m.MVC):
 			if(('strength' in t) and (t['type']==9)):
 				sqlVars += (t['strength'],)
 				sqlAddFld += ", strength"
+				sqlAddVal += ", ?"
+			if(('rating' in t)):
+				sqlVars += (t['rating'],)
+				sqlAddFld += ", rating"
+				sqlAddVal += ", ?"
+			if(('comment' in t)):
+				sqlVars += (t['comment'],)
+				sqlAddFld += ", comment"
 				sqlAddVal += ", ?"
 			#if zone was set (i.e. OZ, NZ, DZ for hockey), add it 
 			#NOT THE SAME AS ZONE IS SOCCER/RUGBY!!
@@ -1549,14 +1638,16 @@ class pxp(m.MVC):
 		import string
 		return string.replace(text,'"','""')
 	#end cln	
-	def _diskStat(self):
+	def _diskStat(self, humanReadable=True):
 		import os
 		st = os.statvfs("/")
 		diskFree = st.f_bavail * st.f_frsize
 		diskTotal = st.f_blocks * st.f_frsize
 		diskUsed = diskTotal-diskFree
 		diskPrct = int(diskUsed*100/diskTotal)
- 		return {"total":self._sizeFmt(diskTotal),"free":self._sizeFmt(diskFree),"used":self._sizeFmt(diskUsed),"percent":str(diskPrct)}
+		if(humanReadable):
+	 		return {"total":self._sizeFmt(diskTotal),"free":self._sizeFmt(diskFree),"used":self._sizeFmt(diskUsed),"percent":str(diskPrct)}
+	 	return {"total":diskTotal,"free":diskFree,"used":diskUsed,"percent":str(diskPrct)}
 	#######################################################
 	#returns encoder state (0 - off, 1 - live, 2 - paused)
 	#######################################################
@@ -1565,7 +1656,7 @@ class pxp(m.MVC):
 		return int(self.disk().file_get_contents("/tmp/pxpstreamstatus")) #int(self.disk().sockRead(udpPort=2224,timeout=0.5))
 	#end encState
 	def _err(self, msgText=""):
-		return {"success":False,"msg":msgText}
+		return {"success":False,"msg":msgText,"action":"popup"}
 	#######################################################
 	# extract number from a string (returns 0 if no numbers found)
 	#######################################################
@@ -1682,15 +1773,29 @@ class pxp(m.MVC):
 	#######################################################
 	def _init(self, email, password):
 		import platform
+		from uuid import getnode as mymac
+		import subprocess
 		# make sure the credentials were supplied
 		url = "http://www.myplayxplay.net/max/activate/ajax"
-		
+		# this only works on a mac!
+		try:
+			proc = subprocess.Popen('ioreg -l | grep IOPlatformSerialNumber',shell=True,stdout=subprocess.PIPE)
+			serialNum = ""
+			# the output will be similar to:
+			#     |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
+			for line in iter(proc.stdout.readline,""):
+				if(line.find("\"")):
+					lineParts = line.split("\"")
+					if(len(lineParts)>3):
+						serialNum +=lineParts[3]
+		except Exception as e:
+			serialNum = "n/a"
 		params = {
 			'v0':self.enc().sha('encoder'),
 			'v1':self.enc().sha(email),
 			'v2':self._hash(password),
 			'v3':platform.uname()[1],
-			'v4':", ".join(platform.uname())
+			'v4':str(hex(mymac()))[2:]+' - '+serialNum
 		}
 		resp = self.io().send(url, params, jsn=True)
 		if(resp):
@@ -2219,7 +2324,7 @@ class pxp(m.MVC):
 				db.query(sql,(tagID,))
 				tag = db.getasc()
 				if(len(tag)<1): #invalid tag - not found in the database
-					return {}
+					return self._err("Tag "+str(tagID)+" does not exist")
 				tag = tag[0]
 				if(autoclose):
 					db.close()
@@ -2275,7 +2380,7 @@ class pxp(m.MVC):
 					# get the name of the .ts segment containing the right time				
 					res = {}	
 					vidSegmfileName = self._thumbName(tag['time'],event=event,results=res)
-					vidFile = self.wwwroot+event+"/video/"+str(vidSegmfileName)
+					vidFile = self.wwwroot+event+"/video/"+str(vidSegmfileName)					
 					sec = res['remainder']
 				else:
 					# for past events, the thumbnail can be extracted from the main.mp4
@@ -2323,11 +2428,15 @@ class pxp(m.MVC):
 		# path to the list.m3u8 file - playlist for the hls
 		listPath = self.wwwroot+event+"/video/list.m3u8"
 		#open m3u8 file:
-		f = open(listPath,"r")
-
 		#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at roughly 00:00:50 time. reachedTime contains the number of seconds since file0
 		reachedTime = 0.0
+		# how much time is between the beginning of the HLS segment containing the required time and the required time
+		# e.g. segment starts at 953 seconds, lasts 1 second, the tagtime is at 953.73 seconds, the remainder will be 0.73s
+		results['remainder']=0
+		# number of the HLS segment containing the required time
+		results['number']=0
 		try:
+			f = open(listPath,"r")
 			seekTo = float(seekTo) # make sure this is not a string
 		except:
 			return 0
@@ -2337,11 +2446,6 @@ class pxp(m.MVC):
 		# #EXTINF:0.98431,
 		# fileSequence531.ts
 		#and so on - a line with time precedes the line with file name
-		# how much time is between the beginning of the HLS segment containing the required time and the required time
-		# e.g. segment starts at 953 seconds, lasts 1 second, the tagtime is at 953.73 seconds, the remainder will be 0.73s
-		results['remainder']=0
-		# number of the HLS segment containing the required time
-		results['number']=0
 
 		fileName = False
 		for line in f:

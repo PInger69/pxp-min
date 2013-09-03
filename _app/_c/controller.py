@@ -3,7 +3,7 @@ from imp import load_compiled as lp
 # m = lp("MVC","_m/mvc.pyc")
 m = ls("MVC","_m/mvc.py")
 class Controller(m.MVC):
-	version = "0.93.1"
+	version = "0.93.4"
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -43,8 +43,8 @@ class Controller(m.MVC):
 			elif (functionName=="ajax"): #call method from the pxp model
 				functionName = self.uri().segment(2,"")
 				if len(sys.argv)>1:
-					functionName="importold"
-				fn = getattr(self.p, functionName, None)				
+					functionName=sys.argv[1]
+				fn = getattr(self.p, functionName, None)
 			else:#load view
 				fn = getattr(self, functionName, None)
 				# fn = getattr(self.p, functionName, None)		

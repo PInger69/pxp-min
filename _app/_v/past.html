@@ -7,29 +7,20 @@
 		<div class="col_2">League</div>
 		<div class="col_2">Video</div>
 		<div class="col_2">
-			<div class="cw_3"> &nbsp; </div>
-			<div class="cw_3 right"> 
+			<!-- <div class="cw_3"> &nbsp; </div> -->
+			<div class="cw_2 right"> 
 				<input type="checkbox" control="chkAll" class="chkAll">
 			</div>
-			<div class="cw_3 right"> 
+			<div class="cw_5 right"> 
 				<button id="download" class="green small cw_12" type="reset">
 					<i class="icon-download-alt"></i>
 				</button>
 			</div>
-			<div class="cw_3 right">
+			<div class="cw_5" style="float:right;">
 				<button class="removeSel small red cw_12">
 					<i class="icon-remove"></i>
 				</button>
-				<!-- <a href="#" class="removeSel large red"><i class="icon-remove"></i></a> -->
 			</div>
-
-<!-- 			<button id="download" class="green small cw_10 center" type="reset">
-				<i class="icon-download-alt"></i> download
-			</button>
-			<div class="cw_1 right">
-				<a href="#" class="removeEvt large red"><i class="icon-remove"></i></a>
-			</div>
- -->
 		</div>
 	</div>	
 @for ev in events:
@@ -58,9 +49,9 @@
 		<div class="col_2">
 			<div class="cw_11 center">
 				@if 'mp4' in ev:
-					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']">
+					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']" download>
 				@else:
-					&nbsp;
+					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']">
 				@end
 			</div>
 			<div class="cw_1 right">
@@ -74,14 +65,20 @@
 </div>
 <div id="videoWnd" class="wnd-container hide">
 	<div class="wnd">
-		<div id="vidPlayer"></div>
+		<video id="videoPlayer" class="video-js vjs-default-skin" autoplay width="853" height="480" controls preload="auto" data-setup="{}">
+
+		</video>
+		<!-- <div id="vidPlayer"></div> -->
 		<a href="#close" class="icon-remove"></a>
 	</div>
 </div>
 
 
 
-<script type="text/javascript" src="js/jwplayer.js"></script>
+<!-- <script type="text/javascript" src="js/jwplayer.js"></script> -->
+<link href="css/video-js.css" rel="stylesheet">
+<script src="js/video.js"></script>
+
 <script type="text/javascript">
 var dlQueue = []; //queue used for processing multiple downloads
 var rmQueue = []; //queue used for processing multiple deletions
@@ -197,13 +194,14 @@ function fOnLoad (argument) {
 		}
 	}
 	// attach a click to the close button on a window
-	$('document').on('click', '.wnd a[href$="close"]', function(e){
+	$(document).on('click', '.wnd a[href$="close"]', function(e){
 		e.preventDefault();
 		$('html').find('.overlay').fadeOut(function (e) {
 			$(this).remove();
 		});
 		$(this).parents('.wnd-container').fadeOut();
-		jwplayer("vidPlayer").stop();
+		videojs("#videoPlayer").pause();
+		// jwplayer("vidPlayer").stop();
 	});
 	// attach media player to any media links (allows graceful breakdown for js-disabled cases)
     $('.media').click(function (e){
@@ -214,18 +212,24 @@ function fOnLoad (argument) {
 	    $('.overlay').fadeIn();
 	    // player window
 	    $('#videoWnd').fadeIn();
+	   	var vidType = $(self).attr('href').indexOf('.m3u8')>0?'application/x-mpegURL':'video/mp4';
+	   	// remove any old videos
+	   	$('#videoWnd video').find('source').remove();
+	   	// add new video
+	    $('#videoWnd video').append('<source src="'+$(self).attr('href')+'" type="'+vidType+'">');
+		videojs("#videoPlayer").play();
 	    // initialize the player to 480p resolution
-	    jwplayer("vidPlayer").setup({
-	        file: $(self).attr('href'),
-	        width: 853,
-	        height: 480,
-	        analytics: {
-	        	enabled:false,
-	        	cookies:false
-	        }
-	    });	
+	    // jwplayer("vidPlayer").setup({
+	    //     file: $(self).attr('href'),
+	    //     width: 853,
+	    //     height: 480,
+	    //     analytics: {
+	    //     	enabled:false,
+	    //     	cookies:false
+	    //     }
+	    // });	
 	    // start playing
-	    jwplayer("vidPlayer").play();
+	    // jwplayer("vidPlayer").play();
     	return false;
     });
     // clicked download button
@@ -236,10 +240,11 @@ function fOnLoad (argument) {
     	$(this).attr('disabled','disabled'); //make sure user cannot click download again
     	$(this).html('<img src="css/img/ajax-loader.gif"/>')
     	// go through every checked video (checkbox) and add it to the queue
-    	$('input:checked[control!=chkAll]').each(function (){    		
+    	$('input[download]:checked[control!=chkAll]').each(function (){
     		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
     		dlQueue.push($(this).parent('div'));
     	}).attr('disabled','disabled');
+    	console.log(dlQueue.length);
     	// start download
     	processQueue();
     });
