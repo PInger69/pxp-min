@@ -50,7 +50,7 @@
 			<div class="cw_11 center">
 				@if 'mp4' in ev:
 					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']" download>
-				@else:
+				@elif not 'live' in ev:
 					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']">
 				@end
 			</div>
@@ -75,7 +75,6 @@
 
 
 
-<!-- <script type="text/javascript" src="js/jwplayer.js"></script> -->
 <link href="css/video-js.css" rel="stylesheet">
 <script src="js/video.js"></script>
 
@@ -218,18 +217,6 @@ function fOnLoad (argument) {
 	   	// add new video
 	    $('#videoWnd video').append('<source src="'+$(self).attr('href')+'" type="'+vidType+'">');
 		videojs("#videoPlayer").play();
-	    // initialize the player to 480p resolution
-	    // jwplayer("vidPlayer").setup({
-	    //     file: $(self).attr('href'),
-	    //     width: 853,
-	    //     height: 480,
-	    //     analytics: {
-	    //     	enabled:false,
-	    //     	cookies:false
-	    //     }
-	    // });	
-	    // start playing
-	    // jwplayer("vidPlayer").play();
     	return false;
     });
     // clicked download button

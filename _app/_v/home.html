@@ -103,18 +103,6 @@ def iff(cond,if_true,if_false=""):
 
 <script type="text/javascript">
 function fOnLoad(){
-	// get the encoder status at first, then it triggers camera status updates
-	$.ajax({
-		// timeout:3000,
-		url: 'ajax/encoderstatjson',
-		complete: function(xhr, textStatus) {
-		},
-		success: function(data, textStatus, xhr) {
-			var jsStatus = eval("("+data+")");
-			encStatus = jsStatus.status;
-			// get the camera status
-			ajaxCamStatus();
-		}//success
-	});
+	ajaxCamStatus();
 }
 </script>

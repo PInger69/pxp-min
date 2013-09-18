@@ -174,6 +174,58 @@ class MVC():
 				f = open(filename,"w")
 				f.write(text)
 				f.close()	
+			# retreives data from a config file in a dictionary format
+			def iniGet(self,cfgfile):
+				import ConfigParser, os
+				parser = ConfigParser.ConfigParser()
+				cfgParams = {}
+				if(not os.path.exists(cfgfile)):
+					# file does not exist, return empty dictionary
+					return cfgParams
+				# get all sections
+				parser.read(cfgfile)
+				# parse sections
+				for section in parser.sections():
+					options = parser.options(section)
+					# each section is a dictionary
+					cfgParams[section]={}
+					# get list of options in each section
+					for option in options:
+						try:
+							# try to get the value for this parameter
+							cfgParams[section][option] = parser.get(section, option)
+						except:
+							# value was not specified, leave it as blank (not null)
+							cfgParams[section][option] = ''
+				return cfgParams
+			#end iniGet
+			# sets a config file parameter, returns true on success, false on failure
+			def iniSet(self,cfgFile,section,param,value):
+				import ConfigParser, os
+				try:
+					# init the parser
+					parser = ConfigParser.ConfigParser()
+					# check if the config file exist
+					fp = None
+					if(not os.path.exists(cfgFile)):
+						# file does not exist, create it
+						fp = open(cfgFile,"w")
+					# get the config file info (if any)
+					parser.read(cfgFile)
+					if (not fp):
+						fp = open(cfgFile,"w")
+					# make sure the section we're setting exists
+					if(not section in parser.sections()):
+						# add if it doesn't
+						parser.add_section(section)
+					# set the value
+					parser.set(section,param,value)
+					# save the file
+					parser.write(fp)
+					fp.close()
+					return True
+				except Exception as e:
+					return False
 			def mkdir(self, dirpath, perm=0777):
 				import os
 				try:
@@ -218,6 +270,24 @@ class MVC():
 					#probably failed because bind didn't work - no need to worry
 					pass
 				return data
+			# sends msg to the specified socket
+			def sockSend(self, msg, sockHost="127.0.0.1", sockPort=2232):
+				import socket
+				sent = 0
+				try:
+					sock = socket.socket(
+						socket.AF_INET, socket.SOCK_STREAM)
+					sock.connect((sockHost, sockPort))
+					if(msg[-2:]!="\r\n"):
+						msg+="\r\n"
+					sent = sock.send(msg)
+					sock.close()
+				except Exception as e:
+					try:
+						sock.close()
+					except:
+						pass
+				return sent
 		#end c_disk class
 		return c_disk()
 	#end disk
@@ -257,6 +327,16 @@ class MVC():
 			def get(self, fieldName):
 				return self.frm.getvalue(fieldName)
 			#end get
+			# checks if there is connection to myplayxplay.net website
+			def isweb(self):
+				import urllib2
+				from time import time as tm				
+				try:
+					timestamp = str(int(tm()*1000))
+					response=urllib2.urlopen('http://myplayxplay.net/?timestamp='+timestamp,timeout=10)
+					return True
+				except Exception as e: pass
+				return False
 			def send(self,url,params,jsn=False):
 				import httplib, urllib, urlparse, json
 				try:
@@ -265,11 +345,6 @@ class MVC():
 					conn = httplib.HTTPConnection(parsed.netloc)
 					conn.request("POST", parsed.path, urllib.urlencode(params),headers)
 					r1 = conn.getresponse()
-					# from httplib2 import Http
-					# from urllib import urlencode
-					# h = Http()
-					# resp, content = h.request(url, "POST", urlencode(params))
-					# if resp['status']=='200':
 					if(jsn):
 						try:
 							return json.loads(r1.read())

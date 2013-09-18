@@ -1,3 +1,4 @@
+@require(encoder)
 <!-- ===================================== START FOOTER ===================================== -->
 		<div class="clear"></div>
 		<div id="footer">
@@ -5,9 +6,10 @@
 		</div>
 	</div><!-- END WRAP -->
 </div><!-- END GRID -->
-<script type="text/javascript">
+<script type="text/javascript">	
+	var reloadPending = false;
 	var cameraStateTmr = null;     	//timer variable (used to reset it if need be)
-	var encStatus = ""; 	//encoder status: live, off, paused
+	var encStatus = "@encoder['status']"; 	//encoder status
 	var btnHtml = "";   	//html for the submit button prior to clicking
 	var ajaxInProgress = false;	//whether the page can be reloaded - true if there is an ajax call in progress
 	var shutDownCounter = 0; //counts after receiving an error from the server (happens when server goes offline)
@@ -31,6 +33,8 @@
 		    url: 'ajax/'+action,
 		    type: 'POST',
 		    data: post_data,
+			complete: function(xhr, textStatus) {
+			},
 		    success: function(data, textStatus, xhr){
 				//response from the server received
 				ajaxInProgress = false;
@@ -47,8 +51,6 @@
 					if(callback){
 						eval(callback+"();");
 					}
-					// reset all the fields
-					// $('#'+form)[0].reset();
 				}
 				else{
 					$(form).find('.warning .status').html(rez.msg);
@@ -59,7 +61,6 @@
 		    },//on success
 		    error: function(xhr, textStatus, errorThrown){
 				//called when there is an error
-
 				ajaxInProgress = false;
 				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
 		    }
@@ -101,10 +102,18 @@
 		for(elem in pr){
 			params[pr[elem]] = $('#'+pr[elem]).val();
 		}
+		timestamp = new Date();
+		// determine if parameters already have a question mark (sending GET params)
+		getParams = action.indexOf('?') != -1;
 		$.ajax({
-		  url: 'ajax/'+action,
+		  // timeout:5000,
+		  url: 'ajax/'+action+(getParams?'&':'?')+'timestamp='+timestamp.getTime(),
 		  data: params,
+		  complete: function(xhr, textStatus) {
+		  	console.log(textStatus)
+		  },
 		  success: function(data, textStatus, xhr) {
+		  	console.log(data);
 		    ajaxInProgress = false;
 		    result = { };
 		    try{
@@ -135,12 +144,14 @@
 		    	callback();
 		    }
 		    if (ajaxbtn){
+		    	ajaxbtn.removeAttr("disabled");
 		    	ajaxbtn.html(btnHTML);
 		    }
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
 		    ajaxInProgress = false;
 		    if (ajaxbtn){
+		    	ajaxbtn.removeAttr("disabled");
 		    	ajaxbtn.html(btnHTML);
 		    }
 		  	// if (shuttingDown){
@@ -154,13 +165,15 @@
 	// periodically get the camera status
 	function ajaxCamStatus(){
 		// check if the camera is connected and set the status accordingly
+		timestamp = new Date();
 		$.ajax({
 		  timeout:4000,
-		  url: 'ajax/getcamera',
+		  url: 'ajax/getcamera/'+timestamp.getTime(),
 		  complete: function(xhr, textStatus) {
-			  // console.log(textStatus);
+
 		  },
 		  success: function(data, textStatus, xhr) {
+
 			try{
 				rez = eval("("+data+")");//parse json
 			}
@@ -177,14 +190,13 @@
 				else{
 					$('#cam-status').text(rez.msg);
 				}
-				if(rez.encoder!=encStatus){
-
+				if(rez.encoder!=encStatus || reloadPending){
 					clearTimeout(cameraStateTmr);
 					if (!ajaxInProgress){
 						window.location.reload();
 					}
 					else{
-
+						reloadPending = true;
 					}
 				}
 			}
@@ -229,8 +241,8 @@
 		$('.ajaxbtn').click(function(e) {
 			// ajax buttons have 'action' attribute which is the name of the url to call
 			// some have param attribute - list of #id's of elements whose values to add to the call
-			if($(this).attr('action')=='encshutdown'){
-				if (confirm("Are you sure you want to turn off the encoder?"))
+			if($(this).attr('action')=='encshutdown' || $(this).attr('action')=='encstop'){
+				if (confirm("Are you sure?"))
 				  {
 					  ajaxCall(false,false,false,$(this));
 				  }
