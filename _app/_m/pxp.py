@@ -23,7 +23,7 @@ class pxp(m.MVC):
 		for i in range(0,800):
 			col = colours[i % len(colours)]
 			# col = hex(rr(0,255))[2:].rjust(2,'0')+hex(rr(0,255))[2:].rjust(2,'0')+hex(rr(0,255))[2:].rjust(2,'0')
-			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a192b7953b04c54574d18c28d46e6395428ab","tagtime":"'+str(rr(10,vidlen))+'","event":"live","period":"1"}'
+			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a192b7953b04c54574d18c28d46e6395428ab","time":"'+str(rr(10,vidlen))+'","event":"live","period":"1"}'
 			print self.tagset(tstr)
 #######################################################
 	# def importfix(self):
@@ -31,7 +31,6 @@ class pxp(m.MVC):
 	# 	pathToEventDB = "/Volumes/Macintosh HD-1/private/var/www/html/events/"
 	# 	eventDirs = glob(pathToEventDB+'*')
 	# 	# go through every event, open the database and change league
-	# 	self._x('')
 	# 	leaguemap ={'6f99359b91f4af3f7bb726c37ca73d46c98152cc':'1574bddb75c78a6fd2251d61e2993b5146201319', #usehl16
 	# 				'7da3b7ca3005af25d584597f0ce62e288c959ae1':'f1abd670358e036c31296e66b3b66c382ac00812', #usehl
 	# 				'075bb6a5b912909f292c4fec737284f2614e9c53':'77de68daecd823babbb58edb1c8e14d7106e83bb', #EJHL
@@ -271,33 +270,6 @@ class pxp(m.MVC):
 	# 		return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end importold
 #######################################################
-	def delold(self):
-		try:
-			oldevents = self._listEvents(onlyDeleted = True)
-			db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
-			for event in oldevents:
-				if(not 'datapath' in event):
-					print "no datapath"
-					continue
-				if(event['datapath'].find("/")>=0 or len(event['datapath'])<3):
-					print "invalid path: "
-					continue
-				if(os.path.exists(self.wwwroot+event['datapath'])):
-					os.system("rm -rf "+self.wwwroot+event['datapath']+" >/dev/null &")
-					print ("rm -rf "+self.wwwroot+event['datapath'])
-				else:
-					print self.wwwroot+event['datapath']+" does not exist"
-				sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
-				db.query(sql,(event['hid'],))
-			db.close()
-		except:
-			try:
-				db.close()
-			except:
-				pass
-			pass
-	#end delold
-#######################################################
 #######################################################
 ###################end of debug section################
 #######################################################
@@ -356,7 +328,7 @@ class pxp(m.MVC):
 		except Exception as e:
 			tagnum = 1
 		# create tag
-		tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","tagtime":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
+		tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","time":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
 		return dict(self.tagset(tagStr),**{"action":"reload"})
 	#######################################################
 	# gets download progress from the progress.txt file
@@ -647,6 +619,8 @@ class pxp(m.MVC):
 			if(self._stopping()):
 				return self._stopping(msg=True)
 			# rez = os.system("echo '4' > /tmp/pxpcmd")
+			# add entry to the m3u8 file to signify discontinuity
+			# os.system("echo '#EXT-X-DISCONTINUITY' >> "+self.wwwroot+'live/video/list.m3u8')
 			self._portSet()
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_resume",dbfile=self.wwwroot+"live/pxp.db")
@@ -817,21 +791,36 @@ class pxp(m.MVC):
 			if(not os.path.exists(self.wwwroot+'live')):
 				return self._err('no live event to stop')
 			timestamp = self._time(timeStamp=True)
-			# rez = os.system(self.wwwroot+"_db/encstop")
+
+			# end any duration tags (lines, periods, etc.) set their duration to the end of the video
+			# get the length of the video
+			totalVidLength = self._thumbName(totalTime=True)
+			# update all the odd-type (start) tags to proper duration
+			sql = "UPDATE `tags` SET `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END, `type`=`type`+1 WHERE (NOT (`type`=3)) AND ((`type` & 1)=1)"
+			db = self.dbsqlite(self.wwwroot+'live/pxp.db')
+			db.query(sql,(totalVidLength,totalVidLength))
+			db.close()
+
 			# make sure nobody creates new tags or does other things to this event anymore
 			os.system("echo '"+timestamp+"' > "+self.wwwroot+"live/stopping.txt")
 			self.disk().sockSend(json.dumps({"actions":[{'event':'live','action':'stop'}]}))
+			
+			
 			# stop HLS segmenting
 			if(self.disk().psOn("mediastreamsegmenter")):
 				os.system("/usr/bin/killall mediastreamsegmenter")
 			# stop ffmpeg and wait for it to complete (to have a working mp4)
 			if(self.disk().psOn("ffmpeg")):
 				os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-				# wait for ffmpeg to finish its job, and for handbrake (in case user was creating bookmarks)
+			
+			# wait for ffmpeg to finish its job, and for handbrake (in case user was creating bookmarks)
 			while (self.disk().psOn('ffmpeg') or self.disk().psOn("handbrake")):
 				sleep(1) #wait for ffmpeg to finish its job
+
+			# stop the pxpStream app (it'll restart automatically, this is left over from the old times)
 			rez = os.system("echo '2' > /tmp/pxpcmd")
 			msg = self._logSql(ltype="enc_stop",dbfile=self.wwwroot+"live/pxp.db")
+			
 			# rename the live directory to the proper event name
 			self._postProcess()
 			# check if there are clips being generated
@@ -934,14 +923,9 @@ class pxp(m.MVC):
 	# prepares the download - converts tags to a plist
 	#######################################################
 	def prepdown(self):
-		import pty
-		# pty.fork()
 		io = self.io()
 		event = io.get('event')
 		try:
-			# # remove old plist if it exists
-			# if(os.path.exists(self.wwwroot+event+'/tags.plist')):
-			# 	os.remove(self.wwwroot+event+'/tags.plist')
 			if not event: #event was not specified
 				return self._err()
 			# make sure it has no : or / \ in the name
@@ -952,73 +936,51 @@ class pxp(m.MVC):
 			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			# select all even-type tags (deleted are odd, so won't be downloaded)
 			db.qstr('SELECT * FROM `tags` WHERE  (`type` & 1) = 0')
-			# self.str().pout("")
 			xmlOutput = '<?xml version="1.0" encoding="UTF-8"?>\n'+\
 						'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'+\
 						'<plist version="1.0">\n<dict>\n'
-			# types of fields stored in xml .plist
-			# since fields are declared as e.g.: <key>fieldName</key> <string>fieldvalue</string>
-			fieldTypes = {
-						'bookmark':'integer', 'coachpick':'integer',
-						'colour':'string', 'comment':'string',
-						'displaytime':'string',	'duration':'string',
-						'event':'string', 'id':'integer',
-						'name':'string', 'playerpick':'integer',
-						'rating':'integer', 'starttime':'real',
-						'time':'real', 'type':'integer',
-						'url':'string',	'user':'string', 'teleurl':'string', 
-						'zone':'string', 'extra':'string'
-						}
 			# get each tag, format it and output to xml
-			for t in db.getasc():
+			tags = db.getasc()
+			# add playing teams
+			# get the teams playing
+			sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
+			db.qstr(sql)
+			teamHIDs = db.getasc()
+			if (len(teamHIDs)>0): #this will be the case when there is a blank db in the event (encode was not started)
+				teamHIDs = teamHIDs[0]['id'].split(',')
+			if(len(teamHIDs)>2):#in case this is an old event, and the league HID is not listed along with team HIDs (comma-delimeted) in the log table, add empty value for the league
+				leagueHID = teamHIDs[2]
+				del(teamHIDs[2]) #remove league id from the teams list
+			else:
+				leagueHID = ""
+			#close the database (so that log can use it)
+			db.close();
+
+			for t in tags:
 				# format the tag (get thumbnail image, telestration url, etc.)
 				tag = self._tagFormat(event=event,tag=t)
-				# add tag key
-				xmlOutput+='\t<key>'+str(tag['id'])+'</key>\n'
-				# add tag entries
-				xmlOutput+='\t<dict>\n'
-				# get standard fields into the plist
-				# go through each field and add it in the proper format
-				for field in tag:
-					if ((field in fieldTypes) and (field in tag)):
-						xmlOutput+='\t\t<key>'+field+'</key>\n'
-						xmlOutput+='\t\t<'+fieldTypes[field]+'>'+str(tag[field]).replace('<','&lt;').replace('>','&gt;')+'</'+fieldTypes[field]+'>\n'
-				# add unique fields into the plist
-				xmlOutput+='\t\t<key>deleted</key>\n'
-				xmlOutput+='\t\t<'+str(tag['deleted']).lower()+'/>\n'
-				xmlOutput+='\t\t<key>own</key>\n'
-				xmlOutput+='\t\t<'+str(tag['own']).lower()+'/>\n'
-				# output lines
-				xmlOutput+='\t\t<key>line</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for line in tag['line']:
-					xmlOutput+='\t\t\t<string>'+line+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# output period
-				xmlOutput+='\t\t<key>period</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for period in tag['period']:
-					xmlOutput+='\t\t\t<string>'+period+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# output strength
-				xmlOutput+='\t\t<key>strength</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for strength in tag['strength']:
-					xmlOutput+='\t\t\t<string>'+strength+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# output player
-				xmlOutput+='\t\t<key>player</key>\n'
-				xmlOutput+='\t\t<array>\n'
-				for player in tag['player']:
-					xmlOutput+='\t\t\t<string>'+player+'</string>\n'
-				xmlOutput+='\t\t</array>\n'
-				# finish tag
-				xmlOutput+='\t</dict>\n'
+				xmlOutput+=self._xmldict(t,t['id'],1)
 			# finish the xml
 			xmlOutput += '</dict>\n</plist>'
-			db.close()
-			# plist file is ready, write it to the folder:
+			# remove old plist if it exists
+			if(os.path.exists(self.wwwroot+event+'/tags.plist')):
+				os.remove(self.wwwroot+event+'/tags.plist')
+			# plist file is ready, write it out:
 			self.disk().file_set_contents(self.wwwroot+event+'/tags.plist',xmlOutput)
+
+			# create extra.plist file
+			xmlOutput = '<?xml version="1.0" encoding="UTF-8"?>\n'+\
+						'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'+\
+						'<plist version="1.0">\n<dict>\n'
+			# for now extra only contains teams info (will add other stuff later if needed)
+			xmlOutput+=self._xmldict(teamHIDs,"teams",1)
+			xmlOutput+='</dict>\n</plist>'
+			# remove old extra.plist if it exists
+			if(os.path.exists(self.wwwroot+event+'/extra.plist')):
+				os.remove(self.wwwroot+event+'/extra.plist')
+			# plist file is ready, write it out:
+			self.disk().file_set_contents(self.wwwroot+event+'/extra.plist',xmlOutput)
+
 			return {"success":True}
 		except Exception as e:
 			import sys 
@@ -1029,36 +991,59 @@ class pxp(m.MVC):
 	# runs any service routines required for pxp
 	#######################################################
 	def service(self):
+		# deleting old events
 		try:
 			if(not self._deleting()):
+				# delete session files that are over 1 day old
+				os.system('find '+self.wwwroot+"session -mtime +1 -type f -exec rm {} \\;")
+				# delete the contents of the apache logs if it's over 500mb
+				# logSize = os.stat("/var/log/apache2/access_log").st_size
+				# if (logsize>200*1024*1024):
+				# 	os.system("rotatelogs ")
+
 				# delete any undeleted directories
 				# get a list of deleted events
 				oldevents = self._listEvents(onlyDeleted = True)
+				# print oldevents
 				if (len(oldevents)>0):
+					# print "deleting..."
 					db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 					for event in oldevents:
+						# print "DELETING event"
 						# make sure there is a directory associated with the event
 						if(not 'datapath' in event):
+							# print "no datapath"
+							#delete the event from the database (if there's no path to the file)
+							sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
+							db.query(sql,(event['hid'],))
 							continue
 						# make sure directory path is not corrupted
 						if(event['datapath'].find("/")>=0 or len(event['datapath'])<3):
+							# print "invalid datapath"
 							continue
 						# check if it exists
 						if(os.path.exists(self.wwwroot+event['datapath'])):
-							# remove it
+							# print "deleting files..."
+							# remove the files
 							os.system("rm -rf "+self.wwwroot+event['datapath']+" >/dev/null &")
-						#delete the event from the database
-						sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
-						db.query(sql,(event['hid'],))
+							break #delete only 1 folder at a time
+						else:
+							# print "no files to delete"
+							#delete the event from the database (once the file have been deleted)
+							sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
+							db.query(sql,(event['hid'],))
 					#for event in oldevents
 					db.close()
 				#if oldevents>0
 			#if not self._deleting()
+			# else:
+				# print "deleting..";
 		except:
 			try:
 				db.close()
 			except:
 				pass
+		# uploading live stuff
 		try:
 			settings = self.settingsGet()
 			# check if user has upload enabled
@@ -1069,6 +1054,7 @@ class pxp(m.MVC):
 					event = "live"
 					# check if there is a live game
 					if(os.path.exists(self.wwwroot+event) and not self._stopping(event=event)):
+						# UPLOAD TAGS
 						# check if there are new tags to upload
 						try:
 							lastTagID = int(self.disk().file_get_contents(self.wwwroot+event+"/lasttag.txt"))
@@ -1080,11 +1066,22 @@ class pxp(m.MVC):
 						db.query(sql,(lastTagID,))
 						tags = db.getasc()
 						db.close()
-						# print tags
+						# print tags						
 						##############
 						#exit for now#
 						##############
 						return
+						for tag in tags:
+							# upload the tag
+							# url = ''
+							# params = {
+							# 	''
+							# }
+							# resp = self.io().send(url, params, jsn=True)
+
+							# record it
+							self.disk().file_set_contents(self.wwwroot+event+"/lasttag.txt",tag['id'])
+						# UPLOAD VIDEO
 						# get the last uploaded .ts segment:
 						lastUploaded = self.disk().file_get_contents(self.wwwroot+event+"/lastup.txt")				
 						if(not lastUploaded):
@@ -1248,6 +1245,8 @@ class pxp(m.MVC):
 			self.disk().file_set_contents(self.wwwroot+"_db/.cfgenc",vals)
 			# reset the streaming app
 			self.disk().file_set_contents("/tmp/pxpcmd","2")
+			# add an event to live stream to indicate that the bitrate was changed
+			self._logSql(ltype="changed_bitrate",lid=str(vals),dbfile=self.wwwroot+"live/pxp.db")
 		# will be true or false depending on success/failure
 		success = self.disk().iniSet(self.wwwroot+"_db/.pxpcfg",section=secc,param=sett,value=vals)
 		return {"success":success}
@@ -1274,9 +1273,10 @@ class pxp(m.MVC):
 			import sys 
 			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end sumget
+	# sets summary for month or game
 	def sumset(self):
 		try:
-			# get the information
+			# get the information from url
 			strParam = self.uri().segment(3,"{}")
 			jp = json.loads(strParam) #json params
 			if not ('user' in jp and 'summary' in jp and 'id' in jp and 'type' in jp):
@@ -1407,7 +1407,13 @@ class pxp(m.MVC):
 			# go through all json parameters (tag mod's) and check 
 			# which modifications should be applied
 			bookmark = False
-			for mod in jp:				
+			# fields that are present in the database (everything else goes in the 'meta')
+			dbFields = ('name', 'user', 'starttime', 'type', 'time', 'colour', 'duration', 'comment', 'rating', 'extra')
+			if ('bookmark' in jp):
+				bookmark = (jp['bookmark']=='1')
+				del jp['bookmark']
+			meta = {}
+			for mod in jp:
 				if (mod=='starttime' and float(jp[mod])<0):#modifying starttime (extending the beginning of the tag)
 					value = 0
 				if (mod=='delete'):	#when deleting a tag, simply change type to 3
@@ -1415,13 +1421,34 @@ class pxp(m.MVC):
 					params +=(3,)
 				elif (mod!='requesttime'):#any other modifications, just add them to the sql query
 					#flag to check if this is a bookmark ("my clip")
-					bookmark = bookmark or ((mod=='bookmark') and (jp['bookmark']=='1'))
-					sqlInsert.append("`"+mod+"`=?")
-					if(type(jp[mod]) is dict):
-						params +=(json.dumps(jp[mod]),)
-					else:					
-						params +=(jp[mod],)
+					if(not mod in dbFields):
+						meta[mod]=jp[mod]
+					else:
+						sqlInsert.append("`"+mod+"`=?")
+						if(type(jp[mod]) is dict):
+							params +=(json.dumps(jp[mod]),)
+						else:
+							params +=(jp[mod],)
 			#end for mod in jp
+
+			#make sure the database exists and user is not trying to get at other folders
+			if(('/' in event) or ('\\' in event) or (not os.path.exists(self.wwwroot+event+'/pxp.db'))):
+				return self._err()
+			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
+
+			# add metadata params
+			# select existing metadata params
+			sql = "SELECT `meta` FROM `tags` WHERE id=?"
+			db.query(sql,(tid,))
+			tag = db.getasc()
+			metaOld = json.loads(tag[0]['meta'])
+			# add all the old meta fields that were not changed to the meta field
+			for field in metaOld:
+				if(not field in meta):
+					meta[field]=metaOld[field]
+			# add the metadata field
+			sqlInsert.append("`meta`=?")
+			params += (json.dumps(meta),)
 			if len(sqlInsert)<1:#nothing was specified 
 				return self._err()
 			if(bookmark and not self.checkspace()):
@@ -1430,10 +1457,6 @@ class pxp(m.MVC):
 			params += (tid,)
 			#update the tag
 			sql = "UPDATE `tags` SET "+(', '.join(sqlInsert))+" WHERE id=?"
-			#make sure the database exists and user is not trying to get at other folders
-			if(('/' in event) or ('\\' in event) or (not os.path.exists(self.wwwroot+event+'/pxp.db'))):
-				return self._err()
-			db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
 			if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyon else to get this file
 				#update the tag info in the database
 				success = db.query(sql,params)
@@ -1458,19 +1481,38 @@ class pxp(m.MVC):
 			import sys
 			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end tagmod
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 	#######################################################
 	#creates a new tag
 	#information that needs to be submitted in json form:
 	# {
 	# 	'event':'<event>',
 	# 	'name':'<tag name>',
-	# 	'id':'[tag_id]',
 	# 	'user':'user_hid',
 	# 	'tagtime':'<time of the tag in seconds>',
 	# 	'colour':'<tag colour>',
 	# 	'period':'<period number>',
 	# 	['coachpick':'<0/1>'],
-	# 	['type':'<0/1/2/3...>'], 
+	# 	['type':'<0/1...>'], 
 	#	['bookmark':'<0/1>'],
 	# 	[<other options may be added>]
 	# }
@@ -1478,17 +1520,34 @@ class pxp(m.MVC):
 	#NOTE: odd-numbered tag types do not get thumbnails!!
 
 	#default			= 0
-	#start line/zone	= 1
-	#stop line/zone		= 2
+
 	#deleted			= 3 - this one shouldn't happen on tagSet
 	#telestration 		= 4
-	#player start shift	= 5
-	#player end shift	= 6
-	#period/half start	= 7
-	#period/half end 	= 8
-	#strength start 	= 9
-	#strength end 		= 10
-	#event can be an HID of an event or 'live' for live event
+
+	#start o-line     	= 1 - hockey
+	#stop o-line     	= 2 - hockey
+	#start d-line		= 5 - hockey
+	#stop  d-line		= 6 - hockey	
+	#period start		= 7 - hockey
+	#period	stop		= 8 - hockey
+	#opp. o-line start 	= 9 - hockey
+	#opp. o-line stop 	= 10- hockey
+	#opp. d-line start 	= 11- hockey
+	#opp. d-line stop 	= 12- hockey
+	#strength start 	= 13- hockey
+	#strength stop 		= 14- hockey
+
+	#zone start 		= 15- soccer
+	#zone stop 			= 16- soccer
+	#half start 		= 17- soccer
+	#half stop 			= 18- soccer
+
+	#down start 		= 19- football
+	#down stop 			= 20- football
+	#quarter start 		= 21- football
+	#quarter stop 		= 22- football
+
+	#event can be a folder name of an event or 'live' for live event
 	#######################################################
 	def tagset(self, tagStr=False):
 		import math
@@ -1501,8 +1560,6 @@ class pxp(m.MVC):
 		if(not tagStr):
 			return self._err("Tag string not specified")
 		sql = ""
-		# self._x(tagStr)
-		# return self._err(os.environ)		
 		db = self.dbsqlite()
 		try:
 			# pre-roll - how long before the tag time to start playing back a clip
@@ -1514,124 +1571,124 @@ class pxp(m.MVC):
 			# t might be an array of dictionaires (size 1) or a dictionary itself
 			if (len(t)>0 and (not 'name' in t)):
 				t = t[0] # this is an array of dictionaries - get the first element
-			if (not 'event' in t or '/' in t['event'] or '\\' in t['event']):
+			# make sure event is valid
+			eventName = t['event']
+			if (not 'event' in t or '/' in eventName or '\\' in eventName):
 				return self._err("Specify event") #event was not defined or is invalid - can't open the database
-			if (not os.path.exists(self.wwwroot+t['event']+'/pxp.db')):
-				# this is the first tag in the event 
-				self.disk().mkdir(self.wwwroot+t['event'])
-				# copy the template db for tags
-				self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+t['event']+'/pxp.db')
-			if(self._stopping(t['event'])):
+			del t['event']
+			if('requesttime' in t):
+				del t['requesttime'] #this is just to make sure http request does not get cashed
+			# make sure event is not being stopped
+			if(self._stopping(eventName)):
 				return self._stopping(msg=True)
+			if (not os.path.exists(self.wwwroot+eventName+'/pxp.db')):
+				# this is the first tag in the event 
+				self.disk().mkdir(self.wwwroot+eventName)
+				# copy the template db for tags
+				self.disk().copy(self.wwwroot+'_db/event_template.db', self.wwwroot+eventName+'/pxp.db')
 			if(not 'type' in t):
 				t['type'] = 0 #if type is not defined set it to default
 			else:
 				t['type'] = int(t['type'])
 			if(t['type']==3):
 				return self.err("Attempting to create deleted tag")
-
 			success = 1
- 
- 			db.open(self.wwwroot+t['event']+'/pxp.db')
+  			db.open(self.wwwroot+eventName+'/pxp.db')
 			db.transBegin() #in case we need to roll it back later
-			if(not 'coachpick' in t): #will be only set if coach tags it 
-				t['coachpick']=0
-			if(math.isnan(float(t['tagtime']))):
-				t['tagtime'] = 0
+			if(math.isnan(float(t['time']))):
+				t['time'] = 0
 			#a new tag was received - add it
 			# TODO: check if this user already has a tag with the same name in the same place
 			if(t['type']&1): #odd types are tag 'start'
-				#tag 'start' received - stop the previous tag
-				#simply update the duration and the type of the start tag
-				#also set the starttime to begin when user tagged it, not at the usual -10 seconds
-				# for line tagging, if it's line_d or line_f, treat them accordingly
-				if(t['type']==1 and t['line'][:4]=='line'):
-					#this is a line tag - end previous line (e.g. if this is line_f then end the last line_f, not line_d)
-					extraVars = (t['line'][:6]+"%",)
-					sqlAddVal = " AND line LIKE ?"
-				else:
-					extraVars = ()
-					sqlAddVal = ""
-				# update a tag (duration will be current time minus start time). if duration is negative (user seeked back and hit tag) it will be set to zero
-				sql = "UPDATE tags SET starttime=time, duration=CASE WHEN (?-time)>0 THEN (?-time) ELSE 0 END, type=? WHERE type=?"+sqlAddVal
-				success = success and db.query(sql,(t['tagtime'],t['tagtime'],t['type']+1,t['type'])+extraVars)
-				# success = success and db.numrows()>0
-				startTime = float(t['tagtime'])
+				# check where user is adding the start tag:
+				# if it's after the last 'start' tag of the same type, simply add it and close the previous tag
+				# if it's somewhere in the middle, this tag type will be automatically closed and the tag duration set
+				# get all the tags of the same type that start before the current one
+				sql = "SELECT * FROM `tags` WHERE (`starttime`<?) and ((`type`=?) or (`type`=?+1)) ORDER BY `starttime`"
+				db.query(sql,(t['time'],t['type'],t['type']))
+				prevTags = db.getasc()
+
+				startTime = float(t['time'])
+				if(len(prevTags)>0):
+					# there are tags of the same type before this one
+					# see if the last tag is odd type
+					if(int(prevTags[-1]['type']) & 1):
+						# last tag was odd type - just close that tag and start a new one
+						# this only happens when there are no other tags of the same type after this one
+						# simply update the duration and the type of the start tag
+						# also set the starttime to begin when user tagged it, not at the usual -10 seconds
+						# update a tag (duration will be current time minus start time). if duration is negative (user seeked back and hit tag) it will be set to zero
+						sql = "UPDATE `tags` SET `starttime`=`time`, `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END, `type`=`type`+1 WHERE `type`=?"
+						success = success and db.query(sql,(t['time'],t['time'],t['type']))
+						success = success and self._logSql(ltype="mod_tags",lid=prevTags[-1]['id'],uid=t['user'],db=db)
+						# default duration for the 'start' tag is zero - it will be set when next one is laid
+						t['duration']= 0
+					else:
+						# the last tag of this type was even
+						# must be adding in the middle of the event somewhere, 
+						# update the duration of the last tag
+						sql = "UPDATE `tags` SET `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END WHERE `id`=?"
+						success = success and db.query(sql,(t['time'],t['time'],prevTags[-1]['id']))
+						success = success and self._logSql(ltype="mod_tags",lid=prevTags[-1]['id'],uid=t['user'],db=db)
+						# select the next tag that would follow the inserted one
+						sql ="SELECT * FROM `tags` WHERE (`starttime`>=?) AND ((`type`=?) OR (`type`=?+1)) ORDER BY `starttime`"
+						db.query(sql,(startTime,t['type'],t['type']))
+						nextTag = db.getasc()
+						if(len(nextTag)>0):
+							# set the proper duration of the inserted tag (to be between now and the next tag)
+							t['duration']=nextTag[0]['time']-startTime
+							# set the new tag as even type (close it automatically)
+							t['type']=t['type']+1
+						else: #this case would only happen if there was some sort of messup with the database
+							t['duration']=0
+				else:#there are no tags of the same type before this one
+				# either this is the first of its kind or the first tag starts after
+					# check if there are any tags after the new one
+					# select the next tag that would follow the inserted one (if there are any)
+					sql ="SELECT * FROM `tags` WHERE (`starttime`>=?) AND ((`type`=?) OR (`type`=?+1)) ORDER BY `starttime`"
+					db.query(sql,(startTime,t['type'],t['type']))
+					nextTag = db.getasc()
+					if(len(nextTag)>0):
+						# there are tags of this type after - update duration of the current one
+						t['duration']=nextTag[0]['time']-startTime
+						# and close it automatically
+						t['type']=t['type']+1
+					elif(eventName!='live'):
+						#this is the first time the tag of this type is being sent
+						# and this is not a live event
+						# so, close the tag since we know the duration of the video
+						pass
+				# regardless of preroll time, 'start' tags must start when the tag is laid
+				t['starttime'] = t['time']
+				# make sure there is no old tag within 2 seconds of the current one
 			#end if type is odd
-			else:
-				startTime = float(t['tagtime'])-tagVidBegin
+			else: #for normal (event tags) the startTime will be tag time minus the pre-roll
+				t['starttime'] = float(t['time'])-tagVidBegin
+				if ((not 'duration' in t) or (int(t['duration'])<1)):
+					t['duration']=tagVidDuration
 			#end if type is odd ... else
 
 			#make sure starttime is not below 0
-			if startTime < 0:
-				startTime = 0
+			if (t['starttime'] < 0):
+				t['starttime'] = 0
+			userhid = t['user']
+			tagType = t['type']
+			# database fields that should all be set
+			tagFields = ('name', 'user', 'starttime', 'type', 'time', 'colour', 'duration', 'comment', 'rating')
 			#add the tag to the database
-
-			sqlVars = (t['name'], t['user'], startTime, t['type'], t['tagtime'], t['colour'], t['coachpick'])
-			if('duration' in t):
-			# if duration was specified, add it to the sql
-				sqlAddVal = ",?" #added to the sql values
-				sqlVars += (t['duration'],) #added to the variables tuple
-				sqlAddFld = ", duration"
-				if(t['duration']==0):
-					# duration is zero - make starttime same as the time
-					startTime = t['tagtime']
-			elif(t['type']&1):
-			#for a start tag, the duration should be set to zero (unless otherwise specified - previous if statement)
-				sqlAddVal = ",?"
-				sqlVars += (0,)
-				sqlAddFld = ", duration"
-			else:
-			# duration not specified - add a default tag duration value
-				sqlAddVal = ",?" #added to the sql values
-				sqlVars += (tagVidDuration,) #added to the variables tuple
-				sqlAddFld = ", duration"
-			# if players were specified add them to the sql as well
-			if('player' in t):
-				if(isinstance(t['player'],list)):
-					#players is an array, join it with commas
-					sqlVars += (",".join(t['player']),)
-				else:
-					#single player is given, just add the value as is
-					sqlVars += (t['player'],)
-				sqlAddFld += ", player"
-				sqlAddVal += ", ?"
-			#check if lines/zones were specified (ignore it if the tag type is not 'line')
-			#this is line for hockey but zone for soccer/rugby
-			if(('line' in t) and (t['type']==1)):
-				sqlVars += (t['line'],)
-				sqlAddFld += ", line"
-				sqlAddVal += ", ?"
-			#if period was set (0, 1, 2...), add it(ignore it if the tag type is not 'period/half')
-			if(('period' in t) and (t['type']==7)):
-				sqlVars += (t['period'],)
-				sqlAddFld += ", period"
-				sqlAddVal += ", ?"
-			#if strength was set (i.e. 5vs6 etc.), add it (ignore it if the tag type is not 'strength')
-			if(('strength' in t) and (t['type']==9)):
-				sqlVars += (t['strength'],)
-				sqlAddFld += ", strength"
-				sqlAddVal += ", ?"
-			if(('rating' in t)):
-				sqlVars += (t['rating'],)
-				sqlAddFld += ", rating"
-				sqlAddVal += ", ?"
-			if(('comment' in t)):
-				sqlVars += (t['comment'],)
-				sqlAddFld += ", comment"
-				sqlAddVal += ", ?"
-			if(('extra' in t)):
-				sqlVars += (json.dumps(t['extra']),)
-				sqlAddFld += ", extra"
-				sqlAddVal += ", ?"
-			#if zone was set (i.e. OZ, NZ, DZ for hockey), add it 
-			#NOT THE SAME AS ZONE IS SOCCER/RUGBY!!
-			if('zone' in t):
-				sqlVars += (t['zone'],)
-				sqlAddFld += ", zone"
-				sqlAddVal += ", ?"
+			# set standard tag fields (that are fields in the database)
+			sqlVars = ()
+			for field in tagFields:
+				if(not field in t):
+					t[field]=""
+				sqlVars += (t[field],) #each field should be added as a tuple
+				del t[field] #remove the field so it doesn't get added to the extras
+			# add all the other fields as json dictionary to the meta field
+			meta = {}
+			# the rest of the fields can be dumped as json into meta field
+			sqlVars += (json.dumps(t),)
 			# create a query to add the new tag
-			sql = "INSERT INTO tags (name, user, starttime, type, time, colour, coachpick"+sqlAddFld+") VALUES(?, ?, ?, ?, ?, ?, ?"+sqlAddVal+")"
+			sql = "INSERT INTO tags(name, user, starttime, type, time, colour, duration, comment, rating, meta) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 			#run it
 			success = success and db.query(sql,sqlVars)
 			#get the id of the newly created tag
@@ -1641,150 +1698,62 @@ class pxp(m.MVC):
 			if(not success):#something went wrong, roll back the sql statement
 				db.rollback()
 				return self._err()
-			# get tag time, tag duration and video start time (of the tag)
-			sql = "SELECT time, duration, starttime FROM tags WHERE id=?"
-			success = success and db.query(sql,(lastID,))
-			tmp = db.getrow()
-			if(tmp):
-				t['tagtime'] = tmp[0]
-				t['duration'] = tmp[1]
-				startTime = tmp[2]
-			else:
-				# could not get the tag info - probably invalid tag ID (should never happen)
-				db.rollback()
-				return self._err()
 
-			#get the time of the current tag
-			tagTime = t['tagtime']
+			# get all the details about the tag that was created (or last line/period/etc. if a new line/period was started)
+			db.commit()
+			# #get the time of the current tag
+			# tagTime = t['time']
 			tagOut = False
-			# if((t['type']==0) or (t['type']==4)):
-			#only normal tags and telestrations should be updated with periods and logged in the database log
 
-			#find a line/third  corresponding to this tag - 
-			#either the tag is being created in the past and its 
-			#time falls within the duration of the line tag, 
-			#or it's being created live and there is a line/third active right now
-			#name contains the line designation, i.e. d_2, or o_1
+			#create a thumbnail for the tag video - only do this when a tag is created
+			#i.e. tagStart is not technically a "tag" - wait till the Stop is set, then make a thumbnail
+			#this only happens when it's a first 'start' tag - since every other 'start' tag will 
+			#automatically stop the previous start 'tag'
 
-			types = {
-				#numbers are: [stop, start] codes for line, period, strength
-				"line"		: ['2','1'], 
-				"player"	: ['6','5'],
-				"period"	: ['8','7'],
-				"strength"	: ['10','9']
-			}
-			#go through every type of metadata for each tag (e.g. line, period, etc.)
-			#and update that attribute for the current tag based on what was the last line/zone, period/half etc. selected
-			# self._x("")
-			for tp in types:
-				if (tp in t): #this 
-					continue
-				#get the sql query with proper types
-				sql = "SELECT `"+tp+"` FROM `tags` WHERE `starttime`<=? AND ((`type`="+types[tp][0]+" AND (`starttime`+`duration`)>=?) OR (`type`="+types[tp][1]+" AND `duration`=0)) ORDER BY `starttime`"
-				db.query(sql,(tagTime,tagTime))
-				rows = db.getrows()
-				#array with lines, or players or whatever was selected
-				dataArray = []
-				#select any active lines (or zones, or thirds at the time of the tag)
-				#there can be multiple players or lines per tag
-				for row in rows:
-					if (not row[0]==None):
-						dataArray.append(row[0])
-				if (len(dataArray)>0): #make sure there are elements in the array, otherwise the next query will cause the entire transaction to fail
-					sqlVals = ",".join(dataArray)
-					sql = "UPDATE `tags` SET `"+tp+"`=? WHERE `id`=?"
-					db.query(sql,(sqlVals,lastID))
-			#for tp in types
-
-			tagOut = {'newTagID':newTagID} # this dictionary will be returned
-
-			if (t['type']&1) : #odd types are start of a new line/zone/etc. - return the last line/zone/etc. that just ended
-				tagTypes = {1:'line',5:'player',7:'period',9:'strength'}
-				# if the tag type is line then the lines can be offensive/defensive, select that
-				if(t['type']==1 and t['line'][:4]=='line'):
-					#this is a line tag - end previous line (e.g. if this is line_f then end the last line_f, not line_d)
-					tagTypeString = t['line'][:6]+'%'
+			# get the tag information
+			tagOut = self._tagFormat(event=eventName, user=userhid, tagID=lastID, db=db, checkImg=False)
+			if 'success' in tagOut:
+				if not tagOut['success']:
+					return tagOut
+			tagtime = tagOut['time']
+			tagOut['newTagID']=newTagID
+			#create a tag image if it doesn't exist already
+			pathToEvent = self.wwwroot+eventName+'/'
+			imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
+			if(not os.path.exists(imgFile)):
+				if(eventName=='live'):
+					# for live events the thumbnail must be extracted from a .TS file
+					# get the name of the .ts segment containing the right time				
+					res = {}
+					vidSegmfileName = self._thumbName(tagtime,event=eventName,results=res)
+					vidFile = pathToEvent+"video/"+str(vidSegmfileName)
+					# self._thumbName(t['time'],number=True)
+					# roundedSec = int(self._thumbName(t['time'],number=True,event=eventName))
+					#get the accurate time within the .ts file 
+					#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
+					# sec = (t['time']/0.984315-roundedSec)*0.984315 
+					# if sec<0: #sanity check - should never happen
+					# do it at 0 for now, we'll figure out how to increase accuracy later on 
+					sec = res['remainder']
 				else:
-					tagTypeString = '%'
-				# get the last active line/player/period, etc.
-				sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'current_"+tagTypes[t['type']]+"' AND `id` LIKE ? ORDER BY `logID` DESC"
-				db.query(sql,(tagTypeString,))
+					# for past events, the thumbnail can be extracted from the main.mp4
+					vidFile = pathToEvent+"video/main.mp4"
+					sec = tagtime
+				self._mkThumb(vidFile, imgFile, sec) 
+			#log that a tag was created
+			success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=userhid,db=db)
+			if(tagType & 1):
+				# delete last current_<type> entry
+				sql = "DELETE FROM `logs` WHERE `type` LIKE ?"
+				db.query(sql,('current_'+str(tagType),))
+				# self._x('current'+str('tagType'))
+				success = success and self._logSql(ltype="current_"+str(tagType),lid=tagOut['name'],uid=userhid,db=db)
+				# success = success and self._logSql(ltype="current_"+str(tagType),lid=lastID,uid=userhid,db=db)
 
-				rows = db.getrows()
-				if(len(rows)>0):#previous line/zone/etc was specified
-					lastEntry = rows[0][0]
-					# get id of the tag containing that entry
-					sql = "SELECT IFNULL(MAX(`id`),0) FROM `tags` WHERE `"+tagTypes[t['type']]+"` LIKE ? AND `type`=?"
-					db.query(sql,(lastEntry,t['type']+1))
-					lastID = db.getrows()
-					if(len(lastID)>0):
-						lastID = lastID[0][0]
-					else:
-						lastID = 0
-				else:#this is a first time tagging line/zone/etc
-					lastID = 0
-				# set new line/zone/period/etc.
-				success = success and self._logSql(ltype="current_"+tagTypes[t['type']],lid=t[tagTypes[t['type']]],uid=t['user'],db=db)
-				# return {"success":success}
-			#if odd type
-			if(success):
-				# get all the details about the tag that was created (or last line/period/etc. if a new line/period was started)
-				db.commit()
-			else:
-				db.rollback()
-			# cleanup
-			# if(t['type'] & 1):
-			# 	# remove nonsensical tags (tags with short duration)
-			# 	# make sure not to delete current line/period/strength, etc. (odd type tags)
-			# 	sql = "DELETE FROM `tags` WHERE (`duration`<5) AND ((`type` & 1) = 0) AND (NOT (`type`=4))"
-			# 	db.qstr(sql)
-			#if type is odd
-
-			# check if the tag that was just created wasn't deleted in the cleanup (will happen for tags of less than 5s long)
-			sql = "SELECT * FROM `tags` WHERE `id`=?"
-			db.query(sql,(lastID,))
-			if(success and lastID and len(db.getrows())>0):
-				#create a thumbnail for the tag video - only do this when a tag is created
-				#i.e. tagStart is not technically a "tag" - wait till the Stop is set, then make a thumbnail
-				#this only happens when it's a first 'start' tag - since every other 'start' tag will 
-				#automatically stop the previous start 'tag'
-
-				# get the tag information
-				tagOut = self._tagFormat(event=t['event'], user=t['user'], tagID=lastID, db=db, checkImg=False)
-				if 'success' in tagOut:
-					if not tagOut['success']:
-						return tagOut
-				t['tagtime'] = tagOut['time']
-				tagOut['newTagID']=newTagID
-				#create a tag image if it doesn't exist already
-				pathToEvent = self.wwwroot+t['event']+'/'
-				imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
-				if(not os.path.exists(imgFile)):
-					if(t['event']=='live'):
-						# for live events the thumbnail must be extracted from a .TS file
-						# get the name of the .ts segment containing the right time				
-						res = {}	
-						vidSegmfileName = self._thumbName(t['tagtime'],event=t['event'],results=res)
-						vidFile = pathToEvent+"video/"+str(vidSegmfileName)
-						# self._thumbName(t['tagtime'],number=True)
-						# roundedSec = int(self._thumbName(t['tagtime'],number=True,event=t['event']))
-						#get the accurate time within the .ts file 
-						#TODO: should be more accurate but for some reason ffmpeg only grabs first frame ??
-						# sec = (t['tagtime']/0.984315-roundedSec)*0.984315 
-						# if sec<0: #sanity check - should never happen
-						# do it at 0 for now, we'll figure out how to increase accuracy later on 
-						sec = res['remainder']
-					else:
-						# for past events, the thumbnail can be extracted from the main.mp4
-						vidFile = pathToEvent+"video/main.mp4"
-						sec = t['tagtime']
-					self._mkThumb(vidFile, imgFile, sec) 
-				#log that a tag was created
-				success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=t['user'],db=db)
 			#if lastID
 			if not 'id' in tagOut: #tag will not be returned - happens when line/zone/etc. is tagged for the first time
 				tagOut["success"]=success
-			tagOut['islive']=t['event']=='live'
+			tagOut['islive']=eventName=='live'
 			self.disk().sockSend(json.dumps({'tags':[tagOut]}))
 			return tagOut
 		except Exception as e:
@@ -1829,7 +1798,15 @@ class pxp(m.MVC):
 		except Exception as e:
 			return self._err("No tag info specified (error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
 	#end teleset
-
+	# update server script
+	def upgrader(self):
+		currentVersion = self.version
+		# get the update for the current version
+		# os.system("curl -#Lo "+self.wwwroot+"_db/update.tar.gz http://myplayxplay.net/.assets/min/update"+currentVersion+".tar.gz")
+		# os.system('tar -xf '+self.wwwroot+'_db/update.tar.gz')
+		# os.system("")
+		# run each update file
+	#end updateEnc
 ###############################################
 ##	           utility functions             ##
 ###############################################
@@ -1888,7 +1865,7 @@ class pxp(m.MVC):
 	#end cln	
 	# returns true if there is a delete process happening (will need to figure out later how to check what exactly is being deleted)
 	def _deleting(self):
-		return self.disk().psOn("rm -rf")
+		return self.disk().psOn("rm -rf") or self.disk().psOn("-exec rm {}")
 	def _diskStat(self, humanReadable=True):
 		import os
 		st = os.statvfs("/")
@@ -1979,7 +1956,6 @@ class pxp(m.MVC):
 				#select .ts files that should be merged
 				for i in range(int(strFile),int(endFile)):
 					vidFiles = vidFiles+self.wwwroot+event+"/video/segm"+str(i)+".ts "
-
 				# concatenate the videos
 				cmd = "/bin/cat "+vidFiles+">"+bigTsFile
 				os.system(cmd)
@@ -1987,6 +1963,7 @@ class pxp(m.MVC):
 				# for past events, the mp4 file is ready for processing, extract clip from it
 				cmd = "/usr/local/bin/ffmpeg -ss "+str(startTime)+" -t "+str(duration)+" -i "+mainMP4File+" -b:v 10000k -f mpegts "+bigTsFile
 				os.system(cmd)
+			# self._x(cmd)
 			# convert to mp4, resizing it
 			#using ffmpeg
 			# cmd = "/usr/local/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
@@ -2004,7 +1981,7 @@ class pxp(m.MVC):
 			if(quality<1):
 				# if the config file doesn't exist, set default quality
 				quality=8
-			cmd = "/usr/bin/handbrake -q "+str(quality)+" -X 720 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File
+			cmd = "/usr/bin/handbrake -q "+str(quality)+" -X 720 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File+" >/dev/null"
 			os.system(cmd)
 			#remove the temporary ts file
 			os.remove(bigTsFile)
@@ -2019,7 +1996,6 @@ class pxp(m.MVC):
 			adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
 			#convert small mp4 back to .ts for merging with an ad
 			cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 8000k -f mpegts "+tempTs #use high bitrate to ensure high ad quality
-			# self.str().pout(cmd)
 			os.system(cmd)
 			# remove the mp4
 			os.remove(bigMP4File)
@@ -2158,7 +2134,6 @@ class pxp(m.MVC):
 				live = self.disk().file_get_contents(self.wwwroot+"live/evt.txt").strip()
 			else:
 				live = ""
-			# self._x("")
 			for row in result:
 				# event name
 				evtName = str(row['datapath'])
@@ -2247,13 +2222,11 @@ class pxp(m.MVC):
 			#add it again
 			sql = "INSERT INTO `logs`(`type`,`id`,`user`,`when`) VALUES(?,?,?,?)";
 			success = db.query(sql,(ltype,lid,uid,ms))
-			# self._x(sql+'|||'+str(ltype)+'|||'+str(uid)+'|||'+str(lid)+'|||'+str(ms))
 			if(autoclose):
 				# db was opened in this function - close it
 				db.close()
 			return success
 		except Exception as e:
-			# self._x("ERRRRRRRR")
 			return False
 	#end logSql
 	#######################################################
@@ -2526,7 +2499,7 @@ class pxp(m.MVC):
 		try:
 			if(allData):#selecting all tags from this game (assumption here - user has no tags yet, so he doesn't need to see deleted tags)
 				lastup = 0
-				sql = "SELECT * FROM `tags` WHERE NOT `type`=3"
+				sql = "SELECT * FROM `tags` WHERE NOT `type`=3 ORDER BY `starttime`, `duration`"
 				db.qstr(sql)
 			else:
 				#get the time of the last update
@@ -2553,7 +2526,7 @@ class pxp(m.MVC):
 				# 	continue
 				if(str(tag['time'])=='nan'):
 					tag['time']=0
-				tagJSON = self._tagFormat(tag=tag,event=event, db=db)
+				tagJSON = self._tagFormat(tag=tag,event=event, user=user, db=db)
 				# if(allData or not user==tag['user']):
 				tagsOut[tag['id']]=(tagJSON)
 			#end for tags:
@@ -2625,19 +2598,20 @@ class pxp(m.MVC):
 				tag = tag[0]
 				if(autoclose):
 					db.close()
+			#if no tagID is given, the tag fields must be passed in the tag parameter
 			elif(not tag):
 				# no tag id or other information given - return empty dictionary
 				return {}
 			if(event):
 				if(event=='live'):
-					# live event has information stored in a text file
+					# live event has the proper event name stored in a text file
 					evtname = self.disk().file_get_contents(self.wwwroot+"live/evt.txt")
 					if evtname:
 						evtname = evtname.strip()
-					else:
+					else: #could not get the name from the text file - this should never happen
 						evtname = 'live'
 				#if event==live
-				else:# event name is just the event passed to the
+				else:# event name is just the event passed to the server
 					evtname = event
 				#end if event live...else
 				# open the database and get the info about the event (event name is the datapath)
@@ -2646,13 +2620,12 @@ class pxp(m.MVC):
 				tmdb.query(sql,(evtname,))
 				evtInfo = tmdb.getasc()
 				tmdb.close()
-				# tag['test']=sql+' '+evtname
 				if(len(evtInfo)>0):
 					tag['homeTeam']=evtInfo[0]['homeTeam']
 					tag['visitTeam']=evtInfo[0]['visitTeam']
 			#end if event
 
-			# some sanity checks before the round function
+			# some numeric sanity checks before the round function
 			if (not tag['duration']):
 				tag['duration']=0.01
 			if (not tag['time']):
@@ -2660,8 +2633,11 @@ class pxp(m.MVC):
 
 			#format some custom fields
 			tag['duration']=str(round(float(tag['duration'])))[:-2]
+			#time to show on the thumbnail
 			tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
+			# thumbnail image url
 			tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
+			# path to the image file (to check if it exists)
 			imgFile = self.wwwroot+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
 			# check we need to check whether the thumbnail image exists
 			if (checkImg and not os.path.exists(imgFile)):
@@ -2669,9 +2645,9 @@ class pxp(m.MVC):
 				if(event=='live'):
 					# for live events the thumbnail must be extracted from a .TS file
 					# get the name of the .ts segment containing the right time				
-					res = {}	
+					res = {}
 					vidSegmfileName = self._thumbName(tag['time'],event=event,results=res)
-					vidFile = self.wwwroot+event+"/video/"+str(vidSegmfileName)					
+					vidFile = self.wwwroot+event+"/video/"+str(vidSegmfileName)
 					sec = res['remainder']
 				else:
 					# for past events, the thumbnail can be extracted from the main.mp4
@@ -2681,29 +2657,31 @@ class pxp(m.MVC):
 			#end if checkImg
 
 			tag['own'] = tag['user']==user #whether this is user's own tag
+
 			if(event=='live' and os.path.exists(self.wwwroot+event+'/evt.txt')):
 				tag['event'] = self.disk().file_get_contents(self.wwwroot+event+'/evt.txt').strip()
 			else:
 				tag['event'] = event
 			#set deleted attribute for a tag
-			if not 'deleted' in tag:
-				tag['deleted']=0
-			tag['deleted'] = (tag['deleted']==1 or tag['type']==3) #this will be removed in the future and set to type==3 only
-			tag['success'] = True
+			tag['deleted'] = tag['type']==3
+
+			tag['success'] = True #if got here, the tag info was retreived successfully
 			if(int(tag['type'])==4): #add telestration url for telestration tags only
 				tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
 			if(os.path.exists(self.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
 				tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
 			if('hid' in tag):
 				del(tag['hid'])
+			# extract metadata as individual fields
+			if ('meta' in tag):
+				meta = json.loads(tag['meta'])
+				del tag['meta'] #remove the original meta field from the tags
+				tag.update(meta) #join 2 dictionaries
 			# go through each field in the tag and format it properly
 			for field in tag:
 				field = field.replace("_"," ") #replace all _ with spaces in the field names
 				if(tag[field]== None):
 					tag[field] = ''
-				if(field=='line' or field=='player' or field=='period' or field=='strength'):
-				# if(field=='player'):
-					outDict[field]=tag[field].split(",")
 				else:
 					outDict[field]=tag[field]
 			# send the data to the socket (broadcast for everyone)
@@ -2727,7 +2705,7 @@ class pxp(m.MVC):
 	#returns file name for the video that contains appropriate time 
 	#if totalTime is set to True, returns the length of the event in seconds
 	#######################################################
-	def _thumbName(self,seekTo,number=False,event="live", results={}, totalTime=False):
+	def _thumbName(self,seekTo=0,number=False,event="live", results={}, totalTime=False):
 		import math
 		# path to the list.m3u8 file - playlist for the hls
 		listPath = self.wwwroot+event+"/video/list.m3u8"
@@ -2763,7 +2741,7 @@ class pxp(m.MVC):
 					results['firstSegm']=cleanStr
 				#name of the last reached segment
 				results['lastSegm']=cleanStr
-				# check if desired time was reached
+				# check if desired time was reached (and user is not looking for total time)
 				if (seekTo<=reachedTime and (not totalTime)):
 					fileName = cleanStr
 					results['remainder']=reachedTime-seekTo
@@ -2835,4 +2813,61 @@ class pxp(m.MVC):
 	# shortcut for outputting text to the screen
 	def _x(self,txt):
 		self.str().pout(txt)
+	# convert dictionary to xml
+	# @param (dict) data: dictionary to parse (or any other object type)
+	# @param (int) depth: level within a dictionary (translates to how many tabs to put before the string)
+	# @param (str)	 key: dictionary key (required when passing dictionary, ignored otherwise)
+	def _xmldict(self,data,key="",depth=0):
+		xmlOutput = ""
+		try:
+			typeName = self._xmltype(data)
+			# dictionaries must be parsed recursively
+			if(typeName=='dict'):
+				# output the key
+				xmlOutput+=''.rjust(depth,'\t')+'<key>'+str(key)+'</key>\n'
+				# add tag detail
+				xmlOutput+=''.rjust(depth,'\t')+'<dict>\n'
+				for field in data:
+					# get the field type
+					xmlOutput += self._xmldict(data[field],field,depth+1)
+				#end for field in data
+				xmlOutput+=''.rjust(depth,'\t')+'</dict>\n'
+			elif(typeName=='array'):
+			# for array - just list the entries
+				xmlOutput+=''.rjust(depth,'\t')+'<key>'+key+'</key>\n'
+				# indicate that this is an array
+				xmlOutput+=''.rjust(depth,'\t')+'<array>\n'
+				# output all the values of the array
+				for val in data:
+					xmlOutput+=''.rjust(depth+1,'\t')+'<'+self._xmltype(val)+'>'+str(val).replace('<','&lt;').replace('>','&gt;')+'</'+self._xmltype(val)+'>\n'
+					# xmlOutput += self._xmldict(val,"", depth+1)
+				xmlOutput+=''.rjust(depth,'\t')+'</array>\n'
+			#end if array
+			elif(typeName=='boolean'):
+				xmlOutput+=''.rjust(depth,'\t')+'<key>'+key+'</key>\n'
+				xmlOutput+=''.rjust(depth,'\t')+'<'+str(data).lower()+'/>\n'
+			else:
+			# regular fields are added as is:
+				xmlOutput+=''.rjust(depth,'\t')+'<key>'+key+'</key>\n'
+				xmlOutput+=''.rjust(depth,'\t')+'<'+typeName+'>'+str(data).replace('<','&lt;').replace('>','&gt;')+'</'+typeName+'>\n'
+		except Exception as e:
+			# import sys
+			# return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+			pass
+		return xmlOutput	
+	#end xmldict
+	def _xmltype(self,variable):
+		varType = type(variable)
+		if(varType is int or varType is long):
+			return "integer"
+		elif(varType is float):
+			return "real"
+		elif(varType is list):
+			return "array"				
+		elif(varType is bool):
+			return "boolean"
+		elif(varType is dict):
+			return "dict"
+		else:
+			return "string"
 #end pxp class

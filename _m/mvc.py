@@ -353,6 +353,7 @@ class MVC():
 					return r1.read()
 				except:
 					return False
+			#end send
 			def upload(self, filePath):
 				form = self.frm
 				# A nested FieldStorage instance holds the file
@@ -370,8 +371,26 @@ class MVC():
 				return False
 				#end fileitem
 			#end upload
-		#end c_input
-
+			def urlexists(self,urlpath):
+				import httplib
+				# remove the beginning http:// if it's there
+				prefix = "http://"
+				if(urlpath[:7]=='http://'):
+					urlpath = urlpath[7:]
+				if(urlpath[:8]=='https://'):
+					prefix = "https://"
+					urlpath = urlpath[8:]
+				# make sure url ends with /
+				if(urlpath[-1:]!='/'):
+					urlpath = urlpath+'/'
+				site = urlpath[:urlpath.find('/')]
+				path = urlpath[urlpath.find('/'):-1] #exclude trailing slash from path
+				conn = httplib.HTTPConnection(prefix+site)
+				conn.request('HEAD', path)
+				response = conn.getresponse()
+				conn.close()
+				return response.status > 308
+			#end urlexists
 		#end c_input class
 		return c_input()
 	#end io
@@ -408,7 +427,8 @@ class MVC():
 				except:
 					pass
 			#end close
-			def start(self, glob, expires=None, cookie_path=None):
+			# by default session expires in 1 day
+			def start(self, glob, expires=24*60*60, cookie_path=None):
 				try:
 					string_cookie = os.environ.get('HTTP_COOKIE', '')
 					self.cookie = Cookie.SimpleCookie()
@@ -439,12 +459,12 @@ class MVC():
 					print sys.exc_traceback.tb_lineno
 					print e
 			#end start
-			def set_expires(self, expires=None):
+			def set_expires(self, expires=24*60*60):
 				if expires == '':
 					self.data['cookie']['expires'] = ''
 				elif isinstance(expires, int):
-					self.data['cookie']['expires'] = expires				 
-				self.cookie['sid']['expires'] = self.data['cookie']['expires']		
+					self.data['cookie']['expires'] = expires
+				self.cookie['sid']['expires'] = self.data['cookie']['expires']
 			#end set_expires
 		return c_session(self,expires,cookie_path)
 	#end session class

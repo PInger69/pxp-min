@@ -16,6 +16,8 @@ try:
 	c = cs.Controller()
 	# run it
 	c._run()
+	# print("Content-Type: text/html\n")
+	# print "blah"
 except Exception as e:
 	import sys
 	print("Content-Type: text/html\n")

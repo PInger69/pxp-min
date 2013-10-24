@@ -82,6 +82,7 @@
 var dlQueue = []; //queue used for processing multiple downloads
 var rmQueue = []; //queue used for processing multiple deletions
 var rmBtnHtml = "";
+var dnRetries = 0; //number of download retries
 function getProgress() {
 	// get download progress
 	$.ajax({
@@ -127,6 +128,10 @@ function processQueue(itemDone, itemError) {
 	if(itemDone) { //just finished downloading an element - remove the progress bar
 		switch(itemError){
 			case -1: //idevcopy app crashed - retry download
+				dnRetries++;
+				if(dnRetries>3){
+					status = 'Error - please retry';
+				}
 			break;
 			case false:
 			case 0:
@@ -138,11 +143,21 @@ function processQueue(itemDone, itemError) {
 			case 4:
 				status = 'connect iPad via USB';
 			break;
+			case 7:
+				dnRetries++;
+				if(dnRetries>3){
+					status = 'make sure you clicked TRUST this computer';
+				}
+				else{
+					itemError = -1; //to make sure it retires downloading it
+				}
+			break;
 			default: 
 				status='error ('+itemError+')';
 			break;
 		}
 		if(itemError>=0){
+			dnRetries = 0;
 			dlQueue[0].html(status); //either an error occurred or the progress has finished - put the status instead of the progress bar
 			dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
 		}
@@ -165,7 +180,7 @@ function processQueue(itemDone, itemError) {
 	  url: 'ajax/prepdown',
 	  data: {'event':evt},
 	  success: function(data, textStatus, xhr){
-
+	  	console.log(data);
 		$.ajax({
 		  url: 'dlstart.php',
 		  data: {'event':evt},
