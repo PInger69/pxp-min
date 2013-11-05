@@ -4,7 +4,7 @@ from imp import load_compiled as lp
 m = ls("MVC","_m/mvc.py")
 # extend the main MVC class
 class Controller(m.MVC):
-	version = "0.93.8"
+	version = "0.93.9"
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -13,8 +13,9 @@ class Controller(m.MVC):
 		# ensure that the pxpStream app is running
 		if (not self.disk().psOn("pxpStream.app")):
 			os.system("/usr/bin/open /Applications/pxpStream.app")
-		# if (not self.disk().psOn("pxplistmon")):
-			# os.system("/var/www/html/min/pxplistmon.py")
+		if (not self.disk().psOn("pxplistmon")):
+			# os.system("/usr/bin/python /var/www/html/min/pxplistmon.py")
+			os.system("/usr/bin/python /var/www/html/min/pxplistmon.pyc")
 		# super(Controller, self).__init__()
 		self.d['version']=self.version
 	#this function is executed first

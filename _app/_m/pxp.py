@@ -16,14 +16,14 @@ class pxp(m.MVC):
 	#create a bunch of random tags
 	def alll(self):
 		from random import randrange as rr
+		# tags = ["MID.3RD", "OFF.3RD", "DEF.3RD"]
 		tags = ["purple","teal","cyan","white","yellow","black","blue","red","pink"]
 		colours = ["FF0000","00FF00","0000FF","FF00FF","00FFFF","FFFF00","333366","FFFFFF"]
 		self.str().pout("")
 		vidlen = len(os.listdir(self.wwwroot+"live/video/"))-2
 		for i in range(0,800):
 			col = colours[i % len(colours)]
-			# col = hex(rr(0,255))[2:].rjust(2,'0')+hex(rr(0,255))[2:].rjust(2,'0')+hex(rr(0,255))[2:].rjust(2,'0')
-			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a192b7953b04c54574d18c28d46e6395428ab","time":"'+str(rr(10,vidlen))+'","event":"live","period":"1"}'
+			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a1927953b04c54574d18c28d46e6395428ab","time":"'+str(rr(10,vidlen))+'","event":"live"}'
 			print self.tagset(tstr)
 #######################################################
 	# def importfix(self):
@@ -770,8 +770,8 @@ class pxp(m.MVC):
 						db.close()
 						evtHid = maxEvtHid
 					#if resp['success']
-					else:
-						return self._err(str(resp))
+					# else:
+					# 	return self._err(str(resp))
 				#if isweb
 				# save the event ID
 				self.disk().file_set_contents(self.wwwroot+"live/eventid.txt",evtHid)
@@ -990,10 +990,16 @@ class pxp(m.MVC):
 	# service function - executed every 10 seconds, 
 	# runs any service routines required for pxp
 	#######################################################
+	def _slog(self,text):
+		# generate timestamp
+		timestamp = self._time()
+		# os.system("echo '"+timestamp+": "+text+"' >> "+self.wwwroot+"_db/log.txt")
+
 	def service(self):
 		# deleting old events
 		try:
 			if(not self._deleting()):
+				self._slog('not deleting')
 				# delete session files that are over 1 day old
 				os.system('find '+self.wwwroot+"session -mtime +1 -type f -exec rm {} \\;")
 				# delete the contents of the apache logs if it's over 500mb
@@ -1006,9 +1012,11 @@ class pxp(m.MVC):
 				oldevents = self._listEvents(onlyDeleted = True)
 				# print oldevents
 				if (len(oldevents)>0):
+					self._slog("found "+str(len(oldevents))+" old events")
 					# print "deleting..."
 					db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
 					for event in oldevents:
+						self._slog("start deleting: "+str(event))
 						# print "DELETING event"
 						# make sure there is a directory associated with the event
 						if(not 'datapath' in event):
@@ -1019,13 +1027,18 @@ class pxp(m.MVC):
 							continue
 						# make sure directory path is not corrupted
 						if(event['datapath'].find("/")>=0 or len(event['datapath'])<3):
+							self._slog("invalid path")
 							# print "invalid datapath"
 							continue
 						# check if it exists
 						if(os.path.exists(self.wwwroot+event['datapath'])):
-							# print "deleting files..."
+							self._slog("deleting files...")
+							for r,d,f in os.walk(self.wwwroot+event['datapath']):
+							    os.chmod( r , 0777)
 							# remove the files
-							os.system("rm -rf "+self.wwwroot+event['datapath']+" >/dev/null &")
+							cmd = "rm -rf "+self.wwwroot+event['datapath']+" >/dev/null &"
+							self._slog(cmd)
+							os.system(cmd)
 							break #delete only 1 folder at a time
 						else:
 							# print "no files to delete"
@@ -1035,8 +1048,11 @@ class pxp(m.MVC):
 					#for event in oldevents
 					db.close()
 				#if oldevents>0
+				else:
+					self._slog("zero deleted events")
 			#if not self._deleting()
-			# else:
+			else:
+				self._slog("deleting")
 				# print "deleting..";
 		except:
 			try:
@@ -1441,6 +1457,8 @@ class pxp(m.MVC):
 			sql = "SELECT `meta` FROM `tags` WHERE id=?"
 			db.query(sql,(tid,))
 			tag = db.getasc()
+			if(len(tag)<1):
+				return self._err("tag "+str(tid)+" does not exist")
 			metaOld = json.loads(tag[0]['meta'])
 			# add all the old meta fields that were not changed to the meta field
 			for field in metaOld:
@@ -1457,7 +1475,7 @@ class pxp(m.MVC):
 			params += (tid,)
 			#update the tag
 			sql = "UPDATE `tags` SET "+(', '.join(sqlInsert))+" WHERE id=?"
-			if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyon else to get this file
+			if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyone else to get this file				
 				#update the tag info in the database
 				success = db.query(sql,params)
 				if success:
@@ -1466,11 +1484,7 @@ class pxp(m.MVC):
 			else:
 				success = True
 			if success:
-				# sql = "SELECT * FROM `tags` WHERE `id`=?"
-				# db.query(sql,(tid,))
-				# tag = db.getasc()
 				db.close() #close db here because next statement will return
-
 				if (bookmark):
 					# user wants to make a bookmark - extract the video
 					success = success and self._extractclip(tagid=tid,event=event)				
@@ -1592,6 +1606,9 @@ class pxp(m.MVC):
 				t['type'] = int(t['type'])
 			if(t['type']==3):
 				return self.err("Attempting to create deleted tag")
+			# remove any temporary id that might be associated with the tag
+			if ('id' in t):
+				del t['id']
 			success = 1
   			db.open(self.wwwroot+eventName+'/pxp.db')
 			db.transBegin() #in case we need to roll it back later
@@ -1943,8 +1960,9 @@ class pxp(m.MVC):
 			bigMP4File = self.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
 			tempTs = self.wwwroot+event+"/video/int_"+str(tagid)+".ts"#TS file containing resized video clip
 			mainMP4File = self.wwwroot+event+"/video/main.mp4"
-			if (os.path.exists(bigMP4File)):
-				return True # no need to re-create bookmarks that already exist
+			# re-create existing bookmarks 
+			# if (os.path.exists(bigMP4File)):
+			# 	return True # no need to re-create bookmarks that already exist
 
 			if(event=='live'):
 				# end time of the clip (needed for extraction from .TS fragments)
@@ -1972,16 +1990,21 @@ class pxp(m.MVC):
 			config = self.disk().iniGet(self.wwwroot+"_db/.pxpcfg")
 			quality = 0
 			if('clips' in config):
-				if('compression' in config['clips']):
+				if('quality' in config['clips']):
 					try:
-						quality = int(config['clips']['compression'])
+						quality = int(config['clips']['quality'])
 					except:
 						# in case user messed up the config
 						quality = 8
 			if(quality<1):
 				# if the config file doesn't exist, set default quality
 				quality=8
-			cmd = "/usr/bin/handbrake -q "+str(quality)+" -X 720 --keep-display-aspect -i "+bigTsFile+" -o "+bigMP4File+" >/dev/null"
+			if(quality<6):
+				# for very high quality add more keyframes
+				extraframes = "--encoder x264 -x keyint=40"
+			else:
+				extraframes = ""
+			cmd = "/usr/bin/handbrake -q "+str(quality)+" -X 720 --keep-display-aspect "+extraframes+" -i "+bigTsFile+" -o "+bigMP4File+" >/dev/null"
 			os.system(cmd)
 			#remove the temporary ts file
 			os.remove(bigTsFile)
@@ -2069,6 +2092,8 @@ class pxp(m.MVC):
 				#download the blank database files
 				os.system("curl -#Lo "+self.wwwroot+"_db/event_template.db http://myplayxplay.net/.assets/min/event_template.db")
 				os.system("curl -#Lo "+self.wwwroot+"_db/pxp_main.db http://myplayxplay.net/.assets/min/pxp_main.db")
+				os.system("curl -#Lo "+self.wwwroot+"_db/pxpservice.sh http://myplayxplay.net/.assets/min/pxpservice.sh")
+				os.system("curl -#Lo "+self.wwwroot+"_db/spacecheck.sh http://myplayxplay.net/.assets/min/spacecheck.sh")
 				#download the config file
 				os.system("curl -#Lo "+self.wwwroot+"_db/.pxpcfg http://myplayxplay.net/.assets/min/pxpcfg")
 				return 1
@@ -2676,6 +2701,8 @@ class pxp(m.MVC):
 			if ('meta' in tag):
 				meta = json.loads(tag['meta'])
 				del tag['meta'] #remove the original meta field from the tags
+				if('id' in meta): #delete 'id' from meta field - confusing with 'id' from the fields
+					del meta['id']
 				tag.update(meta) #join 2 dictionaries
 			# go through each field in the tag and format it properly
 			for field in tag:
