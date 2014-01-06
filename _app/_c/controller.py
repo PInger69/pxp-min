@@ -1,10 +1,15 @@
-from imp import load_source as ls
-from imp import load_compiled as lp
-# m = lp("MVC","_m/mvc.pyc")
-m = ls("MVC","_m/mvc.py")
+compiled = False
+# loads external python module (either from source or compiled)
+def lm(module,path):
+	global compiled
+	from imp import load_source as ls
+	from imp import load_compiled as lp
+	if(compiled):
+		return lp(module,path+"c") #compiled extensions are .pyc
+	return ls(module,path)
+m = lm("MVC","_m/mvc.py")
 # extend the main MVC class
 class Controller(m.MVC):
-	version = "0.93.9"
 	p = None #pxp controller variable
 	d = {} #data passed to the template engine
 	sess = None
@@ -13,11 +18,19 @@ class Controller(m.MVC):
 		# ensure that the pxpStream app is running
 		if (not self.disk().psOn("pxpStream.app")):
 			os.system("/usr/bin/open /Applications/pxpStream.app")
+		# to make sure proper file is loaded
+		if(compiled):
+			suffix = "c"
+		else:
+			suffix = ""
+		# make sure list monitor is on (checks for discontinuities in the video)
 		if (not self.disk().psOn("pxplistmon")):
-			# os.system("/usr/bin/python /var/www/html/min/pxplistmon.py")
-			os.system("/usr/bin/python /var/www/html/min/pxplistmon.pyc")
+			os.system("/usr/bin/python /var/www/html/min/pxplistmon.py"+suffix)
+		# make sure socket service is on (for push instead of pull notifications)
+		if (not self.disk().psOn("pxpservice.py")):
+			os.system("/usr/bin/python /var/www/html/min/pxpservice.py"+suffix)
 		# super(Controller, self).__init__()
-		self.d['version']=self.version
+		self.d['version']=self.ver
 	#this function is executed first
 	def _run(self):
 		import os, sys

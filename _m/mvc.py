@@ -1,8 +1,17 @@
+compiled = False
+# loads external python module (either from source or compiled)
+def lm(module,path):
+	global compiled
+	from imp import load_source as ls
+	from imp import load_compiled as lp
+	if(compiled):
+		return lp(module,path+"c") #compiled extensions are .pyc
+	return ls(module,path)
 class MVC():
 	"""main MVC class"""
+	ver = "0.94.2"
 	approot = "/var/www/html/min/"
 	wwwroot = "/var/www/html/events/"
-	# wwwroot = "/Applications/MAMP/htdocs/events/"
 	def __init__(self):
 		# self.loader = c_loader()
 		import os
@@ -287,6 +296,7 @@ class MVC():
 						sock.close()
 					except:
 						pass
+					return e
 				return sent
 		#end c_disk class
 		return c_disk()
@@ -400,8 +410,7 @@ class MVC():
 		from imp import load_compiled as lp
 		class c_loader():
 			def module(self,modname):
-				# return lp(modname,"_app/_m/"+modname+".pyc")
-				return ls(modname,"_app/_m/"+modname+".py")
+				return lm(modname,"_app/_m/"+modname+".py")
 			def view(self,viewname):
 				pass
 		#end c_loader class 

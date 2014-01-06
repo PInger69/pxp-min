@@ -1,9 +1,15 @@
-from imp import load_source as ls
-from imp import load_compiled as lp
+compiled = False
+# loads external python module (either from source or compiled)
+def lm(module,path):
+	global compiled
+	from imp import load_source as ls
+	from imp import load_compiled as lp
+	if(compiled):
+		return lp(module,path+"c") #compiled extensions are .pyc
+	return ls(module,path)
 from time import sleep
 import os, json
-# m = lp("MVC","_m/mvc.pyc")
-m = ls("MVC","_m/mvc.py")
+m = lm("MVC","_m/mvc.py")
 
 class pxp(m.MVC):
 	# minimum free space required in order to have an encode running
@@ -25,6 +31,47 @@ class pxp(m.MVC):
 			col = colours[i % len(colours)]
 			tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a1927953b04c54574d18c28d46e6395428ab","time":"'+str(rr(10,vidlen))+'","event":"live"}'
 			print self.tagset(tstr)
+	def ttt(self):
+		db = self.dbsqlite(self.wwwroot+"live/pxp.db")
+		sql = "SELECT * FROM tags"
+		db.qstr(sql)
+		tags = db.getasc()
+		# print tags
+		# print "_"+tags[0]['comment']+"_"
+		print str(tags[0]['comment'])==''
+		db.close()
+	def usbreset(self):
+		import usb
+		for bus in usb.busses():
+			for dev in bus.devices:
+				print dev.idVendor
+				if int(dev.idVendor) == 0x1edb and int(dev.idProduct) == 0xbd43:
+					print "resetting"
+					conf = dev.configurations[0]
+					print "confs", dev.configurations
+					iface = conf.interfaces[0][0]
+					print "ifaces[0]", conf.interfaces[0]
+					endpoint = iface.endpoints[0]
+					print "endpoints", iface.endpoints
+					# open it
+					handle = dev.open()
+
+					print "iin", iface.interfaceNumber
+
+					# usb 2-2: usbfs: interface 0 claimed by ldusb while 'python' sets config #1
+					# ie. we need to run detacth *once* at least...
+					# if None:
+					handle.detachKernelDriver(0) # Should this be iface.interfaceNumber?
+					# Note that if you don't run this, you'll actually get messages like
+					# [222572.952000] usb usb1: usbfs: process 20986 (python) did not claim interface 1 before use
+					# in dmesg...
+					handle.setConfiguration(conf)
+					handle.claimInterface(iface)
+					handle.setAltInterface(iface)
+					handle.reset()					
+					# print dev
+					# print dir(dev.dev)
+					# dev.dev.reset()
 #######################################################
 	# def importfix(self):
 	# 	from glob import glob
@@ -331,6 +378,158 @@ class pxp(m.MVC):
 		tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","time":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
 		return dict(self.tagset(tagStr),**{"action":"reload"})
 	#######################################################
+	# updates database to the latest format (from ios6 to ios7)
+	#######################################################
+	def dbupdate(self):
+		pprefix = "/var/www/html/events/"
+		# open the main db		
+		db = self.dbsqlite(pprefix+"_db/pxp_main.db")
+		# add 'datapath' column to the events table
+		sql = "ALTER TABLE events ADD COLUMN datapath TEXT"
+		db.qstr(sql)
+		sql = "ALTER TABLE events ADD COLUMN extra TEXT"
+		db.qstr(sql)
+		sql = "ALTER TABLE teams ADD COLUMN league TEXT"
+		db.qstr(sql)
+		sql = "ALTER TABLE teams ADD COLUMN sport TEXT"
+		db.qstr(sql)
+		sql = "ALTER TABLE teams ADD COLUMN extra TEXT"
+		db.qstr(sql)
+		# update datapath in the table as proper path name: event timestamp + HID
+		sql = "UPDATE events SET datapath=strftime('%Y-%m-%d_%H-%M-%S',`date`) || '_' || `hid`"
+		db.qstr(sql)
+		# get a list of all events
+		sql = "SELECT strftime('%Y-%m-%d_%H-%M-%S',events.date) || '_H' || replace(replace(substr(events.homeTeam,1,3),' ','_'),'''','_') || '_V' || replace(replace(substr(events.visitTeam,1,3),' ','_'),'''','_') || '_L' || replace(replace(substr(events.league,1,3),' ','_'),'''','_') AS `oldpath`, events.*, leagues.sport FROM `events` LEFT JOIN `leagues` ON leagues.name=events.league"
+		db.qstr(sql)
+		events = db.getasc()
+		db.close()
+		# generate event folder: 2013-05-06_17-32-03_HTes_VSwa_LCIS - done in sql
+		for event in events:
+			# check if directory exists
+			if(not os.path.exists(pprefix+event['oldpath']) or not os.path.exists(pprefix+event['oldpath']+"/pxp.db")):
+				continue #move on to the next event
+			# get sport
+			sport = event['sport'].lower()
+			# rename directory
+			os.rename(pprefix+event['oldpath'],pprefix+event['datapath'])
+			# connect to the event database
+			db.open(pprefix+event['datapath']+'/pxp.db')
+			# get all the tags
+			sql = "SELECT * FROM `tags`"
+			db.qstr(sql)
+			tags = db.getasc()
+			# alter table: remove - period, coachpick, bookmark, deleted, line, player, strength, zone
+			#              add    - meta (TEXT)
+			# sqlite doesn't support alter table - so have to re-create it
+			# BEGIN TRANSACTION;
+			# CREATE TEMPORARY TABLE tags_backup("id" INTEGER PRIMARY KEY  NOT NULL ,"hid" text,"name" text,"user" text,"time" decimal(5,3),"duration" INTEGER DEFAULT 30 ,"colour" text DEFAULT 000000 ,"starttime" decimal(5,3),"type" integer DEFAULT 0 ,"comment" TEXT,"rating" INTEGER DEFAULT 0 ,"extra" TEXT, "meta" TEXT);
+			# INSERT INTO tags_backup SELECT * FROM `tags`;
+			# DROP TABLE tags;
+			# CREATE TABLE tags("id" INTEGER PRIMARY KEY  NOT NULL ,"hid" text,"name" text,"user" text,"time" decimal(5,3),"duration" INTEGER DEFAULT 30 ,"colour" text DEFAULT 000000 ,"starttime" decimal(5,3),"type" integer DEFAULT 0 ,"comment" TEXT,"rating" INTEGER DEFAULT 0 ,"extra" TEXT, "meta" TEXT);
+			# INSERT INTO tags SELECT * FROM tags_backup;
+			# DROP TABLE tags_backup
+			# COMMIT;
+
+			sql = """
+					BEGIN TRANSACTION;
+					DROP TABLE tags;
+					CREATE TABLE tags("id" INTEGER PRIMARY KEY  NOT NULL,
+									  "hid" text,
+									  "name" text,
+									  "user" text,
+									  "time" decimal(5,3),
+									  "duration" INTEGER DEFAULT 30 ,
+									  "colour" text DEFAULT 000000 ,
+									  "starttime" decimal(5,3),
+									  "type" integer DEFAULT 0 ,
+									  "comment" TEXT,
+									  "rating" INTEGER DEFAULT 0 ,
+									  "extra" TEXT, 
+									  "meta" TEXT);
+					COMMIT;
+				"""
+			db.qstr(sql,multiple=True)
+			for tag in tags:
+				# check type:
+				# 0 - simply add it to the table:
+					# id, name, user, time, duration, colour, starttime, type, comment, rating, meta (only if zone or player is specified) (extra is blank)
+				# 1 & 2 - distinguish between line_f_ (type 1 & 2 ) and line_d (type 5 & 6) HOCKEY; and zone SOCCER
+					# now add
+					# id, name, user, time, duration, colour, starttime, type(1,2,5,6, 15,16), comment, rating, meta contains zone or line (extra is blank)
+				# 3 - ignore
+				# 4 - add it:
+					# id, name, user, time, duration, colour, starttime, type(4), comment, rating (meta and extra are blank)
+				# 5, 6 - player shift (those don't exist) - ignore
+				# 7, 8 - period(hockey)/half(soccer)
+					# now add
+					# id, name, user, time, duration, colour, starttime, type(7,8, 17,18), comment, rating, meta contains period or half (extra is blank)
+				# 9, 10 - strength (hockey only)
+					# now add
+					# id, name, user, time, duration, colour, starttime, type(9,10), comment, rating, meta contains strength (extra is blank)
+				meta = {}
+				tag['type'] = int(tag['type'])
+				if(tag['type']==3): 
+					continue
+				oldfields =  ['period', 'bookmark', 'deleted', 'coachpick', 'line', 'player', 'strength', 'zone']
+				for field in oldfields:
+					# delete fields that are empty and extra attributes from telestrations
+					#telestrations do not need this info
+					if(field in tag and (str(tag[field])=='' or tag[field]==None) or tag['type']==4):
+						del tag[field]
+
+				if ('zone' in tag):
+					meta['zone'] = tag['zone']
+				if ('player' in tag):
+					meta['player']=tag['player'].split(',')
+				if (tag['type']==1 or tag['type']==2):
+					if(tag['name'][:6]=='line_d'): #offence lines are types 5&6
+						tag['type']=tag['type']+4
+					if(sport=='soccer'):
+						# for soccer 'lines' are zones: update - types 15&16
+						tag['type']=tag['type']+14
+						meta['zone']=tag['name']
+				if(tag['type']==7 or tag['type']==8):
+					if(sport=='hockey'):
+						meta['period']=tag['name']
+					if(sport=='soccer'):
+						meta['half']=tag['name']
+						tag['type']=tag['type']+10 #halfs are types 17&18 in soccer
+
+				if(tag['type']==9 or tag['type']==10):
+					meta['strength']=tag['strength']
+					# tag['type']+=4# strength type is now 13 and 14
+				if('coachpick' in tag and tag['coachpick']=='1'):
+					meta['coachpick']="1"
+				if(int(tag['rating'])>0):
+					meta['rating']=tag['rating']
+				sql = "INSERT INTO `tags`(`id`,`name`,`user`,`time`,`duration`,`colour`,`starttime`,`type`,`comment`,`rating`,`meta`) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+				db.query(sql,(tag['id'],tag['name'],tag['user'],tag['time'],tag['duration'],tag['colour'],tag['starttime'],tag['type'],tag['comment'],tag['rating'],json.dumps(meta)))
+			#end for tag in tags
+			# go through logs and update current_XXXXXX to a number
+			sql = "SELECT * FROM `logs`"
+			db.qstr(sql)
+			logs = db.getasc()
+			if(sport=='hockey'):
+				tagTypes = {'line':1,'period':7,'strength':9}
+			else:
+				tagTypes = {'line':15,'period':17}
+			for log in logs:
+				if(log['type'][:7]=='current'):
+					tt = log['type'][8:]
+					if(not tt in tagTypes):
+						print tt
+						continue
+					curnum = tagTypes[tt]
+					if(curnum==1 and log['id'][:6]=='line_d'):
+						curnum=5
+					newname='current_'+str(curnum)
+
+					sql = "UPDATE `logs` SET `type`=? WHERE logID=?"
+					db.query(sql,(newname,log['logID']))
+			db.close() #close db for this event
+		#end for event in events
+	#end dbupdate
+	#######################################################
 	# gets download progress from the progress.txt file
 	# sums up all the individual progresses and outputs a number
 	#######################################################
@@ -551,39 +750,43 @@ class pxp(m.MVC):
 		#       | | | | pro recorder present
 		#       | | | | |
 		# bits: 0 0 0 0 0
-		state = self._encState()
-		stopped = not (self.disk().psOn("ffmpeg -f mpegts -i udp") or self.disk().psOn("mediastreamsegmenter"))
-		if(self._stopping()):
-			state=0
-			status = "Event is being stopped"
-		elif((state & (1+2+4))==7): #live is defined as: pro recoder + camera + streaming
-			# app is paused if mediasegmenter and ffmpeg are running, there is no stopping.txt file, and ports are set to 65535
-			# stopping = self._stopping()
-			# when app is stopping the encoder status will be set to 'off'
-			paused = (not self.disk().psOn("pxpStream.app") or self._portSame()) and self.disk().psOn("ffmpeg -f mpegts -i udp") and self.disk().psOn("mediastreamsegmenter")
-			if (paused):
-				status = "paused"
-			# elif(stopping):
-			# 	status = "stopping"
-			elif(stopped):
-				status = "stopped"
+		try:
+			state = self._encState()
+			stopped = not (self.disk().psOn("ffmpeg -f mpegts -i udp") or self.disk().psOn("mediastreamsegmenter"))
+			if(self._stopping()):
+				state=0
+				status = "Event is being stopped"
+			elif((state & (1+2+4))==7): #live is defined as: pro recoder + camera + streaming
+				# app is paused if mediasegmenter and ffmpeg are running, there is no stopping.txt file, and ports are set to 65535
+				# stopping = self._stopping()
+				# when app is stopping the encoder status will be set to 'off'
+				paused = (not self.disk().psOn("pxpStream.app") or self._portSame()) and self.disk().psOn("ffmpeg -f mpegts -i udp") and self.disk().psOn("mediastreamsegmenter")
+				if (paused):
+					status = "paused"
+				# elif(stopping):
+				# 	status = "stopping"
+				elif(stopped):
+					status = "stopped"
+				else:
+					status = "live"
+			elif(not (state&1)):
+				status = "pro recoder disconnected"
+			elif(not (state&2)):
+				status = "camera disconnected"
+			elif(state & 8):
+				status = "streaming app is starting"
 			else:
-				status = "live"
-		elif(not (state&1)):
-			status = "pro recoder disconnected"
-		elif(not (state&2)):
-			status = "camera disconnected"
-		elif(state & 8):
-			status = "streaming app is starting"
-		else:
-			status = "preparing to stream"
-		if (stopped):
-			state &= ~16; 
-		else:
-			state |= 16; #when stopped bit 4 will be set to 1
-		if (textOnly):
-			return status
-		return {"status":status,"code":state}
+				status = "preparing to stream"
+			if (stopped):
+				state &= ~16; 
+			else:
+				state |= 16; #when stopped bit 4 will be set to 1
+			if (textOnly):
+				return status
+			return {"status":status,"code":state}
+		except:
+			import sys
+			return self._err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 	#end encoderstatus
 	def encoderstatjson(self):
 		return self.encoderstatus(textOnly = False)
@@ -601,7 +804,7 @@ class pxp(m.MVC):
 			self._portSet(hls=65535,ffm=65535,chk=65535)
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_pause",dbfile=self.wwwroot+"live/pxp.db")
-			self.disk().sockSend(json.dumps({'actions':[{'event':'live','action':'pause'}]}))
+			self.disk().sockSend(json.dumps({'actions':{'event':'live','status':'paused'}}))
 		except Exception as e:
 			msg = str(e)
 			rez = True
@@ -624,7 +827,7 @@ class pxp(m.MVC):
 			self._portSet()
 			# add entry to the database that the encoding has paused
 			msg = self._logSql(ltype="enc_resume",dbfile=self.wwwroot+"live/pxp.db")
-			self.disk().sockSend(json.dumps({"actions":[{'event':'live','action':'resume'}]}))
+			self.disk().sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
 			rez = False
 		except Exception as e:
 			rez = True
@@ -714,7 +917,7 @@ class pxp(m.MVC):
 			db.close()
 			# add entry to the database that the encoding has started
 			msg = self._logSql(ltype="enc_start",lid=(hmteamHID+','+vsteamHID+','+leagueHID),dbfile=self.wwwroot+"live/pxp.db")
-			self.disk().sockSend(json.dumps({"actions":[{'event':'live','action':'start'}]}))
+			self.disk().sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
 
 			self._portSet()
 			# start hls (media segmenter)
@@ -746,33 +949,6 @@ class pxp(m.MVC):
 			# return self._err(minEvtHid)
 			if success:
 				evtHid = minEvtHid
-				# send a request to create a new event in the cloud
-				cfg = self._cfgGet(self.wwwroot+"_db/")
-				# check if there is internet
-				if self.io().isweb():
-					url = "http://www.myplayxplay.net/maxdev/eventSet/ajax"
-					params ={   'homeTeam':hmteamHID,
-								'visitorTeam':vsteamHID,
-								'league':leagueHID,
-								'date':timestamp,
-								'season':timestamp[:4], #just the year part of the date
-								'v0':cfg[1], #authentication code
-								'v1':cfg[2] #customer ID
-							}
-					resp = self.io().send(url,params,jsn=True)
-					if resp and 'success' in resp and resp['success']:
-						# the requrest was successful, get the HID of the new event
-						maxEvtHid = resp['msg']
-						# update it in the local database
-						sql = "UPDATE `events` SET `hid`=? WHERE `hid`=?"
-						db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
-						db.query(sql,(maxEvtHid,minEvtHid))
-						db.close()
-						evtHid = maxEvtHid
-					#if resp['success']
-					# else:
-					# 	return self._err(str(resp))
-				#if isweb
 				# save the event ID
 				self.disk().file_set_contents(self.wwwroot+"live/eventid.txt",evtHid)
 			#if success
@@ -803,7 +979,7 @@ class pxp(m.MVC):
 
 			# make sure nobody creates new tags or does other things to this event anymore
 			os.system("echo '"+timestamp+"' > "+self.wwwroot+"live/stopping.txt")
-			self.disk().sockSend(json.dumps({"actions":[{'event':'live','action':'stop'}]}))
+			self.disk().sockSend(json.dumps({"actions":{'event':'live','status':'stopped'}}))
 			
 			
 			# stop HLS segmenting
@@ -812,10 +988,13 @@ class pxp(m.MVC):
 			# stop ffmpeg and wait for it to complete (to have a working mp4)
 			if(self.disk().psOn("ffmpeg")):
 				os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-			
+			# make sure pxpStream restarts
+			os.system("/usr/bin/killall pxpStream")
 			# wait for ffmpeg to finish its job, and for handbrake (in case user was creating bookmarks)
 			while (self.disk().psOn('ffmpeg') or self.disk().psOn("handbrake")):
 				sleep(1) #wait for ffmpeg to finish its job
+				if(self.disk().psOn("ffmpeg -f mpegts -i udp")):
+					os.system("/bin/kill `ps ax | grep \"ffmpeg -f mpegts -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
 
 			# stop the pxpStream app (it'll restart automatically, this is left over from the old times)
 			rez = os.system("echo '2' > /tmp/pxpcmd")
@@ -954,7 +1133,7 @@ class pxp(m.MVC):
 			else:
 				leagueHID = ""
 			#close the database (so that log can use it)
-			db.close();
+			db.close()
 
 			for t in tags:
 				# format the tag (get thumbnail image, telestration url, etc.)
@@ -993,12 +1172,14 @@ class pxp(m.MVC):
 	def _slog(self,text):
 		# generate timestamp
 		timestamp = self._time()
-		# os.system("echo '"+timestamp+": "+text+"' >> "+self.wwwroot+"_db/log.txt")
+		os.system("echo '"+timestamp+": "+text+"' >> "+self.wwwroot+"_db/log.txt")
 
 	def service(self):
 		# deleting old events
 		try:
+			self._slog("service")
 			if(not self._deleting()):
+
 				self._slog('not deleting')
 				# delete session files that are over 1 day old
 				os.system('find '+self.wwwroot+"session -mtime +1 -type f -exec rm {} \\;")
@@ -1064,18 +1245,69 @@ class pxp(m.MVC):
 			settings = self.settingsGet()
 			# check if user has upload enabled
 			if(int(settings['uploads']['autoupload']) and not self._uploading()):
+				self._slog('uploading checked')
 				# make sure autoupload is enabled and there is no upload happening already
 				# check if there are segment files to upload
 				if(self.io().isweb()):
+					self._slog("online")
 					event = "live"
 					# check if there is a live game
 					if(os.path.exists(self.wwwroot+event) and not self._stopping(event=event)):
+						self._slog("upload tags")
 						# UPLOAD TAGS
 						# check if there are new tags to upload
 						try:
 							lastTagID = int(self.disk().file_get_contents(self.wwwroot+event+"/lasttag.txt"))
 						except:
-							lastTagID = 0
+							# no tags were uploaded yet - this happens when event wasn't registered in the cloud - register it
+							try:
+								# get home team, visitor team, league
+								db = self.dbsqlite(self.wwwroot+event+'/pxp.db')
+								sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
+								db.qstr(sql)
+								teamHIDs = db.getasc()
+								if (len(teamHIDs)>0): #this will be the case when there is a blank db in the event (encode was not started)
+									teamHIDs = teamHIDs[0]['id'].split(',')
+								if(len(teamHIDs)>2):#in case this is an old event, and the league HID is not listed along with team HIDs (comma-delimeted) in the log table, add empty value for the league
+									leagueHID = teamHIDs[2]
+									del(teamHIDs[2]) #remove league id from the teams list
+								else:
+									leagueHID = ""
+								db.close()
+	# GET TIMESTAMP FROM EVENT, NOT FROM CURRENT TIME!!!
+								# send a request to create a new event in the cloud
+								cfg = self._cfgGet(self.wwwroot+"_db/")
+								# check if there is internet
+								if self.io().isweb():
+									url = "http://www.myplayxplay.net/maxdev/eventSet/ajax"
+									params ={   'homeTeam':hmteamHID,
+												'visitorTeam':vsteamHID,
+												'league':leagueHID,
+												'date':timestamp,
+												'season':timestamp[:4], #just the year part of the date
+												'v0':cfg[1], #authentication code
+												'v1':cfg[2] #customer ID
+											}
+									resp = self.io().send(url,params,jsn=True)
+									if resp and 'success' in resp and resp['success']:
+										# the requrest was successful, get the HID of the new event
+										maxEvtHid = resp['msg']
+										# update it in the local database
+										sql = "UPDATE `events` SET `hid`=? WHERE `hid`=?"
+										db = self.dbsqlite(self.wwwroot+"_db/pxp_main.db")
+										db.query(sql,(maxEvtHid,minEvtHid))
+										db.close()
+										evtHid = maxEvtHid
+									#if resp['success']
+									# else:
+									# 	return self._err(str(resp))
+								#if isweb
+								lastTagID = 0
+							#end try create new cloud event
+							except:
+								pass
+						#end try get last tag id..except
+
 						# find if there were tags created after the last
 						db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
 						sql = "SELECT * FROM `tags` WHERE `id`>? ORDER BY `id`"
@@ -1088,11 +1320,20 @@ class pxp(m.MVC):
 						##############
 						return
 						for tag in tags:
-							# upload the tag
-							# url = ''
+							# set url parameters
+							# extract meta parameters as individual fields:
+							metaparams = json.loads(tag['meta'])
+							# remove meta field from the tag
+							del tag['meta']
+							# add parameters from meta alongside with all the other params
+							tag.update(metaparams)
+							# set the event name (hid)
+							# tag['event'] = 
+							# url = 'http://myplayxplay.net/mid/ajax/tagset/'+json.dumps(tag)
 							# params = {
 							# 	''
 							# }
+							# create the tag in the cloud
 							# resp = self.io().send(url, params, jsn=True)
 
 							# record it
@@ -1133,7 +1374,7 @@ class pxp(m.MVC):
 						nextTime = self._exNum(listArray[timeIndex],floatPoint=True)
 						for idx in range(fileIndex, len(listArray), 2):
 							# after every 8 segments check if user disabled uploading
-							if(idx & 7==7): #will check when last 3 bits are 111, this is faster on CPU than (idx % 8)
+							if(idx & 7==7): #will check when last 3 bits are 111, this is faster on CPU than (idx % 7)
 								settings = self.settingsGet()
 								try:
 									if(not int(settings['uploads']['autoupload'])):
@@ -1429,6 +1670,15 @@ class pxp(m.MVC):
 				bookmark = (jp['bookmark']=='1')
 				del jp['bookmark']
 			meta = {}
+			# check if manually closing a duration tag:
+			if(('type' in jp) and (int(jp['type'])&1)==0 and int(jp['type'])>0):
+				# closing a duration tag
+				sqlInsert.append("`duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END")
+				params += (jp['time'],jp['time'])
+				del jp['time']
+				jp['modified']=0 #close duration tags do not have modified status
+			else:
+				jp['modified']=1
 			for mod in jp:
 				if (mod=='starttime' and float(jp[mod])<0):#modifying starttime (extending the beginning of the tag)
 					value = 0
@@ -1446,7 +1696,7 @@ class pxp(m.MVC):
 						else:
 							params +=(jp[mod],)
 			#end for mod in jp
-
+			
 			#make sure the database exists and user is not trying to get at other folders
 			if(('/' in event) or ('\\' in event) or (not os.path.exists(self.wwwroot+event+'/pxp.db'))):
 				return self._err()
@@ -1544,12 +1794,12 @@ class pxp(m.MVC):
 	#stop  d-line		= 6 - hockey	
 	#period start		= 7 - hockey
 	#period	stop		= 8 - hockey
-	#opp. o-line start 	= 9 - hockey
-	#opp. o-line stop 	= 10- hockey
-	#opp. d-line start 	= 11- hockey
-	#opp. d-line stop 	= 12- hockey
-	#strength start 	= 13- hockey
-	#strength stop 		= 14- hockey
+	#strength start 	= 9- hockey
+	#strength stop 		= 10- hockey
+	#opp. o-line start 	= 11- hockey
+	#opp. o-line stop 	= 12- hockey
+	#opp. d-line start 	= 13- hockey
+	#opp. d-line stop 	= 14- hockey
 
 	#zone start 		= 15- soccer
 	#zone stop 			= 16- soccer
@@ -1562,8 +1812,11 @@ class pxp(m.MVC):
 	#quarter stop 		= 22- football
 
 	#event can be a folder name of an event or 'live' for live event
+
+	#tagStr - json string with tag info
+	#sendSock - send the tag to socket
 	#######################################################
-	def tagset(self, tagStr=False):
+	def tagset(self, tagStr=False, sendSock=True):
 		import math
 		import json, os, sys
 		config = self.settingsGet()
@@ -1587,6 +1840,7 @@ class pxp(m.MVC):
 				t = t[0] # this is an array of dictionaries - get the first element
 			# make sure event is valid
 			eventName = t['event']
+			userhid = t['user']
 			if (not 'event' in t or '/' in eventName or '\\' in eventName):
 				return self._err("Specify event") #event was not defined or is invalid - can't open the database
 			del t['event']
@@ -1604,7 +1858,8 @@ class pxp(m.MVC):
 				t['type'] = 0 #if type is not defined set it to default
 			else:
 				t['type'] = int(t['type'])
-			if(t['type']==3):
+			tagType = t['type']
+			if(tagType==3):
 				return self.err("Attempting to create deleted tag")
 			# remove any temporary id that might be associated with the tag
 			if ('id' in t):
@@ -1615,14 +1870,17 @@ class pxp(m.MVC):
 			if(math.isnan(float(t['time']))):
 				t['time'] = 0
 			#a new tag was received - add it
-			# TODO: check if this user already has a tag with the same name in the same place
-			if(t['type']&1): #odd types are tag 'start'
+			
+			if(tagType==99):
+				# type 99 is a duration tag - these ones auto-close only if from the same tablet, otherwise just create a new one
+				pass
+			if(tagType&1): #odd types are tag 'start'
 				# check where user is adding the start tag:
 				# if it's after the last 'start' tag of the same type, simply add it and close the previous tag
 				# if it's somewhere in the middle, this tag type will be automatically closed and the tag duration set
 				# get all the tags of the same type that start before the current one
 				sql = "SELECT * FROM `tags` WHERE (`starttime`<?) and ((`type`=?) or (`type`=?+1)) ORDER BY `starttime`"
-				db.query(sql,(t['time'],t['type'],t['type']))
+				db.query(sql,(t['time'],tagType,tagType))
 				prevTags = db.getasc()
 
 				startTime = float(t['time'])
@@ -1636,8 +1894,12 @@ class pxp(m.MVC):
 						# also set the starttime to begin when user tagged it, not at the usual -10 seconds
 						# update a tag (duration will be current time minus start time). if duration is negative (user seeked back and hit tag) it will be set to zero
 						sql = "UPDATE `tags` SET `starttime`=`time`, `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END, `type`=`type`+1 WHERE `type`=?"
-						success = success and db.query(sql,(t['time'],t['time'],t['type']))
+						success = success and db.query(sql,(t['time'],t['time'],tagType))
 						success = success and self._logSql(ltype="mod_tags",lid=prevTags[-1]['id'],uid=t['user'],db=db)
+						# self._sockTag(event=eventName,tag=tagOut,gameEvents=gameEvents)
+						# send the closed tag to socket
+						self._tagFormat(event=eventName, user=userhid, tagID=prevTags[-1]['id'], db=db, checkImg=False, sockSend=True)
+
 						# default duration for the 'start' tag is zero - it will be set when next one is laid
 						t['duration']= 0
 					else:
@@ -1649,13 +1911,13 @@ class pxp(m.MVC):
 						success = success and self._logSql(ltype="mod_tags",lid=prevTags[-1]['id'],uid=t['user'],db=db)
 						# select the next tag that would follow the inserted one
 						sql ="SELECT * FROM `tags` WHERE (`starttime`>=?) AND ((`type`=?) OR (`type`=?+1)) ORDER BY `starttime`"
-						db.query(sql,(startTime,t['type'],t['type']))
+						db.query(sql,(startTime,tagType,tagType))
 						nextTag = db.getasc()
 						if(len(nextTag)>0):
 							# set the proper duration of the inserted tag (to be between now and the next tag)
 							t['duration']=nextTag[0]['time']-startTime
 							# set the new tag as even type (close it automatically)
-							t['type']=t['type']+1
+							tagType=tagType+1
 						else: #this case would only happen if there was some sort of messup with the database
 							t['duration']=0
 				else:#there are no tags of the same type before this one
@@ -1663,13 +1925,13 @@ class pxp(m.MVC):
 					# check if there are any tags after the new one
 					# select the next tag that would follow the inserted one (if there are any)
 					sql ="SELECT * FROM `tags` WHERE (`starttime`>=?) AND ((`type`=?) OR (`type`=?+1)) ORDER BY `starttime`"
-					db.query(sql,(startTime,t['type'],t['type']))
+					db.query(sql,(startTime,tagType,tagType))
 					nextTag = db.getasc()
 					if(len(nextTag)>0):
 						# there are tags of this type after - update duration of the current one
 						t['duration']=nextTag[0]['time']-startTime
 						# and close it automatically
-						t['type']=t['type']+1
+						tagType=tagType+1
 					elif(eventName!='live'):
 						#this is the first time the tag of this type is being sent
 						# and this is not a live event
@@ -1688,8 +1950,6 @@ class pxp(m.MVC):
 			#make sure starttime is not below 0
 			if (t['starttime'] < 0):
 				t['starttime'] = 0
-			userhid = t['user']
-			tagType = t['type']
 			# database fields that should all be set
 			tagFields = ('name', 'user', 'starttime', 'type', 'time', 'colour', 'duration', 'comment', 'rating')
 			#add the tag to the database
@@ -1733,6 +1993,7 @@ class pxp(m.MVC):
 				if not tagOut['success']:
 					return tagOut
 			tagtime = tagOut['time']
+			# a = int(tagOut)
 			tagOut['newTagID']=newTagID
 			#create a tag image if it doesn't exist already
 			pathToEvent = self.wwwroot+eventName+'/'
@@ -1751,27 +2012,35 @@ class pxp(m.MVC):
 					# sec = (t['time']/0.984315-roundedSec)*0.984315 
 					# if sec<0: #sanity check - should never happen
 					# do it at 0 for now, we'll figure out how to increase accuracy later on 
-					sec = res['remainder']
+					sec = 0 #res['remainder']
 				else:
 					# for past events, the thumbnail can be extracted from the main.mp4
 					vidFile = pathToEvent+"video/main.mp4"
 					sec = tagtime
+				if(tagOut['type']==4):
+					# telestrations require full size image as well as a thumbnail
+					fullimgFile = pathToEvent+"thumbs/tf"+str(lastID)+".jpg"
+					self._mkThumb(vidFile, fullimgFile, sec, width=0)
 				self._mkThumb(vidFile, imgFile, sec) 
 			#log that a tag was created
 			success = success and self._logSql(ltype="mod_tags",lid=lastID,uid=userhid,db=db)
+			# add to the events array to send to the socket updater
+			gameEvents = [{}]
 			if(tagType & 1):
 				# delete last current_<type> entry
 				sql = "DELETE FROM `logs` WHERE `type` LIKE ?"
 				db.query(sql,('current_'+str(tagType),))
+				gameEvents = [{'id':tagOut['name'], 'type':'current_'+str(tagType)}]
 				# self._x('current'+str('tagType'))
 				success = success and self._logSql(ltype="current_"+str(tagType),lid=tagOut['name'],uid=userhid,db=db)
 				# success = success and self._logSql(ltype="current_"+str(tagType),lid=lastID,uid=userhid,db=db)
-
+			db.close()
 			#if lastID
 			if not 'id' in tagOut: #tag will not be returned - happens when line/zone/etc. is tagged for the first time
 				tagOut["success"]=success
 			tagOut['islive']=eventName=='live'
-			self.disk().sockSend(json.dumps({'tags':[tagOut]}))
+			if(sendSock):
+				self._sockTag(event=eventName,tag=tagOut,gameEvents=gameEvents)
 			return tagOut
 		except Exception as e:
 			db.rollback()
@@ -1787,30 +2056,45 @@ class pxp(m.MVC):
 			if(self._stopping(event)):
 				return self._stopping(msg=True)
 			# create a tag first
-			t = self.tagset(tagStr)
+			t = self.tagset(tagStr=tagStr,sendSock=False)
 			if('success' in t and not t['success']):
 				return t
 			#upload a file with the tag name
 			imgID = str(t['id'])
 			io.upload(self.wwwroot+event+"/thumbs/tl"+imgID+".png")
 			# update the thumbnail with the telestration overlay
-			# background is the thumbnail
+			# thumbnail image as background for telestration thumbnail
 			bgFile = self.wwwroot + event+"/thumbs/tn"+imgID+".jpg"
+			# full image background as bg for telestration screenshot
+			bfFile = self.wwwroot + event+"/thumbs/tf"+imgID+".jpg"
 			# overlay is the png telestration
 			olFile = self.wwwroot + event+"/thumbs/tl"+imgID+".png"			
 			# open the image files
-			bg = Image.open(bgFile) #background
-			ol = Image.open(olFile) #overlay
+			bf = Image.open(bfFile) #full background
+			bg = Image.open(bgFile) #thumbnail background
+			ol = Image.open(olFile) #overlay - telestration
+
+			bf = bf.convert("RGBA")
+			ol = ol.convert("RGBA")
+			bg = bg.convert("RGBA")
+
+			# get the size of telestration
+			(telew,teleh) = ol.size
+			# resize full video to match telestration size
+			bf.resize((telew,teleh),Image.ANTIALIAS)
+			bf.paste(ol, (0, 0), ol)
+			# save full size telestration
+			bf.save(bfFile,quality=100)
 
 			# get the size of the thumbnail
 			(wd,hg) = bg.size
 			# resize the overlay to match thumbnail
 			ol = ol.resize((wd, hg), Image.ANTIALIAS)
 			# overlay the tags
-			bg = bg.convert("RGBA")
-			ol = ol.convert("RGBA")
+			# ol = ol.convert("RGBA")
 			bg.paste(ol, (0, 0), ol)
 			bg.save(bgFile,quality=100)
+			self._sockTag(event=event,tag=t)
 			return t #already contains telestration url
 		except Exception as e:
 			return self._err("No tag info specified (error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
@@ -1824,6 +2108,8 @@ class pxp(m.MVC):
 		# os.system("")
 		# run each update file
 	#end updateEnc
+	def version(self):
+		return {"version":self.ver}
 ###############################################
 ##	           utility functions             ##
 ###############################################
@@ -2267,12 +2553,18 @@ class pxp(m.MVC):
 			self.disk().mkdir(os.path.dirname(outputFile))
 		#make the thumbnail
 		cmd = "/usr/local/bin/ffmpeg"
+		# only scale if the width is not 0
+		if(width<=0):
+			vidscale = ""
+		else:
+			vidscale = " -vf scale="+str(width)+":ih*"+str(width)+"/iw "
+		ffparams = str(seconds)+"  -i "+videoFile.replace(' ','\ ').replace('\'','\\\'')+" -vcodec mjpeg -vframes 1 -an "+vidscale+outputFile.replace(' ','\ ').replace('\'','\\\'')
 		#automatically calculates height based on defined width:
 		if(videoFile[-3:]=='.ts'):#exctracting frame from a stream .ts file
 			# -itsoffset is slower than -ss but it allows exact seeking (past keyframes) and speed is insignificant for small files
-			params = " -itsoffset -"+str(seconds)+"  -i "+videoFile.replace(' ','\ ').replace('\'','\\\'')+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile.replace(' ','\ ').replace('\'','\\\'')
+			params = " -itsoffset -"+ffparams
 		else:
-			params = " -ss "+str(seconds)+"  -i "+videoFile.replace(' ','\ ').replace('\'','\\\'')+" -vcodec mjpeg -vframes 1 -an -vf scale="+str(width)+":ih*"+str(width)+"/iw "+outputFile.replace(' ','\ ').replace('\'','\\\'')
+			params = " -ss "+ffparams
 		os.system(cmd+params) # need to wait for response otherwise the tablet will try to download image file that does not exist yet
 	#end mkThumb
 	#######################################################
@@ -2328,6 +2620,47 @@ class pxp(m.MVC):
 				return "%0.2f %s" % (s, x)
 			s = s / 1024
 		return ""
+	# sends tag (or other data) to a pxpservice 
+	# tag - sends this tag to the service
+	# data - if no tag is specified, sends this raw data
+	def _sockTag(self,event="live",tag=False,gameEvents=[{}],data=False,db=False):
+		if(tag):
+			# self._x(tag)
+			# tag was specified - send it to the service
+			if(not db):
+				# no database specified - open it
+				closedb = True
+				db = self.dbsqlite(self.wwwroot+event+"/pxp.db")
+			else:
+				# database was specified - no need to open it (or close it) here
+				closedb = False
+			# get teams and league HIDs
+			sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
+			db.qstr(sql)
+			teamHIDs = db.getasc()
+			if (len(teamHIDs)>0): #this will be the case when there is a blank db in the event (encode was not started)
+				teamHIDs = teamHIDs[0]['id'].split(',')
+			if(len(teamHIDs)>2):#in case this is an old event, and the league HID is not listed along with team HIDs (comma-delimeted) in the log table, add empty value for the league
+				leagueHID = teamHIDs[2]
+				del(teamHIDs[2]) #remove league id from the teams list
+			else:
+				leagueHID = ""
+			outJSON = {
+				'tags':{tag['id']:tag},
+				'status':self.encoderstatus(),
+				'events':gameEvents,
+				'teams':teamHIDs,
+				'league':leagueHID
+			}
+			# send the tag (with other info) to the socket
+			self.disk().sockSend(json.dumps(outJSON))
+			if(closedb): #the db was opened here - so it must be closed here as well
+				db.close()
+		else:
+			# tag was not specified - send the raw data
+			self.disk().sockSend(data)
+	#end sockTag
+	# returns true if the event is being stopped
 	def _stopping(self, event="live", msg=False):
 		import psutil
 		if(not msg):
@@ -2623,6 +2956,7 @@ class pxp(m.MVC):
 				tag = tag[0]
 				if(autoclose):
 					db.close()
+					db = False
 			#if no tagID is given, the tag fields must be passed in the tag parameter
 			elif(not tag):
 				# no tag id or other information given - return empty dictionary
@@ -2693,6 +3027,7 @@ class pxp(m.MVC):
 			tag['success'] = True #if got here, the tag info was retreived successfully
 			if(int(tag['type'])==4): #add telestration url for telestration tags only
 				tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
+				tag['telefull']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tf'+str(tag['id'])+'.jpg'
 			if(os.path.exists(self.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
 				tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
 			if('hid' in tag):
@@ -2714,7 +3049,7 @@ class pxp(m.MVC):
 			# send the data to the socket (broadcast for everyone)
 			outDict['islive']=event=='live'
 			if(sockSend):
-				self.disk().sockSend(json.dumps({'tags':[outDict]}))
+				self._sockTag(event=event,tag=outDict,db=db)
 			return outDict
 		except Exception as e:
 			import sys
