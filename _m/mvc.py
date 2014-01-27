@@ -9,7 +9,7 @@ def lm(module,path):
 	return ls(module,path)
 class MVC():
 	"""main MVC class"""
-	ver = "0.94.2"
+	ver = "0.94.3"
 	approot = "/var/www/html/min/"
 	wwwroot = "/var/www/html/events/"
 	def __init__(self):

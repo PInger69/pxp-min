@@ -1873,8 +1873,24 @@ class pxp(m.MVC):
 			
 			if(tagType==99):
 				# type 99 is a duration tag - these ones auto-close only if from the same tablet, otherwise just create a new one
-				pass
-			if(tagType&1): #odd types are tag 'start'
+				# get device id
+				devID = t['deviceid']
+				# find last duration tag sent from this tablet 
+				sql = "SELECT * FROM `tags` WHERE `type`=? AND `meta` LIKE ?"
+				db.query(sql,(tagType,'%"deviceid": "'+devID+'"%'))
+				prevTags = db.getasc()
+				# auto-close previously opened duration tag from this tablet
+				if(len(prevTags)>0):
+					sql = "UPDATE `tags` SET `starttime`=`time`, `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END, `type`=`type`+1 WHERE `type`=?  AND `meta` LIKE ?"
+					success = success and db.query(sql,(t['time'],t['time'],tagType,'%"deviceid": "'+devID+'"%'))
+					success = success and self._logSql(ltype="mod_tags",lid=prevTags[-1]['id'],uid=t['user'],db=db)
+					# send the closed tag to socket
+					self._tagFormat(event=eventName, user=userhid, tagID=prevTags[-1]['id'], db=db, checkImg=False, sockSend=True)
+				# default duration for the 'start' tag is zero - it will be set when next one is laid
+				t['duration']= 0				
+				# regardless of preroll time, duration tags must start when the tag is laid
+				t['starttime'] = t['time']
+			elif(tagType&1): #odd types are tag 'start'
 				# check where user is adding the start tag:
 				# if it's after the last 'start' tag of the same type, simply add it and close the previous tag
 				# if it's somewhere in the middle, this tag type will be automatically closed and the tag duration set
