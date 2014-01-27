@@ -1874,6 +1874,8 @@ class pxp(m.MVC):
 			if(tagType==99):
 				# type 99 is a duration tag - these ones auto-close only if from the same tablet, otherwise just create a new one
 				# get device id
+				if (not 'deviceid' in t): #old app builds don't have the deviceid - 'fake it' by using the user id instead, this will only work if different users are signed in on different ipads
+					t['deviceid']=userhid
 				devID = t['deviceid']
 				# find last duration tag sent from this tablet 
 				sql = "SELECT * FROM `tags` WHERE `type`=? AND `meta` LIKE ?"
