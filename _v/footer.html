@@ -1,0 +1,258 @@
+@require(encoder)
+<!-- ===================================== START FOOTER ===================================== -->
+		<div class="clear"></div>
+		<div id="footer">
+		&copy; 2013 Avoca Technologies Inc.
+		</div>
+	</div><!-- END WRAP -->
+</div><!-- END GRID -->
+<script type="text/javascript">	
+	var reloadPending = false;
+	var cameraStateTmr = null;     	//timer variable (used to reset it if need be)
+	var encStatus = "@encoder['status']"; 	//encoder status
+	var btnHtml = "";   	//html for the submit button prior to clicking
+	var ajaxInProgress = false;	//whether the page can be reloaded - true if there is an ajax call in progress
+	var shutDownCounter = 0; //counts after receiving an error from the server (happens when server goes offline)
+	var shuttingDown = false;
+	function ajaxSubmit(form, callback){
+		if(callback==undefined){
+			callback = false;
+		}
+		// $(form).find('input, select').removeClass('alert');
+		// show the loading wheel
+		// $(form).find('#loader').show();
+		//reset the warning on the form
+		// $(form).find("#msg").html(''); 
+
+		timestamp = new Date(); //added to prevent response caching on Safari (great job Apple! #fail )
+		$(form).find('.warning').hide();
+		action = $(form).attr('action');
+		post_data = $(form).serialize()+"&timestamp="+timestamp.getTime();
+		ajaxInProgress = true;
+		$.ajax({
+		    url: 'ajax/'+action,
+		    type: 'POST',
+		    data: post_data,
+			complete: function(xhr, textStatus) {
+			},
+		    success: function(data, textStatus, xhr){
+				//response from the server received
+				ajaxInProgress = false;
+				try{
+					rez = eval("("+data+")");//parse json
+				}
+				catch(e){
+					rez = { };
+					rez.success = false;
+					rez.msg = data;
+					rez.action = '';
+				}
+				if(rez.success){
+					if(callback){
+						eval(callback+"();");
+					}
+				}
+				else{
+					$(form).find('.warning .status').html(rez.msg);
+					$(form).find('.warning').show();
+				}//if rez.success else
+				// reset the submit button state to what it was before the submission
+				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
+		    },//on success
+		    error: function(xhr, textStatus, errorThrown){
+				//called when there is an error
+				ajaxInProgress = false;
+				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
+		    }
+		});
+	}//ajaxSubmit
+	function ajaxCall(action,params,callback,ajaxbtn){
+		if(ajaxbtn==undefined){
+			ajaxbtn = false;
+		}
+		if(params==undefined){
+			params = "";
+		}
+		if(callback==undefined){
+			callback = false;
+		}
+		if(ajaxbtn){
+			action = ajaxbtn.attr('action');
+			params = ajaxbtn.attr('param');
+			var btnHTML = ajaxbtn.html();
+			// disable the ajax button to prevent further submissions
+			ajaxbtn.attr('disabled','disabled');
+			// show loader image
+			ajaxbtn.html('<img src="css/img/ajax-loader.gif"/>');
+		}
+
+		try{
+			//params contains the list of IDs of elements whose values should be passed as parameters
+			// perform the ajax request
+			//eval("("+params+")");
+			pr = params.split(',');
+		}
+		catch(e){
+			pr = new Array();
+		}
+		// return;
+		ajaxInProgress = true;
+		shuttingDown = action=='encshutdown';
+		params = {};
+		for(elem in pr){
+			params[pr[elem]] = $('#'+pr[elem]).val();
+		}
+		timestamp = new Date();
+		// determine if parameters already have a question mark (sending GET params)
+		getParams = action.indexOf('?') != -1;
+		$.ajax({
+		  // timeout:5000,
+		  url: 'ajax/'+action+(getParams?'&':'?')+'timestamp='+timestamp.getTime(),
+		  data: params,
+		  complete: function(xhr, textStatus) {
+		  	console.log(textStatus)
+		  },
+		  success: function(data, textStatus, xhr) {
+		  	console.log(data);
+		    ajaxInProgress = false;
+		    result = { };
+		    try{
+		    	result = eval("("+data+")");
+		    }
+		    catch(e){
+		    	result['success'] = false;
+		    }
+		    if (!result['success'] && shuttingDown){
+		  		shuttingDown = false;
+		  		alert('user permissions do not allow encoder shut down');
+		  		window.location.reload();
+		    }
+	    	switch(result['action']){
+	    		case 'reload': 	
+	    			window.location.reload();
+	    		break;
+	    		case 'popup':
+	    			if(result['msg']){
+		    			alert(result['msg']);
+	    			}
+	    		break;
+	    		default :	    		
+	    		break;
+
+	    	}	    	
+		    if(result['success'] && callback!=false){
+		    	callback();
+		    }
+		    if (ajaxbtn){
+		    	ajaxbtn.removeAttr("disabled");
+		    	ajaxbtn.html(btnHTML);
+		    }
+		  },
+		  error: function(xhr, textStatus, errorThrown) {
+		    ajaxInProgress = false;
+		    if (ajaxbtn){
+		    	ajaxbtn.removeAttr("disabled");
+		    	ajaxbtn.html(btnHTML);
+		    }
+		  	// if (shuttingDown){
+		  	// 	shuttingDown = false;
+		  	// 	alert('user permissions do not allow encoder shut down');
+		  	// }
+
+		  }
+		});
+	}
+	// periodically get the camera status
+	function ajaxCamStatus(){
+		// check if the camera is connected and set the status accordingly
+		timestamp = new Date();
+		$.ajax({
+		  timeout:4000,
+		  url: 'ajax/getcamera/'+timestamp.getTime(),
+		  complete: function(xhr, textStatus) {
+
+		  },
+		  success: function(data, textStatus, xhr) {
+
+			try{
+				rez = eval("("+data+")");//parse json
+			}
+			catch(e){
+				rez = { };
+				rez.success = false;
+				rez.msg = data;
+			}
+			if (rez.success){
+				// got a proper response from the server - put the message as camera status
+				if(rez.msg=='No camera'){
+					$('#cam-status').text('N/A');
+				}
+				else{
+					$('#cam-status').text(rez.msg);
+				}
+				if(rez.encoder!=encStatus || reloadPending){
+					clearTimeout(cameraStateTmr);
+					if (!ajaxInProgress){
+						window.location.reload();
+					}
+					else{
+						reloadPending = true;
+					}
+				}
+			}
+			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
+		  },
+		  error: function(xhr, textStatus, errorThrown) {
+		  	if (shutDownCounter>9){//after a few seconds the encoder should be off 
+			    $('html').prepend("<div class='overlay hide'></div>");
+			    $('.overlay').fadeIn();
+			    $('#shutdownNotice').fadeIn();
+		  		return;
+		  	}
+		  	if(shuttingDown){
+		  		shutDownCounter++;
+		  	}
+			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
+
+		  }
+		});
+	}
+	// get encoder status (live/paused/off)
+	$(function(){
+		// if there was an onLoad function defined in one of the html's - run it
+		if(typeof fOnLoad=='undefined'){
+			fOnLoad = function (){ };
+        }
+        fOnLoad();
+        // attach ajax submit to the forms
+        $('form').submit(function(){
+        	if(!$(this).attr('default')){
+        		// disable submit button to prevent it from submitting again        		
+        		btnSubmit = $(this).find('button[type="submit"]');
+				btnSubmit.attr('disabled','disabled');
+				btnHtml = btnSubmit.html();
+				// add ajax loader image
+				btnSubmit.html('<img src="css/img/ajax-loader.gif"/>');
+				// perform the submit
+	        	ajaxSubmit(this,$(this).attr('callback'));
+	        	return false;
+	        }
+        });
+		$('.ajaxbtn').click(function(e) {
+			// ajax buttons have 'action' attribute which is the name of the url to call
+			// some have param attribute - list of #id's of elements whose values to add to the call
+			if($(this).attr('action')=='encshutdown' || $(this).attr('action')=='encstop'){
+				if (confirm("Are you sure?"))
+				  {
+					  ajaxCall(false,false,false,$(this));
+				  }
+			}
+			else{
+				ajaxCall(false,false,false,$(this));
+			}
+			
+		});
+	});
+</script>
+</body>
+</html>
