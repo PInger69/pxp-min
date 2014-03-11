@@ -909,47 +909,47 @@ def _slog(text):
 
 def service():
 	# deleting old events
-	try:
-		_slog("service")
-		# delete any undeleted directories
-		# get a list of deleted events
-		oldevents = _listEvents(onlyDeleted = True)
-		# print oldevents
-		if (len(oldevents)>0):
-			_slog("found "+str(len(oldevents))+" old events")
-			db = pu.db(c.wwwroot+"_db/pxp_main.db")
-			for event in oldevents:
-				_slog("start deleting: "+str(event))
-				# make sure there is a directory associated with the event
-				if(not 'datapath' in event):
-					#delete the event from the database (if there's no path to the file)
-					sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
-					db.query(sql,(event['hid'],))
-					continue
-				# make sure directory path is not corrupted
-				if(event['datapath'].find("/")>=0 or len(event['datapath'])<3):
-					_slog("invalid path")
-					continue
-				# check if it exists
-				if(os.path.exists(c.wwwroot+event['datapath'])):
-					_slog("deleting files...")
-					# send request to the socket to delete this directory
-					_sockData(data="RMD|"+c.wwwroot+event['datapath']+"|")
-					break #delete only 1 folder at a time
-				else:
-					#delete the event from the database (once the file have been deleted)
-					sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
-					db.query(sql,(event['hid'],))
-			#for event in oldevents
-			db.close()
-		#if oldevents>0
-		else:
-			_slog("zero deleted events")
-	except:
-		try:
-			db.close()
-		except:
-			pass
+	# try:
+	# 	_slog("service")
+	# 	# delete any undeleted directories
+	# 	# get a list of deleted events
+	# 	oldevents = _listEvents(onlyDeleted = True)
+	# 	# print oldevents
+	# 	if (len(oldevents)>0):
+	# 		_slog("found "+str(len(oldevents))+" old events")
+	# 		db = pu.db(c.wwwroot+"_db/pxp_main.db")
+	# 		for event in oldevents:
+	# 			_slog("start deleting: "+str(event))
+	# 			# make sure there is a directory associated with the event
+	# 			if(not 'datapath' in event):
+	# 				#delete the event from the database (if there's no path to the file)
+	# 				sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
+	# 				db.query(sql,(event['hid'],))
+	# 				continue
+	# 			# make sure directory path is not corrupted
+	# 			if(event['datapath'].find("/")>=0 or len(event['datapath'])<3):
+	# 				_slog("invalid path")
+	# 				continue
+	# 			# check if it exists
+	# 			if(os.path.exists(c.wwwroot+event['datapath'])):
+	# 				_slog("deleting files...")
+	# 				# send request to the socket to delete this directory
+	# 				_sockData(data="RMD|"+c.wwwroot+event['datapath']+"|")
+	# 				break #delete only 1 folder at a time
+	# 			else:
+	# 				#delete the event from the database (once the file have been deleted)
+	# 				sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
+	# 				db.query(sql,(event['hid'],))
+	# 		#for event in oldevents
+	# 		db.close()
+	# 	#if oldevents>0
+	# 	else:
+	# 		_slog("zero deleted events")
+	# except:
+	# 	try:
+	# 		db.close()
+	# 	except:
+	# 		pass
 	# uploading live stuff
 	try:
 		settings = settingsGet()
@@ -1498,6 +1498,7 @@ def tagmod():
 
 #deleted			= 3 - this one shouldn't happen on tagSet
 #telestration 		= 4
+#televideo 			= 40 - same as telestration, except there's a video associated with it instead of an image
 
 #start o-line     	= 1 - hockey
 #stop o-line     	= 2 - hockey
@@ -1671,7 +1672,7 @@ def tagset( tagStr=False, sendSock=True):
 		#end if type is odd
 		else: #for normal (event tags) the startTime will be tag time minus the pre-roll
 			t['starttime'] = float(t['time'])-tagVidBegin
-			if ((not 'duration' in t) or (int(t['duration'])<1)):
+			if ((not 'duration' in t) or (float(t['duration'])<=0)):
 				t['duration']=tagVidDuration
 		#end if type is odd ... else
 
@@ -1726,7 +1727,7 @@ def tagset( tagStr=False, sendSock=True):
 		#create a tag image if it doesn't exist already
 		pathToEvent = c.wwwroot+eventName+'/'
 		imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
-		if(not os.path.exists(imgFile)):
+		while(not os.path.exists(imgFile) and tagOut['type']!=40):
 			if(eventName=='live'):
 				# for live events the thumbnail must be extracted from a .TS file
 				# get the name of the .ts segment containing the right time				
@@ -1744,7 +1745,6 @@ def tagset( tagStr=False, sendSock=True):
 			if(tagOut['type']==4):
 				# telestrations require full size image as well as a thumbnail
 				fullimgFile = pathToEvent+"thumbs/tf"+str(lastID)+".jpg"
-
 				_mkThumb(vidFile, fullimgFile, sec, width=0)
 
 			_mkThumb(vidFile, imgFile, sec) 
@@ -1753,6 +1753,7 @@ def tagset( tagStr=False, sendSock=True):
 					os.remove(vidFile)
 				except:
 					pass
+		#end while(no imgFile)
 		#log that a tag was created
 		success = success and _logSql(ltype="mod_tags",lid=lastID,uid=userhid,db=db)
 		# add to the events array to send to the socket updater
@@ -1829,6 +1830,82 @@ def teleset():
 	except Exception as e:
 		return _err("No tag info specified (error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
 #end teleset
+
+def televid():
+	io = pu.io
+	try:
+		tagStr = str(io.get("tag"))
+		tag = json.loads(tagStr)
+		event = tag['event']
+		if(_stopping(event)):
+			return _stopping(msg=True)
+		# create a tag first
+		t = tagset(tagStr=tagStr,sendSock=False)
+		if('success' in t and not t['success']):
+			return t
+		#upload a file with the tag name
+		imgID = str(t['id'])
+		vidFile = c.wwwroot+event+"/thumbs/tv"+imgID+".mp4"
+		thmFile = c.wwwroot+event+"/thumbs/tn"+imgID+".jpg"
+		io.upload(vidFile)
+		while(not os.path.exists(thmFile)):
+			_mkThumb(vidFile,thmFile,float(tag['duration'])-0.5)
+		# create a thumbnail from the telestration
+		_sockData(event=event,tag=t)
+		return t #already contains telestration url
+	except Exception as e:
+		import sys
+		return _err("No tag info specified (error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
+
+#end televid
+
+#provides a screenshot of the video at a given time - used for televid
+def teleshot():
+	try:
+		tagStr = pu.uri.segment(3)
+		tag = json.loads(tagStr)
+		event = tag['event']
+		imgName = "cap"+str(tag['time'])+".jpg"
+		imgFile = c.wwwroot+event+"/thumbs/"+imgName
+		while(not os.path.exists(imgFile)):
+			if(event=='live'):
+				# for live events the thumbnail must be extracted from a .TS file
+				# get the name of the .ts segment containing the right time				
+				# res = {}
+				# vidSegmfileName = _thumbName(tag['time'],event=event,results=res)
+				# vidFile = c.wwwroot+event+"/video/"+str(vidSegmfileName)
+				res = _mkThumbPrep(event,float(tag['time']))
+				vidFile = res['file']
+				sec = res['time']
+				tempvid = True
+				# sec = res['remainder']
+			else:			
+				# for past events, the thumbnail can be extracted from the main.mp4
+				vidFile = c.wwwroot+event+"/video/main.mp4"
+				tempvid = False
+				sec = tag['time']
+				if(not os.path.exists(vidFile)):
+					res = _mkThumbPrep(event,float(tag['time']))
+					vidFile = res['file']
+					sec = res['time']
+					tempvid = True
+
+			_mkThumb(vidFile, imgFile, sec, width=0)
+
+			if(tempvid):
+				# delete the temporary ts file after image extraction
+				try:
+					os.remove(vidFile)
+				except:
+					pass
+		#end while no image
+		imgurl = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/'+imgName
+		return {"imgurl":imgurl}
+	except Exception as e:
+		import sys
+		return _err("teleshot error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
+		return 
+#end teleshot
 # update server script
 def upgrader():
 	currentVersion = version
@@ -2028,26 +2105,26 @@ def _extractclip( tagid, event):
 		#FIGURE OUT HOW TO COMPRESS VIDEOS WITH ADS
 		# randomy select an ad to add to the video
 		# this list contains all the ads videos in the directory
-		adFiles = glob.glob(c.wwwroot+"/ads/*.ts")
-		if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
-			return True
+		# adFiles = glob.glob(c.wwwroot+"/ads/*.ts")
+		# if(len(adFiles)<1):#there are no ad videos to choose from - just return after creating the video mp4 file
+		# 	return True
 
-		adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
-		#convert small mp4 back to .ts for merging with an ad
-		cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 8000k -f mpegts "+tempTs #use high bitrate to ensure high ad quality
-		os.system(cmd)
-		# remove the mp4
-		os.remove(bigMP4File)
-		# merge the ad and the video file
-		cmd = "/bin/cat "+adFile+" "+tempTs+" >"+bigTsFile
-		os.system(cmd)
-		# remove temporary ts:
-		os.remove(tempTs)
-		# convert the result to an mp4 file again:
-		cmd = "/usr/bin/handbrake -q 1 -i "+bigTsFile+" -o "+bigMP4File
-		os.system(cmd)
-		# remove the temporary ts file
-		os.remove(bigTsFile)
+		# adFile = adFiles[randrange(0,len(adFiles))] #TS file containing small size ad video (random ad)
+		# #convert small mp4 back to .ts for merging with an ad
+		# cmd = "/usr/local/bin/ffmpeg -i "+bigMP4File+" -b:v 8000k -f mpegts "+tempTs #use high bitrate to ensure high ad quality
+		# os.system(cmd)
+		# # remove the mp4
+		# os.remove(bigMP4File)
+		# # merge the ad and the video file
+		# cmd = "/bin/cat "+adFile+" "+tempTs+" >"+bigTsFile
+		# os.system(cmd)
+		# # remove temporary ts:
+		# os.remove(tempTs)
+		# # convert the result to an mp4 file again:
+		# cmd = "/usr/bin/handbrake -q 1 -i "+bigTsFile+" -o "+bigMP4File
+		# os.system(cmd)
+		# # remove the temporary ts file
+		# os.remove(bigTsFile)
 		return True
 	except Exception as e:
 		import sys
@@ -2185,6 +2262,16 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 		else:
 			live = ""
 		for row in result:
+			if(onlyDeleted):
+				if(('deleted' in row) and \
+					(int(row['deleted'])) and \
+					(not (('datapath' in row) and os.path.exists(c.wwwroot+row['datapath'])))):
+					#this event was deleted from the database and disk - remove all references
+					#delete the event from the database
+					sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
+					db.query(sql,(row['hid'],))
+				#if event_is_gone
+			#if onlyDeleted
 			# event name
 			evtName = str(row['datapath'])
 			evtDir = c.wwwroot+evtName
@@ -2310,7 +2397,7 @@ def _mkThumb( videoFile, outputFile, seconds, width=190, height=106):
 # prepares video file to extract thumbnail (required for live events with .ts files)
 # must concatenate several .ts files (with at least a couple of i-frames) since just one .ts file may not have any
 def _mkThumbPrep(event,seconds):
-	tmBuffer = 4
+	tmBuffer = 5
 	strTime = seconds-tmBuffer
 	if(strTime<0): 
 		strTime=0
@@ -2805,6 +2892,8 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		if(int(tag['type'])==4): #add telestration url for telestration tags only
 			tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
 			tag['telefull']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tf'+str(tag['id'])+'.jpg'
+		if(int(tag['type'])==40):
+			tag['televid']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tv'+str(tag['id'])+'.mp4'
 		if(os.path.exists(c.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
 			tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
 		if('hid' in tag):

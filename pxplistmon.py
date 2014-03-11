@@ -28,6 +28,12 @@ lastTime = time.time()
 while True:
 	if(not os.path.exists(listPath)): 
 		time.sleep(1)#wait until the file shows up
+		if(file_):
+			try:
+				file_.close()
+			except:
+				pass
+			file_ = False
 		continue
 	if(not file_): #file showed up - open it
 		file_ = open(listPath)
@@ -38,13 +44,6 @@ while True:
 	line = file_.readline()
 	if (not line):
 		file_.seek(curr_position)
-		# if((time.time()-lastTime)>3):#file has not been updated in 4 seconds - proably lost the connection to the file - reopen
-		# 	try:
-		# 		file_.close()
-		# 		file_ = False
-		# 		continue
-		# 	except:
-		# 		pass
 	else:
 		lastTime = time.time()
 		print line

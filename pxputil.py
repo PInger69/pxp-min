@@ -191,6 +191,7 @@ class c_disk:
 			settings[section] = value
 		# write settings to the file
 		self.file_set_contents(cfgfile, json.dumps(settings))
+		return True
 	#end cfgSet
 	def copy(self, src, dst):
 		import shutil
@@ -303,14 +304,14 @@ class c_disk:
 			pass
 		return data
 	# sends msg to the specified socket
-	def sockSend(self, msg, sockHost="127.0.0.1", sockPort=2232):
+	def sockSend(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True):
 		import socket
 		sent = 0
 		try:
 			sock = socket.socket(
 				socket.AF_INET, socket.SOCK_STREAM)
 			sock.connect((sockHost, sockPort))
-			if(msg[-2:]!="\r\n"):
+			if(addnewline and msg[-2:]!="\r\n"):
 				msg+="\r\n"
 			sent = sock.send(msg)
 			sock.close()

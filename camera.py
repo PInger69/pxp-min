@@ -110,12 +110,19 @@ def camStart():
 	# make sure encode is not already running
 	if(camStatus()=='live' or camStatus=='paused'):
 		return False
+	# make sure no cameras are active
+	camStop()
+
+	# reset all cameras - in case some encoders changed their ip address
+	camOff()
+	sleep(1)
+	camOn()
 	# get active cameras
 	cameras = getOnCams()
 	if(len(cameras)<1): #no cameras active
 		return False
-	# make sure no cameras are active
-	camStop()
+
+
 	# to acquire multiple streams, just add them with -i to ffmpeg and output with -map 0, -map 1, etc... e.g.:
 	# ffmpeg -y -i rtsp://192.168.1.107/stream1 -i rtsp://192.168.1.107/quickview \
 	# -map 0 -vcodec copy -acodec copy out.mp4 \
@@ -148,45 +155,41 @@ def camStart():
 	# and re-streams it to local udp ports for HLS segmenter (2200, 2201, 2202..., etc)
 	# and to the second ffmpeg for mp4 recording (2210, 2211, 2212..., etc)
 	# info on ports:
-	# 220X - HLS segmenters
-	# 221X - ffmpeg mp4 recording
-	# 223X - socket communication
-	# 229X - where BM streams its packets
-	ffstreamIns = []
-	ffmp4Ins = c.ffbin+" -y "
-	ffmp4Out = ""
-	segmenters = []
-	streamid = 0
+	# 220X - HLS segmenters listening here (MPEG-TS)
+	# 221X - ffmpeg mp4 recording listening here (H.264)
+	# 223X - socket communication pxpservice listens here
+	# 224X - blue screen for mp4 when a camera drops off (ffmpeg sends blue screen video here in H.264 format)
+	# 225X - blue screen for segmenter (ffmpeg sends blue screen video here in MPEG-TS format)
+	# 227X - rtsp/rtmp stream is sent here for mp4 (H.264)
+	# 228X - rtsp/rtmp stream is sent here for hls (MPEG-TS)
+	# 229X - where BM streams its packets (pxpStream.app sends packets here in MPEG-TS format)
+	# ffstreamIns = []
+	# ffmp4Ins = c.ffbin+" -y "
+	# ffmp4Out = ""
+	# segmenters = []
+	# streamid = 0
 	for devID in cameras:
-		# each camera has its own ffmpeg running it, otherwise if 1 camera goes down, all go down with it
-		if('format' in cameras[devID] and 'devID'=='blackmagic'): #format is explicitly specified for this camera (usually for blackmagic)
-			ffstreamIn = c.ffbin+" -y -f "+cameras[devID]['format']+" -i "+cameras[devID]['url']
-			ffstreamIn += " -codec copy -f h264 udp://127.0.0.1:221"+str(streamid)
-			ffstreamIn += " -codec copy -f mpegts udp://127.0.0.1:220"+str(streamid)
-			ffstreamIns.append(ffstreamIn)
-		# for saving multiple mp4 files, one ffmpeg instance can accomplish that
-		ffmp4Ins +=" -i udp://127.0.0.1:221"+str(streamid)
-		if(len(cameras)<2):
-			# there is only one camera - no need to set streamID for file names
-			fileSuffix = ""
-		else: #multiple cameras - need to identify each file by stream ID
-			fileSuffix = str(streamid)
-		ffmp4Out +=" -map "+str(streamid)+" -codec copy "+c.wwwroot+"live/video/main"+fileSuffix+".mp4"
-		segmenters.append(c.segbin+" -u 1 -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:220"+str(streamid)+" >/dev/null &")
-		streamid +=1
 		cameras[devID]['state'] = 'live'
+	pdisk.sockSend('STR',addnewline=False)
 	# update camera statuses on the disk
 	pdisk.cfgSet(section="cameras",value=cameras)
+	sleep(3) #wait for 3 seconds before returning result - to make sure streams start up properly
+	return True
 	#for device in camras
-	success = True
-	# start the HLS segmenters
-	for cmd in segmenters:
-		success = success and not os.system(cmd)
-	for cmd in ffstreamIns:
-		success = success and not os.system(cmd)
-	# start the mp4 recording ffmpeg
-	success = success and not os.system(ffmp4Ins+ffmp4Out+" 2>/dev/null >/dev/null &")
-	return success
+	# success = True
+	# # start the HLS segmenters
+	# for cmd in segmenters:
+	# 	success = success and not os.system(cmd)
+	# for cmd in ffstreamIns:
+	# 	success = success and not os.system(cmd)
+	# # start the mp4 recording ffmpeg
+	# success = success and not os.system(ffmp4Ins+ffmp4Out+" 2>/dev/null >/dev/null &")
+	# # start an ffmpeg that outputs blue screen (as a fallback for losing encoder/camera)
+	# # only needs 1 port for mp4 and segmenter since the individual camera ports will be forwarded in pxpservice
+	# ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"/bluescreen.jpg -r 30 -vcodec libx264 -an -shortest -f h264 udp://127.0.0.1:2240 -r 30 -vcodec libx264 -vbsf h264_mp4toannexb -f mpegts udp://127.0.0.1:2250"
+	# success = success and not os.system(ffBlue+" 2>/dev/null >/dev/null &")
+
+	# return success
 #end camStart
 # pause cameras
 def camPause(camID = False):
@@ -246,14 +249,15 @@ def camStop():
 	cams = getOnCams()
 	for cam in cams:
 		cams[cam]['state']='stopped'
-	pdisk.cfgSet(section="cameras",value=cams)
+	pdisk.sockSend("STP",addnewline=False)
+	return pdisk.cfgSet(section="cameras",value=cams)
 	# simply kill ffmpegs and segmenters (ffmpegs that are acquiring the RTSP streams will restart automatically)
 	# this will also kill ffmpegs that are creating clip/thumbnail/etc - TOO BAD!
-	try:
-		success = not(os.system('killall '+c.ffname+' >/dev/null 2>/dev/null') or os.system('killall '+c.segname+' >/dev/null 2>/dev/null'))
-	except:
-		success = False
-	return success
+	# try:
+	# 	success = not(os.system('killall '+c.ffname+' >/dev/null 2>/dev/null') or os.system('killall '+c.segname+' >/dev/null 2>/dev/null'))
+	# except:
+	# 	success = False
+	# return success
 #end camStop
 
 # returns status of a blackmagic Pro Recorder
