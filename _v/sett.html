@@ -1,0 +1,126 @@
+<!-- only for big boys! -->
+@require(settings)
+@(
+#inline if statement for wheezy template
+def iff(cond,if_true,if_false=""):
+	if cond:
+		return if_true
+	return if_false
+)
+<div class="col_12">
+	<div class="row">
+		<!--
+		<section name="video">
+			<div class="col_2">
+				Stream Quality
+			</div> 
+			<div class="col_10">
+				<select name="bitrate">
+@for q in settings['video']['bitrate_options']:
+					<option value="@str(q)" @iff(str(q)==str(settings['video']['bitrate']),'selected','')>@str(settings['video']['bitrate_options'][q])</option>
+@end
+				</select>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+		<section name="clips"> 
+			<div class="col_2">
+				MyClip Quality
+			</div> 
+			<div class="col_10">
+				<select name="quality">
+@for q in settings['clips']['quality_options']:
+					<option value="@str(q)" @iff(str(q)==str(settings['clips']['quality']),'selected','')>@str(settings['clips']['quality_options'][q])</option>
+@end
+				</select>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+	-->
+		<section name="tags"> 
+			<div class="col_2">
+				Tag pre-roll time
+			</div> 
+			<div class="col_10">
+				<select name="preroll">
+@for q in settings['tags']['preroll_options']:
+					<option value="@str(q)" @iff(str(q)==str(settings['tags']['preroll']),'selected','')>@str(settings['tags']['preroll_options'][q])</option>
+@end
+				</select>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+		<section name="tags"> 
+			<div class="col_2">
+				Tag post-roll time
+			</div> 
+			<div class="col_10">
+				<select name="postroll">
+@for q in settings['tags']['postroll_options']:
+					<option value="@str(q)" @iff(str(q)==str(settings['tags']['postroll']),'selected','')>@str(settings['tags']['postroll_options'][q])</option>
+@end
+				</select>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+<!--
+		<section name="uploads"> 
+			<div class="col_2">
+				Upload events automatically
+			</div> 
+			<div class="col_10">
+				<input type="checkbox" name="autoupload" @iff(int(settings['uploads']['autoupload']),'checked','')>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+	-->
+	</div>
+</div>
+
+<script type="text/javascript">
+function getms() {
+	var d = new Date();
+	return d.getHours()+d.getMinutes()+d.getSeconds()+d.getMilliseconds();
+}
+function setParam(params,ajaxSpinner){
+	$(ajaxSpinner).parents('section').find('ajaxSpin').html("<img src='css/img/ajax-loader.gif'/>");
+	$.ajax({
+		url: 'ajax/settingsSet/'+getms(),
+		type: 'GET',
+		data: params,
+		success: function(data, textStatus, xhr) {
+			// reset ajax spinner
+			$(ajaxSpinner).parents('section').find('ajaxSpin').html("");
+			$('select').removeAttr('disabled');
+		}
+	});
+}
+function fOnLoad(){	
+	$('body').on('change','select',function () {
+		params = {
+			section:$(this).parents('section').attr('name'),
+			setting:$(this).attr('name'),
+			value:$(this).val()
+		};
+		if($(this).attr('name')=='postroll' || $(this).attr('name')=='preroll'){
+			// for post-roll and preroll, make sure the tags are at least 5 seconds long
+			totalTagTime = (+$('select[name=postroll]').val())+(+$('select[name=preroll]').val());
+			if(totalTagTime<5){
+				alert("Total tag duration must be at least 5 seconds.");
+				return;
+			}
+		}
+		$('select').attr('disabled','disabled');
+		setParam(params,this);
+	});
+	$('body').on('change','input[type=checkbox]',function(){
+		// console.log("-"+(+$(this).is(':checked'))+'-'+$(this).attr('name'));
+		params = {
+			section:$(this).parents('section').attr('name'),
+			setting:$(this).attr('name'),
+			value:(+$(this).is(':checked'))
+		};
+		setParam(params,this);
+	});
+}
+</script>
