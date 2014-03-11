@@ -1,15 +1,6 @@
 #!/usr/bin/python
-compiled = False
-# loads external python module (either from source or compiled)
-def lm(module,path):
-	global compiled
-	from imp import load_source as ls
-	from imp import load_compiled as lp
-	if(compiled):
-		return lp(module,path+"c") #compiled extensions are .pyc
-	return ls(module,path)
+import controller as cs
 try:
-	cs = lm("controller","_app/_c/controller.py")
 	# initialize the controller
 	c = cs.Controller()
 	# run it
