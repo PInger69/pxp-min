@@ -595,8 +595,8 @@ def encstart():
 		# make sure not overwriting an old event
 		if(os.path.exists(c.wwwroot+"live/evt.txt")): #there was a live event before that wasn't stopped proplery - end it
 			encstop()
-		else:#there was no live event - just kill all ffmpeg's and HLS segmenters before starting them again
-			camera.camStop()
+		# else:#there was no live event - just kill all ffmpeg's and HLS segmenters before starting them again
+		# 	camera.camStop()
 		#make sure the 'live' directory was initialized
 		_initLive()
 		io = pu.io
@@ -747,15 +747,26 @@ def encstop():
 # returns the input video settings
 #######################################################
 def getcamera():
-	# check if streamer app is running
-	# return {"success":True,"msg":"test","encoder":"Live"}
-	appon = pu.disk.psOn('pxpStream.app')
-	# get camera info
-	cfg = pu.disk.file_get_contents(c.wwwroot+"_db/.cam")
-	if appon and cfg:
-		return {"success":True,"msg":cfg,"encoder":encoderstatus()}
+	# this is for TD:
+	import camera
+	cams = camera.getOnCams()
+	if(len(cams)>0):
+		return {"success":True,"msg":camera.camParam('resolution'),"encoder":encoderstatus()}
+	# this is for BM
+	# appon = pu.disk.psOn('pxpStream.app')
+	# # get camera info
+	# cfg = pu.disk.file_get_contents(c.wwwroot+"_db/.cam")
+	# if appon and cfg:
+	# 	return {"success":True,"msg":cfg,"encoder":encoderstatus()}
 	return {"success":True,"msg":"N/A","encoder":encoderstatus()}
 #end getcamera
+#######################################################
+# returns a list of available cameras (in json format)
+#######################################################
+def getcameras():
+	import camera
+	return {"camlist":camera.getOnCams()}
+#end getcameras
 #######################################################
 # returns list of the past events in array
 #######################################################
@@ -2056,8 +2067,12 @@ def _extractclip( tagid, event):
 		# re-create existing bookmarks 
 		# if (os.path.exists(bigMP4File)):
 		# 	return True # no need to re-create bookmarks that already exist
-
-		if(event=='live'):
+		if(event!='live'):
+			# for past events, the mp4 file is ready for processing, extract clip from it
+			cmd = "/usr/local/bin/ffmpeg -ss "+str(startTime)+" -t "+str(duration)+" -i "+mainMP4File+" -codec copy -bsf h264_mp4toannexb "+bigTsFile
+			os.system(cmd)
+		if(not os.path.exists(bigTsFile) or event=='live'):
+			# either this is a live event or failed to extract a clip from the main.mp4 (may be corrupted)
 			# end time of the clip (needed for extraction from .TS fragments)
 			endTime   = startTime+duration
 			# pad the startTime in order to accommodate 1-2 segments that may not have video
@@ -2073,11 +2088,7 @@ def _extractclip( tagid, event):
 				vidFiles = vidFiles+c.wwwroot+event+"/video/segm_st"+str(i)+".ts "
 			# concatenate the videos
 			cmd = "/bin/cat "+vidFiles+">"+bigTsFile
-			# os.system(cmd)
-		else:
-			# for past events, the mp4 file is ready for processing, extract clip from it
-			cmd = "/usr/local/bin/ffmpeg -ss "+str(startTime)+" -t "+str(duration)+" -i "+mainMP4File+" -codec copy -bsf h264_mp4toannexb "+bigTsFile
-		os.system(cmd)
+			os.system(cmd)
 		# convert to mp4, resizing it
 		#using ffmpeg
 		# cmd = "/usr/local/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
@@ -2234,8 +2245,8 @@ def _initLive():
 def _listEvents( showDeleted=True, onlyDeleted=False):
 	try:
 		# 
-		query = "" if showDeleted else ' AND events.deleted=0' 
-		query = ' AND events.deleted=1' if onlyDeleted else query
+		query = "" if showDeleted else ' WHERE events.deleted=0' 
+		query = ' WHERE events.deleted=1' if onlyDeleted else query
 
 		sql = "SELECT IFNULL(events.homeTeam,'---') AS `homeTeam`, \
 					  IFNULL(events.visitTeam,'---') AS `visitTeam`, \
@@ -2247,7 +2258,7 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 					  events.deleted AS `deleted` \
 				FROM `events` \
 				LEFT JOIN `leagues` ON events.league=leagues.name \
-				WHERE strftime('%s',events.date)<= strftime('%s','now')" + query + "\
+				" + query + "\
 				ORDER BY events.date DESC"
 		if(not os.path.exists(c.wwwroot+"_db/pxp_main.db")):
 			return []
@@ -2353,8 +2364,8 @@ def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):
 		if (not ms):
 			import time
 			ms = int(round(time.time() * 1000))
-		#logging an event - delete the last identical event (e.g tag_mod for specific tag id by the same user)
-		sql = "DELETE FROM `logs` WHERE (`type` LIKE ?) AND (`user` LIKE ?) AND (`id` LIKE ?)"
+		#logging an event - delete the last identical event (e.g tag_mod for specific tag id by the same user, but make sure enc_start doesn't get deleted)
+		sql = "DELETE FROM `logs` WHERE (`type` LIKE ?) AND (`user` LIKE ?) AND (`id` LIKE ?) AND NOT(`type` LIKE 'enc_start')"
 		db.query(sql,(ltype,uid,lid))
 		#add it again
 		sql = "INSERT INTO `logs`(`type`,`id`,`user`,`when`) VALUES(?,?,?,?)";

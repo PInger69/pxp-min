@@ -345,7 +345,7 @@ class c_enc:
 		return ''.join(chr(c) for c in [ord(a) ^ ord(b) for a,b in zip(s1,s2)])
 	#end sxor
 #end enc class
-
+import urllib, urllib2
 #web input/output class
 class c_io:
 	frm = None
@@ -357,6 +357,22 @@ class c_io:
 	def get(self, fieldName):
 		return self.frm.getvalue(fieldName)
 	#end get
+	# creates a url call (i.e. a 'get' request)
+	def url(self,url,params=False,timeout=60):
+		try:
+			if(params):
+				data = urllib.urlencode(params)
+				req = urllib2.Request(url,data)
+			else:
+				req = urllib2.Request(url)
+			answer = urllib2.urlopen(req,timeout=timeout)
+			respText = answer.read()
+			if(not respText):
+				return True
+			return respText
+		except Exception as e:
+			print "url:",url," err:",e, sys.exc_traceback.tb_lineno
+			return False
 	# checks if there is connection to myplayxplay.net website
 	def isweb(self):
 		import urllib2
@@ -478,6 +494,83 @@ class c_session(object):
 	#end set_expires
 #end session class
 
+#   Copyright 2014 Dan Krause
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+ 
+import socket
+import httplib
+import StringIO
+ 
+class c_ssdp:
+	def discover(self, service, timeout=2, retries=1):
+		#M-Search
+		group = ("239.255.255.250", 1900)
+		message = "\r\n".join([
+			'M-SEARCH * HTTP/1.1',
+			'HOST: {0}:{1}',
+			'MAN: "ssdp:discover"',
+			'ST: {st}','MX: 3','',''])
+		#B-Search
+		#group = ("255.255.255.255",1990) #might have to change this to your own broadcast address (e.g. 192.168.0.255)
+		#message = "\r\n".join([
+		#	 'B-SEARCH * HTTP/1.1',
+		#	 'HOST:{0}:{1}',
+		#	 'MAN: "ssdp:discover"',
+		#	 'ST: {st}','MX: 3','',''])
+		# socket.setdefaulttimeout(timeout)
+		responses = {}
+		for retryNum in range(retries):
+			# set up UDP socket
+			sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+			# make sure it doesn't hang if nothing found
+			sock.settimeout(timeout)
+			# make sure socket doesn't get locked up by this process
+			sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+			# make socket multicast-aware, set TTL (=2)
+			sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+			# send the SEARCH request to the multicast adress
+			sock.sendto(message.format(*group, st=service), group)
+			while True:
+				try:
+					data = sock.recv(1024)
+					response = self.SSDPResponse(data)
+					responses[response.location] = response
+				except socket.timeout:
+					break
+				except KeyboardInterrupt:
+					break
+		return responses.values()
+
+	class SSDPResponse(object):
+		class _FakeSocket(StringIO.StringIO):
+			def makefile(self, *args, **kw):
+				return self
+		def __init__(self, response):
+			r = httplib.HTTPResponse(self._FakeSocket(response))
+			r.begin()
+			self.location = r.getheader("location")
+			self.usn = r.getheader("usn")
+			self.st = r.getheader("st")
+			self.cache = r.getheader("cache-control").split("=")[1]
+		def __repr__(self):
+			return "<SSDPResponse({location}, {st}, {usn})>".format(**self.__dict__)
+ 
+ 
+# Example:
+# ssdp.discover("roku:ecp")
+
+
 #string class
 class c_str():
 	#outputs a dictionary as json-formatted response
@@ -490,6 +583,85 @@ class c_str():
 		print("Content-Type: text/html\n")
 		print(text)
 #end string class
+
+
+##################################################################
+#                       timed thread class                       #
+#                                                                #
+#  parameters:                                                   #
+#    callback - function to be called when the timeout expires   #
+#    params - parameters to the callback function                #
+#    period - how often to call the callback function            #
+#             if period is zero, the function will only          #
+#             execute once                                       #
+#                                                                #
+#                                                                #
+#  example usage:                                                #
+#  given a function:                                             #
+#                                                                #
+#  def tst(param1,param2)                                        #
+#                                                                #
+#  a = TimedThread(tst,("a",5),3)                                #
+#                                                                #
+#  this will call tst("a",5) every 3 seconds                     #
+#                                                                #
+##################################################################
+from threading import Thread
+import time
+# timed thread class. 
+class c_tt(Thread):
+	def __init__(self,callback,params=(),period=0, autostart=True):
+		super(TimedThread, self).__init__()
+		self.running = True
+		self.timeout = period #how often to run a specified function
+		self.sleeptime = min(1,period/2) #how much to sleep while waiting to run the next time
+		self.callback = callback
+		self.args = params
+		if(autostart):
+			self.start()
+	def stop(self):
+		self.running = False
+ 
+	def run(self):
+		tm_start = time.time()
+		try: #run the function immediately
+			if(type(self.args) is tuple):
+				self.callback(*self.args) #more than 1 parameter passed (as a tuple)
+			else:
+				self.callback(self.args) #single parameter is passed, not a tuple - do not pass by reference
+		except:
+			pass
+		if(self.timeout<=0):
+			return
+		while (self.running):
+			try:
+				if(time.time()-tm_start<self.timeout):
+					time.sleep(self.sleeptime) #this will reduce the load on the processor
+					continue
+				tm_start = time.time()
+			except KeyboardInterrupt:
+				print "keybd stop"
+				self.running = False
+				break
+			try:
+				if(type(self.args) is tuple):
+					self.callback(*self.args)
+				else:
+					self.callback(self.args)
+			except KeyboardInterrupt:
+				print "keybd stop"
+				self.running = False
+				break
+			except Exception as e:
+				print "THREAD ",self.callback.__name__," ERROR: ",e
+				pass
+		#end while
+	#end run
+	def kill(self):
+		self.stop()
+		self.join()
+
+
 
 #url utilities class
 class c_uri:
@@ -538,5 +710,7 @@ disk = c_disk()
 enc = c_enc()
 io = c_io()
 session = c_session()
+ssdp = c_ssdp()
 sstr = c_str()
+TimedThread = c_tt
 uri = c_uri()

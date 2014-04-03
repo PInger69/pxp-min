@@ -21,19 +21,20 @@ def getAllCams():
 	if(type(terainfo) is dict and len(terainfo)>0):
 		return terainfo
 	# no teradeks found
-	# check if blackmagic device is connected
-	if(not os.path.exists("/Applications/pxpStream.app")):
-		# streaming app does not exist - this server was not configured for BlackMagic H.264 Pro Recorder
-		return {}
-	# the app exists, find out the status of the pro recorder
-	if (not pdisk.psOn("pxpStream.app")):
-		os.system("/usr/bin/open /Applications/pxpStream.app")
-	# wait for the app to update the status
-	timeout = 15 #wait for maximum of 15 seconds to get the bm status
-	while (_bmStatus()=='unknown' and timeout>0):
-		sleep(1)
-		timeout -= 1
-	return {'blackmagic':{'format':'mpegts','url':'udp://127.0.0.1:2290','status':_bmStatus()}}
+	return {}
+	# # check if blackmagic device is connected
+	# if(not os.path.exists("/Applications/pxpStream.app")):
+	# 	# streaming app does not exist - this server was not configured for BlackMagic H.264 Pro Recorder
+	# 	return {}
+	# # the app exists, find out the status of the pro recorder
+	# if (not pdisk.psOn("pxpStream.app")):
+	# 	os.system("/usr/bin/open /Applications/pxpStream.app")
+	# # wait for the app to update the status
+	# timeout = 15 #wait for maximum of 15 seconds to get the bm status
+	# while (_bmStatus()=='unknown' and timeout>0):
+	# 	sleep(1)
+	# 	timeout -= 1
+	# return {'blackmagic':{'format':'mpegts','url':'udp://127.0.0.1:2290','status':_bmStatus()}}
 #end allCameras
 
 # looks up camID by camera index (e.g. cameras are indexed 0, 1, 2... camIDs are "192.168.1.110", "192.168.1.114"...)
@@ -103,6 +104,28 @@ def camOff(camID=False):
 	pdisk.cfgSet(section="cameras",value=cameras)
 	return True
 #end disableCamera
+#returns a camera parameter
+def camParam(param,camIndex=0,camID=False):
+	cams = getOnCams()
+	if(not camID):#get the device ID (e.g. 192.168.1.101)
+		camID = getCamID(camIndex)
+	if(not camID in cams):
+		return False
+	if(param in cams[camID]):
+		return cams[camID][param]
+	return False
+#end camParam
+
+# sets a camera parameter
+def camParamSet(param,value,camIndex=0,camID=False):
+	cams = getOnCams() #get all enabled cameras
+	if(not camID):#get the device ID (e.g. 192.168.1.101)
+		camID = getCamID(camIndex)
+	if(not camID in cams):
+		return False
+	cams[camID][param]=value
+	return pdisk.cfgSet(section="cameras",value=cams)
+#end camParamSet
 
 # start an encode from all cameras
 def camStart():
@@ -112,7 +135,7 @@ def camStart():
 		return False
 	# make sure no cameras are active
 	camStop()
-
+	sleep(3)
 	# reset all cameras - in case some encoders changed their ip address
 	camOff()
 	sleep(1)
@@ -233,12 +256,14 @@ def camStatus(camID = False):
 	# if a single camera is live, return status is live
 	# if no cameras are live, but at least one is paused - return status as paused
 	# if no cameras are live or paused, then status is stopped
+	status = False
 	for camID in cameras:
-		if(cameras[camID]['state']=='live'):
+		status = status or cameras[camID]['on']
+		if(cameras[camID]['state']=='live' and cameras[camID]['on']):
 			return 'live'
-		if(cameras[camID]['state']=='paused'):
+		if(cameras[camID]['state']=='paused' and cameras[camID]['on']):
 			return 'paused'
-	if(len(cameras)<1): #when no cameras present, return False as status
+	if(len(cameras)<1 or not status): #when no cameras present, return False as status
 		return False
 	#end for camID in cams
 	return 'stopped'

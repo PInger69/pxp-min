@@ -1,12 +1,12 @@
 #!/usr/bin/python
-from twisted.internet import reactor, protocol, task
-from twisted.protocols import basic
+# from twisted.internet import reactor, protocol, task
+# from twisted.protocols import basic
 from tendo import singleton
 from datetime import datetime as dt
 from uuid import getnode as getmac
-from tt import TimedThread
-import camera, constants as c, copy, json, os, psutil, platform, pxp, pybonjour, select, signal, socket, subprocess as sb, time
-
+from pxputil import TimedThread
+import camera, constants as c, copy, json, os, psutil, platform, pxp, pxputil as pu, pybonjour, select, signal, socket, subprocess as sb, time
+import netifaces as ni
 import sys
 # big broadcast queue - queue containing all of the sent messages for every client that it was sent to
 # in this format:
@@ -21,6 +21,21 @@ import sys
 #   }, <client ref>, <send_next>] 
 # }
 globalBBQ = {}
+
+# queue of PIDs that need to be killed in this format: 
+# [
+#     {
+#         'pid':<pid>,
+#         'pgid':<pgid>,
+#         'ref':<obj reference>, --reference to the process that was started 
+#         'timeout':<seconds>,
+#         'force':True/False,
+#         'count':<number> --of kill attempts
+#     }
+#     ...
+# ]
+hitlist = []
+
 lastStatus = 0
 # when was a kill sig issued
 lastKillSig = 0
@@ -30,17 +45,21 @@ bitENC      =  1 << 0
 bitCAM      =  1 << 1
 bitSTREAM   =  1 << 2
 bitSTART    =  1 << 3
-#teradek devices found through bonjour
+
+LIVE        = False
+#encoder devices found through bonjour
 # in this format: 
-# teradeks = {
+# encoders = {
 #     '192.168.1.153':{
 #         'preview'     :'rtsp://192.168.1.153:554/stream1',
 #         'preview_port': 554,
-#         'url'         :'rtsp://192.168.1.153:554/quickstream',
-#         'url_port'    : 554,
-#         'on'          : True
+#         'url'         :'rtsp://192.168.1.153:554/quickstream', #url for the rtsp stream
+#         'url_port'    : 554,      #port for the rtsp stream
+#         'on'          : True,     #whether the stream is accessible
+#         'enctype'     : 'td_cube' #what kind of encoder this is, teradek cube, matrox monarch etc.
 #     }
-teradeks    = {}
+encoders    = {}
+tdSession   = {} # list of teradek session IDs - used for accessing the web API
 # references for subprocesses (to communicate with them)
 # {
 #   '192.168.1.153':{
@@ -51,7 +70,7 @@ teradeks    = {}
 #       'ffref':<object reference>
 #   }
 # }
-teraRefs = {}
+encRefs = {}
 #processes being monitored
 procMons = {}
 # input ports with their statuses.
@@ -80,19 +99,24 @@ procMons = {}
 portIns = {}
 # blue screen will be forwarded to these ports (when they're specified)
 blueOut = {'mp4':[],'hls':[]}
-blueMP4 = 22500 #ffmpeg output for h.264 stream with blue screen image
-blueHLS = 22400 #ffmpeg output for MPEG-TS with blue screen image
 
-dskMP4base = 22000 #ffmpeg listens on this port and writes mp4 to disk (for subsequent cameras, ports will be 22001, 22002...)
-dskHLSbase = 22100 #m3u8 segmenter listens on this port and writes segments to disk
-camMP4base = 22700 #ffmpeg captures rtsp stream and outputs H.264 stream here
-camHLSbase = 22800 #ffmpeg captures rtsp stream and outputs MPEG-TS here
+proxyBase  = 22000 #output port for rtsp stream (live555 takes in rtsp from the IP source and forwards it to local server on this port)
+
+dskMP4base = 22100 #ffmpeg listens on this port and writes mp4 to disk (for subsequent cameras, ports will be 22001, 22002...)
+dskHLSbase = 22200 #m3u8 segmenter listens on this port and writes segments to disk
+blueHLS    = 22300 #ffmpeg output for MPEG-TS with blue screen image
+blueMP4    = 22400 #ffmpeg output for h.264 stream with blue screen image
+camMP4base = 22500 #ffmpeg captures rtsp stream and outputs H.264 stream here
+camHLSbase = 22600 #ffmpeg captures rtsp stream and outputs MPEG-TS here
+
+sockInPort = 2232
 # blueFwds = {'mp4':[],'hls':[]} #add -1 to kill the port fwd process
 ################## delete files ##################
 rmFiles = []
 rmDirs = []
 bonjouring = [True] #has to be a list to stop bonjour externally
 FNULL = open(os.devnull,"w") #for dumping all cmd output using Popen()
+SHUTDOWN   = False #set to true when pxpservive is shutting down
 
 def deleteFiles():
     # if there is a deletion in progress - let it finish
@@ -104,7 +128,6 @@ def deleteFiles():
     while(len(rmFiles)>0):
         # grab the first file from the array
         fileToRm = rmFiles[0]
-        dbgLog("DELETING FIL: "+str(fileToRm))
         # make sure it wasn't deleted already
         if(os.path.exists(fileToRm)):
             os.system("rm -f "+fileToRm)
@@ -116,7 +139,6 @@ def deleteFiles():
     while(len(rmDirs)>0):
         # grab the first file from the array
         dirToRm = rmDirs[0]
-        dbgLog("DELETING DIR: "+str(dirToRm))
         # make sure it wasn't deleted already
         if(os.path.exists(dirToRm)):
             os.system("rm -rf "+dirToRm)
@@ -129,7 +151,6 @@ def deleteFiles():
 # deleting old events
 def removeOldEvents():
     if(len(rmDirs)>0):
-        dbgLog(rmDirs)
         return #only do this if the service is not busy deleting other things
     try:
         # delete any undeleted directories
@@ -154,23 +175,39 @@ def removeOldEvents():
 #end removeOldEvents
 ################ end delete files ################
 ################## util functions ################
-def pxpCleanup(signal, frame):
-    dbgLog("terminating services...")
-    blueOut['mp4']=[{'input':-1}] #stop forwarding blue screen to mp4 port
-    blueOut['hls']=[{'input':-1}] #stop forwarding blue screen to hls port
-    bonjouring[0] = False
-    #stop camera port forwarding
-    for port in portIns:
-        portIns[port]['forwarding']=False
-    for tm in tmr:
-        dbgLog(str(tm)+"...")
-        if(type(tmr[tm]) is dict):
-            for t in tmr[tm]:
-                tmr[tm][t].kill()
-        else:
-            tmr[tm].kill()
-    reactor.stop()
-    dbgLog("terminated!")
+def pxpCleanup(signal=False, frame=False):
+    global SHUTDOWN
+    try:
+        dbgLog("terminating services...")
+        SHUTDOWN = True
+        # blueOut['mp4']=[{'input':-1}] #stop forwarding blue screen to mp4 port
+        # blueOut['hls']=[{'input':-1}] #stop forwarding blue screen to hls port
+        # bonjouring[0] = False
+        # stop killing processes
+        # if(len(hitlist)<1):
+        #     hitlist.append("stop")
+        # else:
+        #     hitlist[0] = "stop"
+        #stop camera port forwarding
+        # for port in portIns:
+        #     portIns[port]['forwarding']=False
+        for tm in tmr:
+            dbgLog(str(tm)+"...")
+            if(type(tmr[tm]) is dict):
+                for t in tmr[tm]:
+                    try:
+                        tmr[tm][t].kill()
+                    except:
+                        pass
+            else:
+                try: #use try here in case the thread was stopped previoulsy    
+                    tmr[tm].kill()
+                except:
+                    pass
+        # reactor.stop()
+        dbgLog("terminated!")
+    except Exception as e:
+        pass
 #end pxpCleanup
 def dbgLog(msg, timestamp=True):
     try:
@@ -245,7 +282,7 @@ def bbqManage():
             for cmdID in myCMDs:
                 if(globalBBQ[client][2]):
                     # re-send the request
-                    globalBBQ[client][1].sendLine(myCMDs[cmdID]['data'])
+                    globalBBQ[client][1].send(myCMDs[cmdID]['data'])
                     # last sent would be now
                     globalBBQ[client][0][cmdID]['lastSent']=now
                     # increment number of times the request was sent
@@ -273,37 +310,28 @@ def bbqManage():
 #returns true if both ip addresses belong to the same subnet
 def sameSubnet(ip1,ip2):
     return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
-if os.name != "nt":
-    import fcntl
-    import struct
-    def get_interface_ip(ifname):
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        return socket.inet_ntoa(fcntl.ioctl(s.fileno(), 0x8915, struct.pack('256s',ifname[:15]))[20:24])
 
 def get_lan_ip():
-    ip = socket.gethostbyname(socket.gethostname())
-    if ip.startswith("127.") and os.name != "nt":
-        interfaces = [
-            "eth0",
-            "eth1",
-            "eth2",
-            "wlan0",
-            "wlan1",
-            "wifi0",
-            "ath0",
-            "ath1",
-            "ppp0",
-            ]
-        for ifname in interfaces:
-            try:
-                ip = get_interface_ip(ifname)
-                break
-            except:
-                pass
-    return str(ip)
+    try:
+        ipaddr = "127.0.0.1"
+        for dev in ni.interfaces():
+                adds = ni.ifaddresses(dev)
+                for addr in adds:
+                        for add in adds[addr]:
+                                if('addr' in add):
+                                        ip = add['addr']
+                                        ipp = ip.split('.')
+                                        if(len(ipp)==4 and ip!=ipaddr): #this is a standard X.X.X.X address (ipv4)
+                                            ipaddr = ip
+                                        if(not sameSubnet("127.0.0.1",ipaddr)): #first non-localhost ip found returns - should be en0 - or ethernet connection (not wifi)
+                                            return ipaddr
+    except:
+        pass
+    return ipaddr
 #end getlanip
 # registers pxp as bonjour service
 def pubBonjour():
+    global SHUTDOWN
     name    = socket.gethostname() #computer name
     if(name[-6:]=='.local'):# hostname ends with .local, remove it
         name = name[:-6]
@@ -325,7 +353,7 @@ def pubBonjour():
                                              regtype = regtype,
                                              port = port,
                                              callBack = register_callback)
-        while bonjouring[0]:
+        while not SHUTDOWN:#bonjouring[0]:
             ready = select.select([sdRef], [], [],2)
             if sdRef in ready[0]:
                 pybonjour.DNSServiceProcessResult(sdRef)
@@ -340,6 +368,7 @@ def pubBonjour():
 #portSet - index of the set of ports where to forward ('hls','mp4'...)
 def portFwd(portIN,portSet):
     # portIN = 2240
+    global SHUTDOWN
     try:
         host = '127.0.0.1'          #local ip address
         # portIN = 2250             #where packets are coming from
@@ -349,7 +378,7 @@ def portFwd(portIN,portSet):
         sIN.bind((host, portIN))    #Bind to the port
         sIN.settimeout(2)
         forwarding = True
-        while forwarding: #keep receiving until got all the data
+        while forwarding and not SHUTDOWN: #keep receiving until got all the data
             try:
                 ports = blueOut[portSet]
                 if(ports[0]['input']<=0):#stop this forwarder
@@ -365,12 +394,14 @@ def portFwd(portIN,portSet):
                 for port in ports:
                     sOUT.sendto(data,(host,port['output']))
             except socket.error, msg:
+                dbgLog("portFwd sock err: "+str(msg))
                 pass
             except Exception as e:
+                dbgLog("portFwd err: "+str(e)+str(sys.exc_traceback.tb_lineno))
                 pass
         #end while True
     except Exception as e:
-        # print "portFwd FAILLLLLLL: ", e, sys.exc_traceback.tb_lineno
+        dbgLog("portFwd global err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
 #end main
 
@@ -379,6 +410,7 @@ def portFwd(portIN,portSet):
 
 ################## teradek management ##################
 def camPortMon(port):
+    global SHUTDOWN
     try:
         host = '127.0.0.1'          #local ip address    
         sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)      #Create a socket object
@@ -387,9 +419,9 @@ def camPortMon(port):
         portOut= port['output']
         sIN.bind((host, portIn))    #Bind to the port
         sIN.settimeout(0.5)
-        while portIns[port['input']]['forwarding']:
+        while portIns[port['input']]['forwarding'] and not SHUTDOWN:
             try:
-                if(port['status']!='live'): #this camera is paused or stopped - do not forward anything            
+                if(port['status']!='live'): #this camera is paused or stopped - do not forward anything
                     time.sleep(0.1) #reduce the cpu load
                     continue
                 data, addr = sIN.recvfrom(65536)
@@ -402,46 +434,55 @@ def camPortMon(port):
                 if(port in blueOut[port['type']]): #data was received, but there is a blue screen forwader - remove it
                     blueOut[port['type']].remove(port)
                 sOUT.sendto(data,(host,portOut))
+                # send to cloud
+                # sOUT.sendto(data,("54.221.235.84",20202))
             except socket.error, msg:
                 # only gets here if the connection is refused
                 if(portIn in portIns):
                     portIns[portIn]['active']=False
+                    devID = portIns[portIn]['camera']
+                    if(portIns[portIn]['status']=='live'):
+                        encoders[devID]['on']=False#only set teradek status if this camera is active (recording)
                 # time.sleep(0.5)
                 # if(port['type'] in blueOut and not (port in blueOut[port['type']])):
                 #     blueOut[port['type']].append(port)
-                pass
+                # pass
+
             except Exception as e:
+                dbgLog("camportmon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
                 pass
         #end while True
     except Exception as e:
+        dbgLog("camportmon global err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
 #end tdPortMon
 
-# stops acquisition (either blue screen, ffmpeg or both)
-# @param (string) td    - id of the encoder to stop
-# @param (bool) group   - use PGID if true, PID if false
-def capKill(td, group=False):
-    if(not (td in teraRefs)):
-        return #it's been killed
-    if('scapRef' in teraRefs[td]):
-        #this process was started earlier
-        if('scapPID' in teraRefs[td]):# pid specified
-            #kill the process
-            if(group):#pgid was specified
-                psKill(pgid=teraRefs[td]['scapPID'])
-            else:#pid was specified
-                psKill(pid=teraRefs[td]['scapPID'],ref=teraRefs[td]['scapRef'])
-            # remove the process from monitoring
-            if(teraRefs[td]['scapPID'] in procMons):
-                del procMons[teraRefs[td]['scapPID']]
-            # delete the pid
-            del teraRefs[td]['scapPID']
-        # after process was killed and pid/pgid was removed, delete the reference
-        del teraRefs[td]['scapRef']
-#end tdKill
+# # stops acquisition (either blue screen, ffmpeg or both)
+# # @param (string) td    - id of the encoder to stop
+# # @param (bool) group   - use PGID if true, PID if false
+# def capKill(td, group=False):
+#     if(not (td in encRefs)):
+#         return #it's been killed
+#     if('scapRef' in encRefs[td]):
+#         #this process was started earlier
+#         if('scapPID' in encRefs[td]):# pid specified
+#             #kill the process
+#             if(group):#pgid was specified
+#                 addVic(pgid=encRefs[td]['scapPID'])
+#             else:#pid was specified
+#                 addVic(pid=encRefs[td]['scapPID'],ref=encRefs[td]['scapRef'])
+#             # remove the process from monitoring
+#             if(encRefs[td]['scapPID'] in procMons):
+#                 del procMons[encRefs[td]['scapPID']]
+#             # delete the pid
+#             del encRefs[td]['scapPID']
+#         # after process was killed and pid/pgid was removed, delete the reference
+#         del encRefs[td]['scapRef']
+# #end tdKill
 
 #starts mp4/hls capture on all cameras
 def tdStartCap():
+    LIVE = True
     cameras = camera.getOnCams()
     try:
         # ffstreamIns = []
@@ -475,9 +516,9 @@ def tdStartCap():
               fileSuffix = camID
             ffmp4Out +=" -map "+camID+" -codec copy "+c.wwwroot+"live/video/main"+fileSuffix+".mp4"
             segmenters[devID] = c.segbin+" -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+dskHLS
-            ffcaps[devID] = c.ffbin+" -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
-            if(not (devID in teraRefs)):
-                teraRefs[devID]={}
+            ffcaps[devID] = c.ffbin+" -rtsp_transport udp -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+dskMP4+" -codec copy -f mpegts udp://127.0.0.1:"+dskHLS
+            if(not (devID in encRefs)):
+                encRefs[devID]={}
             # each camera also needs its own port forwarder
             portIns[int(camMP4)]={
                 'forwarding'  :True,
@@ -486,7 +527,7 @@ def tdStartCap():
                 'camera'      :devID,
                 'input'       :int(camMP4),
                 'output'      :int(dskMP4),
-                'active'       :True
+                'active'      :True
                 }
             portIns[int(camHLS)]={
                 'forwarding'  :True,
@@ -497,10 +538,10 @@ def tdStartCap():
                 'output'      :int(dskHLS),
                 'active'       :True
                 }
-            if(not 'portFwd' in tmr):
-                tmr['portFwd'] = {}
-            tmr['portFwd']['MP4_'+camID] = TimedThread(camPortMon,portIns[int(camMP4)])
-            tmr['portFwd']['HLS_'+camID] = TimedThread(camPortMon,portIns[int(camHLS)])
+            # if(not 'portFwd' in tmr):
+            #     tmr['portFwd'] = {}
+            # tmr['portFwd']['MP4_'+camID] = TimedThread(camPortMon,portIns[int(camMP4)])
+            # tmr['portFwd']['HLS_'+camID] = TimedThread(camPortMon,portIns[int(camHLS)])
         #end for device in cameras
         # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
         ffMP4recorder = ffmp4Ins+ffmp4Out
@@ -511,169 +552,209 @@ def tdStartCap():
             # segmenter
             cmd = segmenters[devID]
             ps = sb.Popen(cmd.split(' '),stdout=FNULL)
-            teraRefs[devID]['segmCmd']=cmd
-            teraRefs[devID]['segmPID']=ps.pid
-            teraRefs[devID]['segmRef']=ps
+            encRefs[devID]['segmCmd']=cmd
+            encRefs[devID]['segmPID']=ps.pid
+            encRefs[devID]['segmRef']=ps
             # start monitoring the segmenter
             # addMon(pid=ps.pid)
             # ffmpeg RTSP capture
             cmd = ffcaps[devID]
             ps = sb.Popen(cmd.split(' '),stderr=FNULL)
-            teraRefs[devID]['scapCmd']=cmd
-            teraRefs[devID]['scapPID']=ps.pid
-            teraRefs[devID]['scapRef']=ps
-            print "started ",devID
+            encRefs[devID]['scapCmd']=cmd
+            encRefs[devID]['scapPID']=ps.pid
+            encRefs[devID]['scapRef']=ps
         # start blue screen
         # ps = sb.Popen(ffBlue.split(' '),stderr=FNULL)
-        # teraRefs['blue']={'cmd':ffBlue,'pid':ps.pid,'ref':ps}
+        # encRefs['blue']={'cmd':ffBlue,'pid':ps.pid,'ref':ps}
         # start mp4 recording to file
-        # dbgLog(ffMP4recorder)
-        ps = sb.Popen(ffMP4recorder.split(' '),stderr=FNULL)
-        teraRefs['mp4save']={'cmd':ffMP4recorder,'pid':ps.pid,'ref':ps}
+        ps = sb.Popen(ffMP4recorder.split(' '))
+        encRefs['mp4save']={'cmd':ffMP4recorder,'pid':ps.pid,'ref':ps}
     except Exception as e:
-        dbgLog("startCam failed!!: "+str(e)+" at "+str(sys.exc_traceback.tb_lineno))
+        dbgLog("START CAP ERR: "+str(e)+str(sys.exc_traceback.tb_lineno))
+        pass
 #end tdStartCap
 
+# checks if any of the encoders/segmenters in the specified device are on
+def tdProcOn(dev):
+    refCopy = copy.deepcopy(encRefs)    
+    for idx in refCopy:        
+        if(idx.lower()[-3:]=='pid'):
+            # this is a pid
+            if(psOnID(pid=refCopy[idx])):
+                return True
+    return False
+#end tdProcOn
 #stops the capture, kills all ffmpeg's and segmenters
 def tdStopCap():
-    print "STOP CAP!!!!!"
     try:
-        refCopy = copy.deepcopy(teraRefs)    
-        for td in refCopy:
-            print "stopping........................",td
-            if('segmPID' in refCopy[td]):#kill segmenter
-                print "kill segmenter: ", refCopy[td]['segmPID']
-                psKill(pid=refCopy[td]['segmPID'],ref=refCopy[td]['segmRef'])
-                del teraRefs[td]['segmPID']
-                del teraRefs[td]['segmCmd']
-            if('scapPID' in refCopy[td]):#kill stream capture (ffmpeg)
-                print "kill capture: ", refCopy[td]['scapPID']
-                psKill(pid=refCopy[td]['scapPID'],ref=refCopy[td]['scapRef'])
-                del teraRefs[td]['scapPID']
-                del teraRefs[td]['scapCmd']
-            if(td=='blue' or td=='mp4save'): #kill mp4-recorder/bluescreen-forwader (ffmpeg)
-                print "kill mp4: ", refCopy[td]['pid']
-                psKill(pid=refCopy[td]['pid'],ref=refCopy[td]['ref'])
-            if(td in teraRefs):
-                del teraRefs[td]
-        # remove all forwaders as well
+        refCopy = copy.deepcopy(encRefs)    
+        # remove all forwaders
         for port in portIns:
             portIns[port]['forwarding']=False
+            portIns[port]['status']='stopped'
+        # stop all captures
+        while(len(encRefs)>0):
+            for td in refCopy:
+                if('segmPID' in refCopy[td] and psOnID(pid=refCopy[td]['segmPID'])):#kill segmenter
+                    procPID = refCopy[td]['segmPID']
+                    addVic(pid=procPID, ref=refCopy[td]['segmRef'], force=True)
+                if('scapPID' in refCopy[td] and psOnID(pid=refCopy[td]['scapPID'])):#kill stream capture (ffmpeg)
+                    procPID = refCopy[td]['scapPID']
+                    addVic(pid=procPID, ref=refCopy[td]['scapRef'], force=True)
+                if(td=='blue' or td=='mp4save'): #kill mp4-recorder/bluescreen-forwader (ffmpeg)
+                    procPID = refCopy[td]['pid']
+                    addVic(pid=procPID, ref=refCopy[td]['ref'] )
+                if(not tdProcOn(td) and td in encRefs):
+                    #all the processes associated with this encoder were terminated - delete it from the list
+                    del encRefs[td]
+            #end for
+            time.sleep(2) #wait for a few seconds before running through PIDs again
+        #end while
         #remove any bluescreen forwarders (if any)
         blueOut['mp4']=[]
         blueOut['hls']=[]
-        for thd in tmr['portFwd']:
-            tmr['portFwd'][thd].kill()
+        # delete port forwarding threads
+        if('portFwd' in tmr):
+            for thd in tmr['portFwd']:
+                tmr['portFwd'][thd].kill()
     except Exception as e:
-        print "STOPFAILLLLLLLLLLLLLLLLLLLLL:", e, sys.exc_traceback.tb_lineno
-    print "STOPDONE!!!!!"
-#gets status of all teradeks in the system
+        dbgLog("stopcap err: "+str(e)+str(sys.exc_traceback.tb_lineno))
+        pass
+    os.system("killall -15 "+c.ffname)
+    os.system("killall -15 "+c.segname)
+    time.sleep(2)
+    os.system("killall -9 "+c.ffname)
+    os.system("killall -9 "+c.segname)    
+    time.sleep(1)
+    LIVE = False
+#end tdStopCap
+
+#gets status of all encoders in the system
 def tdStatus():
-    # list of active teradeks
+    # list of active encoders
     validTDs = {}
-    ###########################################################################
-    teraCopy = copy.deepcopy(teradeks)
-    myip = get_lan_ip()
-    for td in teraCopy:
-        if(not(('url_port' in teraCopy[td]) and ('url' in teraCopy[td]))):
-            #port or main URL is not specified in this teradek entry - it's faulty
-            continue #move on to the next device
-        if(not sameSubnet(td,myip)):
-            continue #skip teradeks that are not on local network
-        tdPort = teraCopy[td]['url_port']
-        tdURL = teraCopy[td]['url']
-        tdAddress = td
-        # message that should receive RTSP/1.0 200 OK response from a valid rtsp stream
-        msg = "DESCRIBE "+tdURL+" RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\nUser-Agent: Python MJPEG Client\r\n\r\n"""
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(1)
-        try:
-            s.connect((tdAddress, int(tdPort)))
-            s.send(msg)
-            data = s.recv(1024)
-        except Exception as e:
-            data = str(e)
-            dbgLog("FAIL FAIL FAIL FAIL FAIL FAIL FAIL FAIL:"+data)
-        #close the socket
-        try:
-            s.close()
-        except:
-            #probably failed because couldn't connect to the rtsp server - no need to worry
-            pass
-        
-        strdata = data.lower().strip()
-        if(strdata.find('timed out')>-1 or strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
-            # found a "ghost": this device recently disconnected - skip it
-            continue
-        #a device is not available (either just connected or it's removed from the system)
-        #when connection can't be established or a response does not contain RTSP/1.0 200 OK
-        teraCopy[td]['on'] = (data.find('RTSP/1.0 200 OK')>=0)
-        validTDs[td] = teraCopy[td]
-    #end for td in tds
-    # save the info about teradeks to a file
-    f = open(c.tdCamList,"w")
-    f.write(json.dumps(validTDs))
-    f.close()
-    ###########################################################################
+    try:
+        teraCopy = copy.deepcopy(encoders)
+        myip = get_lan_ip()
+        for td in teraCopy:
+            if(not(('url_port' in teraCopy[td]) and ('url' in teraCopy[td]))):
+                #port or main URL is not specified in this teradek entry - it's faulty
+                continue #move on to the next device
+            if(not sameSubnet(td,myip)):
+                continue #skip encoders that are not on local network
+            tdPort = teraCopy[td]['url_port']
+            tdURL = teraCopy[td]['url']
+            tdAddress = td
+
+            if(not teraCopy[td]['on']): #only ping devices that are offline
+                # message that should receive RTSP/1.0 200 OK response from a valid rtsp stream
+                msg = "DESCRIBE "+tdURL+" RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\nUser-Agent: Python MJPEG Client\r\n\r\n"""
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1)
+                try:
+                    s.connect((tdAddress, int(tdPort)))
+                    s.send(msg)
+                    data = s.recv(1024)
+                except Exception as e:
+                    data = str(e)
+                    dbgLog("tdstatus err: "+str(e)+" at "+tdURL)
+                #close the socket
+                try:
+                    s.close()
+                except:
+                    #probably failed because couldn't connect to the rtsp server - no need to worry
+                    pass
+                # make sure the framerate is ok on this device 
+                strdata = data.lower().strip()
+                if(strdata.find('timed out')>-1 or strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
+                    # found a "ghost": this device recently disconnected - skip it
+                    continue
+                #a device is not available (either just connected or it's removed from the system)
+                #when connection can't be established or a response does not contain RTSP/1.0 200 OK
+                teraCopy[td]['on'] = (data.find('RTSP/1.0 200 OK')>=0)
+                if(td in encoders): #this may be false if during the execution of this loop a teradek dropped off the system
+                    encoders[td]['on'] = teraCopy[td]['on']
+                # make sure the frame rate is not above 30fps
+
+            #if not teracopy
+            validTDs[td] = teraCopy[td]
+        #end for td in tds
+        # save the info about encoders to a file
+        f = open(c.tdCamList,"w")
+        f.write(json.dumps(validTDs))
+        f.close()
+    except Exception as e:
+        pass
     return validTDs
 #end tdStatus
 
 def camMonitor():
     # get all cameras that are active
-    cams = camera.getOnCams()
-    # get status of all connected teradeks
-    tds = tdStatus()
-    print "..................................REFSSS",teraRefs
-    # go through active cameras and make sure they're all online and active
-    for td in cams:
-        # get local udp ports for this camera
-        camMP4 = camMP4base+int(cams[td]['idx'])
-        camHLS = camHLSbase+int(cams[td]['idx'])
-        # check camera status
-        if('state' in cams[td] and cams[td]['state']=='paused'):
-            ############
-            ## PAUSED ##
-            ############
-            if(camMP4 in portIns):
-                portIns[camMP4]['status']='paused'
-            if(camHLS in portIns):
-                portIns[camHLS]['status']='paused'
-            dbgLog("PAUSED CAMERA!!!!!")
-            continue #this camera is paused - no need to check anything else here
-        elif('state' in cams[td] and cams[td]['state']=='stopped'):
-            #############
-            ## STOPPED ##
-            #############
-            dbgLog("CAMERA STOPPED!")
-            continue #this camera is stopped
-        else: #by default assume camera is live
-            ############
-            ##  LIVE  ##
-            ############
-            if(camMP4 in portIns):
-                portIns[camMP4]['status']='live'
-            if(camHLS in portIns):
-                portIns[camHLS]['status']='live'
-            dbgLog("LIVE CAMERA!!")
-        if((td in tds) and tds[td]['on'] and (td in teraRefs)):
-            #this camera is getting data
-            #check if its ffmpeg is live and kicking
-            if(not (('scapPID' in teraRefs[td]) and psOnID(pid=teraRefs[td]['scapPID']))):
-                #no ffmpeg - it must've died when the camera disconnected - resume it
-                ps = sb.Popen(teraRefs[td]['scapCmd'].split(' '),stderr=FNULL)
-                teraRefs[td]['scapPID']=ps.pid
-                teraRefs[td]['scapRef']=ps
-        else:
-            #camera is inactive
-            # make sure ffmpeg is dead
-            if(td in teraRefs and 'scapPID' in teraRefs[td]):
-                psKill(pid=teraRefs[td]['scapPID'], ref=teraRefs[td]['scapRef'],force=True)
-    #end for td in cams
+    try:
+        cams = camera.getOnCams()
+        # get status of all connected encoders
+        tds = tdStatus()
+        dbgLog("..........................refs: "+str(encRefs))
+        dbgLog("...........................TDS: "+str(tds))
+        if(not LIVE):
+            return
+        # go through active cameras and make sure they're all online and active
+        for td in cams:
+            if(td in encoders and 'on' in encoders[td]):
+                camera.camParamSet("on",encoders[td]['on'],camID=td)
+            # get local udp ports for this camera
+            camMP4 = camMP4base+int(cams[td]['idx'])
+            camHLS = camHLSbase+int(cams[td]['idx'])
+            # check camera status
+            if('state' in cams[td] and cams[td]['state']=='paused'):
+                ############
+                ## PAUSED ##
+                ############
+                if(camMP4 in portIns):
+                    portIns[camMP4]['status']='paused'
+                if(camHLS in portIns):
+                    portIns[camHLS]['status']='paused'
+                continue #this camera is paused - no need to check anything else here
+            elif('state' in cams[td] and cams[td]['state']=='stopped'):
+                #############
+                ## STOPPED ##
+                #############
+                if(camMP4 in portIns):
+                    portIns[camMP4]['status']='stopped'
+                if(camHLS in portIns):
+                    portIns[camHLS]['status']='stopped'
+                continue #this camera is stopped
+            else: #by default assume camera is live
+                ############
+                ##  LIVE  ##
+                ############
+                if(camMP4 in portIns):
+                    portIns[camMP4]['status']='live'
+                if(camHLS in portIns):
+                    portIns[camHLS]['status']='live'
+            if((td in tds) and tds[td]['on'] and (td in encRefs)):
+                #this camera is getting data
+                #check if its ffmpeg is live and kicking
+                if(not (('scapPID' in encRefs[td]) and psOnID(pid=encRefs[td]['scapPID']))):
+                    #no ffmpeg - it must've died when the camera disconnected - resume it
+                    dbgLog("dead camera - resuming:"+str(encRefs[td]['scapCmd']))
+                    ps = sb.Popen(encRefs[td]['scapCmd'].split(' '),stderr=FNULL)
+                    encRefs[td]['scapPID']=ps.pid
+                    encRefs[td]['scapRef']=ps
+            else:
+                #camera is inactive
+                # make sure ffmpeg is dead
+                if(td in encRefs and 'scapPID' in encRefs[td]):
+                    addVic(pid=encRefs[td]['scapPID'], ref=encRefs[td]['scapRef'],force=True)
+        #end for td in cams
+    except Exception as e:
+        dbgLog("cammon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
+        pass
 #end tdMonitor
 
 # looks for teradek cube published through bonjour
 def tdFind():
-    # teradeks are identified by this
+    # encoders are identified by this
     regtype = "_tdstream._tcp"
     # list of devices that are queried on the network, in case there are other matches besides teradek (internal only)
     queried  = []
@@ -710,24 +791,28 @@ def tdFind():
                 # found teradek, add it to the list
                 # get details about this device
                 recs = parseStream(txtRecord)
-                strport = str(port)
+                if(port!=554): #only explicitly define port if it's something other than 554, i.e. non-standard rtsp
+                    strport = ":"+str(port)
+                else:
+                    strport = ""
                 camID = ipAddr
-                if(not camID in teradeks):
-                    teradeks[camID] = {}
-                    teradeks[camID]['on']=False
+                if(not camID in encoders):
+                    encoders[camID] = {}
+                    encoders[camID]['on']=False
+                    encoders[camID]['enctype']='td_cube'
                 # url to the stream, consists of:
                 # 'sm' - streaming method/protocol (e.g. rtsp)
                 # ipAddr - ip address of the encoder (e.g. 192.168.1.100)
-                # strport - port of the stream (e.g. 553)
+                # strport - port of the stream (e.g. 554)
                 # 'sn' - stream name (e.g. stream1)
-                streamURL = recs['sm'].lower()+'://'+ipAddr+':'+strport+'/'+recs['sn']
+                streamURL = recs['sm'].lower()+'://'+ipAddr+strport+'/'+recs['sn']
                 # check if this is a preview or a full rez stream
                 if(recs['sn'].lower().find('quickview')>=0):# this is a preview stream
-                    teradeks[camID]['preview']=streamURL
-                    teradeks[camID]['preview_port']=strport
+                    encoders[camID]['preview']=streamURL
+                    encoders[camID]['preview_port']=str(port)
                 else: # this is full resolution stream
-                    teradeks[camID]['url']=streamURL
-                    teradeks[camID]['url_port']=strport
+                    encoders[camID]['url']=streamURL
+                    encoders[camID]['url_port']=str(port)
         #end query_record_callback
         if errorCode != pybonjour.kDNSServiceErr_NoError:
             return
@@ -769,7 +854,7 @@ def tdFind():
         start_time = time.time()
         now = start_time
         try:
-            while ((now-start_time)<2):#look for teradeks for 3 seconds, then exit
+            while ((now-start_time)<2):#look for encoders for 3 seconds, then exit
                 ready = select.select([browse_sdRef], [], [], 0.1)
                 if browse_sdRef in ready[0]:
                     pybonjour.DNSServiceProcessResult(browse_sdRef)
@@ -781,7 +866,343 @@ def tdFind():
     finally:
         browse_sdRef.close()
 #end findTeradek
+
+#extracts a specified paramater from the response string and gets its value
+# function assumes response in this format:
+# VideoInput.Info.1.resolution = 1080p60
+# VideoEncoder.Settings.1.framerate = 30
+# etc...
+def tdGetParam(response,parameter):
+    lines = response.split("\n")
+    if(len(lines)<1 or not(isinstance(lines,list))):
+        return False #wrong response type
+    for line in lines:
+        parts = line.split("=")
+        # make sure the line is in the format: SETTING = VALUE
+        if(len(parts)<2 or not(isinstance(parts,list))):
+            continue
+        # this line appears to have the right format
+        # make sure the setting name is in the right format
+        nameparts = parts[0].split('.')
+        if(len(nameparts)<2 or not(isinstance(nameparts,list))):
+            continue
+        # correct name format, check if this is the parameter we're looking for
+        if(nameparts[-1].strip().lower()==parameter.lower().strip()):
+            # found the right parameter, return its value
+            return parts[1].strip() #make sure there is no empty space around the result
+    return False
+#end tdGetParam
+
+# monitors encoders to make sure camera was not disconnected
+def tdCamConnectionMon():
+    teraCopy = copy.deepcopy(encoders)
+    try:
+        for td in teraCopy:
+            if(teraCopy[td]['enctype']!='td_cube'):
+                continue
+            if(not (td in tdSession and tdSession[td])):
+                tdLogin(td)
+            url = "http://"+td+"/cgi-bin/api.cgi?session="+tdSession[td]
+            response = pu.io.url(url+"&command=get&q=VideoInput.Info.1.resolution&q=VideoEncoder.Settings.1.framerate")
+            if(not response): #didn't get a response - timeout?
+                return 
+            resolution = tdGetParam(response,'resolution')
+            framerate = tdGetParam(response,'framerate')
+            # set the camera resolution for displaying on the web page
+            camera.camParamSet('resolution',resolution,td)
+            try:
+                encoders[td]['resolution']=resolution
+                encoders[td]['framerate']=framerate
+            except:#may fail if the device was removed from the encoders list
+                pass
+            # if(framerate and int(framerate)>30):#frame rate was changed ??
+            #     TimedThread(tdSetFramerate(td))
+    except Exception as e:
+        print "camconmon ERRRR: ",e,sys.exc_traceback.tb_lineno
+        pass
+#end tdCamConnectionMon
+
+def tdLogin(td):
+    url = "http://"+td+"/cgi-bin/api.cgi"
+    # did not connect to the cube previously - login first
+    response = pu.io.url(url+"?command=login&user=admin&passwd=admin")
+    # get session id
+    if(not response):
+        return
+    response = response.strip().split('=')
+    if(response[0].strip().lower()=='session' and len(response)>1):#login successful
+        tdSession[td] = response[1].strip()
+    else:#could not log in - probably someone changed username/password
+        return
+#end tdLogin
+
+# checks if teradek framerate is above 30 
+# sets it appropriately, if it is
+def tdSetFramerate(td):
+    try:
+        print ""
+        print ""
+        print ""
+        print "checking framerate..."
+        if(not td in encoders):
+            return
+        url = "http://"+td+"/cgi-bin/api.cgi"
+        if(not (td in tdSession and tdSession[td])):
+            tdLogin(td)
+        #end if not tdSession
+        print "logged in: ", tdSession[td]
+        #######################################
+        # try to get existing framerate first #
+        #######################################
+        # get all settings
+        url +="?session="+tdSession[td]
+        # get current framerate
+        # whether it is native
+        # and allowed framerates:
+        resp = pu.io.url(url+"&command=get&q=VideoEncoder.Settings.1.framerate&q=VideoEncoder.Settings.1.use_native_framerate&q=VideoInput.Capabilities.1.framerates")
+        # put them in an array
+
+        # settings = resp.split("\n")
+        # print "settings: ", settings
+        # # go through each one looking for framerate
+        framerate = False 
+        framerates = [] #list of allowed frame rates with this camera
+        nativeframe = False #whether the TD is using a native framerate
+        framerate = tdGetParam(resp,"framerate")
+        framerates = tdGetParam(resp,"framerates")
+        nativeframe = tdGetParam(resp,"use_native_framerate")
+        if(not framerates):
+            return
+        framerates = framerates.split(',')
+        # for option in settings:
+        #     op = option.strip().split('=')
+        #     if(len(op)!=2):
+        #         continue #this option does not have the standard NAME = VALUE format - skip it
+        #     opName = op[0].strip().lower().split(".")[-1].strip()
+        #     opVal = op[1].strip().lower()            
+        #     if(opName=='framerate'):
+        #         # found frame rate
+        #         framerate = int(opVal)
+        #     nativeframe = nativeframe or (opName=='use_native_framerate' and opVal=='1')
+        #     if(opName=="framerates"):
+        #         framerates = opVal.split(",")
+        # #end for ..settings
+
+        # got framerate - now make sure it's <=30
+        if(not framerate or framerate<=30):
+            print "STATUS QUO!!!!!!!!!!!!!!!!!!!!!!!! ", framerate
+            return #could not get frame rate or it's normal 
+        #############################
+        # need to change frame rate #
+        #############################
+        print "framerate TOO HIGH!!!!!!!!!!!: ", framerate
+        # find the framerate closest to 30 from the available ones
+        newrate = framerate >> 1 #by default just half it...
+        for rate in framerates:
+            if(int(rate)<=30): #found the first framerate that will work without problems
+                newrate = rate
+                break
+        print "NEW RATE:.....................................", newrate
+        setcmd = "&VideoEncoder.Settings.1.framerate="+str(newrate)
+        savecmd = "&q=VideoEncoder.Settings.1.framerate"
+        if(nativeframe):#currently native frame rate is set - need to set it manually
+            setcmd +="&VideoEncoder.Settings.1.use_native_framerate=0"
+            savecmd = "&q=VideoEncoder.Settings.1.use_native_framerate"
+        # set the frame rate
+        print "setting..."
+        answer = False
+        while(not answer):
+            answer = pu.io.url(url+"&command=set"+setcmd,timeout=10)
+        print answer
+        # apply settings
+        print "applying..."
+        answer = False
+        while(not answer):
+            answer = pu.io.url(url+"&command=apply"+savecmd,timeout=10)
+            print answer
+        print answer
+        # save the settings
+        print "saving..."
+        answer = False
+        while(not answer):
+            answer = pu.io.url(url+"&command=save"+savecmd,timeout=10)
+        print answer
+    except Exception as e:
+        print "FRAMERRRRRRRRRRRRRRRRRRRRRRR: ", e, sys.exc_traceback.tb_lineno
+        return
 ############### end teradek management ################
+
+############### matrox monarch management ###############
+# extracts ip address and port from a uri.
+# the url is usually in this format: "http://X.X.X.X:PORT/"
+# e.g. from http://192.168.1.103:5953/
+# will return 192.168.1.103 and 5953
+def mtParseURI(mtURL):
+    addr  = ""
+    parts = []
+    ip    = False
+    parts = mtURL.split('/')
+    #extract ip address with port
+    if(len(parts)>2):
+        addr = parts[2] #this contains X.X.X.X:PORT
+    else:
+        addr = parts[0] #it is possible the mtURL is "X.X.X.X:PORT/" (no http), then parts[0] will still be X.X.X.X:PORT
+    # extract the ip address 
+    addr = addr.split(':')
+    if(len(addr)>1):
+        ip = addr[0]
+        port = addr[1]
+    else:
+        ip = False
+        port = False
+    return ip, port
+#end mtParseURI
+
+# extracts the following parameters from the monarch
+# rtsp url (if specified)
+# video input resolution (if present)
+# stream settings:
+#   resolution
+#   framerate
+#   bitrate
+def mtGetParams(mtIP):
+    params = {
+        "rtsp_url"          : False,
+        "rtsp_port"         : False,
+        "inputResolution"   : False,
+        "streamResolution"  : False,
+        "streamFramerate"   : False,
+        "streamBitrate"     : False
+        }
+    # for now the only way to extract this information is using the monarch home page (no login required for this one)
+    # when they provide API, then we can use that
+    mtPage = pu.io.url("http://"+str(mtIP)+"/Monarch")
+    ########### get rtsp url ###########
+    resPos = mtPage.find("ctl00_MainContent_RTSPStreamLabelC2") #this is the id of the label containing video input
+    if(resPos>0):#found the video input label, find where the actual text is
+        posStart = mtPage.find('>',resPos)+1
+    else:
+        posStart = -1
+    # find end position
+    if(posStart>0):        
+        posStop = mtPage.find('<',posStart)
+    else:
+        posStop = -1
+    #now we should have the start and end position for the resolution        
+    if(posStart>0 and posStop>0 and posStop>posStart):
+        rtspURL = mtPage[posStart:posStop] #either this is blank or it has the url
+        if(len(rtspURL)>10 and rtspURL.startswith("rtsp://")):
+            # got the url
+            params['rtsp_url']=rtspURL
+            # extract the port
+            ip, port = mtParseURI(rtspURL)
+            params['rtsp_port']=port
+    #end if posStart>0
+    ########### end rtsp url ###########
+    ########### get video input ###########
+    resPos = mtPage.find("ctl00_MainContent_VideoInputLabel") #this is the id of the label containing video input
+    if(resPos>0):#found the video input label, find where the actual text is
+        posStart = mtPage.find('>',resPos)+1
+    else:
+        posStart = -1
+    # find end position
+    if(posStart>0):        
+        posStop = mtPage.find('<',posStart)
+    else:
+        posStop = -1
+    #now we should have the start and end position for the resolution        
+    if(posStart>0 and posStop>0 and posStop>posStart):
+        inRes = mtPage[posStart:posStop] #either contains "No Video Input" or something to the effect of "1920x1080p, 60 fps"
+        if(inRes.find(",")>0 and inRes.find("fps")>0): #video source present
+            # get resolution
+            resParts = inRes.lower().strip().split(',')
+            # now first part contains the resolution (e.g. 1280x720p)
+            resolution = resParts[0].strip().split('x')
+            if(len(resolution)>1):
+                resolution = resolution[1].strip() #now contains "720p"
+            else:
+                resolution = False
+            # get framerate
+            framerate = resParts[1].strip().split('fps')
+            if(len(framerate)>1):
+                framerate = framerate[0].strip()
+            else:
+                framerate = False
+            if(resolution and framerate):
+                params['inputResolution'] = resolution+framerate # e.g. 1080i60
+        #end if inRes contains ',' and 'fps'
+    #end if posStart>0
+    ########### end get video input ###########
+    ########### get stream settings ###########
+    pos = mtPage.find("ctl00_MainContent_StreamSettingsLabel")
+    if(pos>0):
+        posStart = mtPage.find('>',pos)+1
+    else:
+        posStart = -1
+    if(posStart>0):        
+        posStop = mtPage.find('<',posStart)
+    else:
+        posStop = -1
+    if(posStart>0 and posStop>0 and posStop>posStart):
+        streamText = mtPage[posStart:posStop] #e.g. 1280x720p, 30 fps, 2000 kb/s; 192 kb/s audio; RTSP
+        if(streamText.find(',')>0 and streamText.find('fps')>0 and len(streamText.split(','))>2): #stream information contains at least resolution and frame rate
+            parts = streamText.split(',')
+            # resolution is in the first part of the text
+            resolution = parts[0].strip().split('x')
+            if(len(resolution)>1):
+                resolution = resolution[1].strip() #now contains "720p"
+            else:
+                resolution = False
+            # get framerate - in the second part
+            framerate = parts[1].strip().split('fps')
+            if(len(framerate)>1):
+                framerate = framerate[0].strip() #contains "30"
+            else:
+                framerate = False
+            # get bitrate            
+            bitrate = parts[2].strip().split("kb") #it will contain kbps or kb/s
+            if(len(bitrate)>1):
+                bitrate = bitrate[0].strip()
+            else:
+                bitrate = False
+            params["streamResolution"] = resolution;
+            params["streamFramerate"]  = framerate;
+            params["streamBitrate"]    = bitrate;
+    #end if posStart>0
+    ########### end stream settings ###########
+    return params
+#end mtGetParams
+
+# looks for monarch HD on the network (assumes that it's sending NOTIFY to 239.255.255.0 multicast address)
+def mtFind():
+    global SHUTDOWN
+    attempts = 3 #try to find a monarch 3 times, then give up
+    monarchs = []
+    while(attempts>0 and len(monarchs)<1 and not SHUTDOWN):
+        #the Search Target for monarch is:
+        monarchs  = pu.ssdp.discover("urn:schemas-upnp-org:service:MonarchUpnpService1",timeout=2)
+        attempts -= 1
+    if(SHUTDOWN):
+        return
+    if(len(monarchs)>0):
+        # found at least one monarch 
+        for dev in monarchs:
+            try:            
+                devIP, devPT = mtParseURI(dev.location)
+                if(devIP and devPT):                    
+                    params = mtGetParams(devIP)
+                    if(params['rtsp_url'] and params['rtsp_port']):
+                        if(not devIP in encoders):
+                            encoders[devIP] = {}
+                            encoders[devIP]['on'] = False
+                        encoders[devIP]['enctype']='mt_monarch'
+                        encoders[devIP]['url'] = params['rtsp_url']
+                        encoders[devIP]['url_port'] = params['rtsp_port']
+                        encoders[devIP]['resolution'] = params['inputResolution']
+            except: #may fail if the device is invalid or doesn't have required attributes
+                pass
+#end mtFind
+############# end matrox monarch management #############
 
 ############### process monitors ###############
 #monitors processes, creates alerts for idle ones
@@ -840,7 +1261,6 @@ def getCPU(pgid=0,pid=0):
                     ps = psutil.Process(proc.pid)
                     totalcpu += ps.get_cpu_percent()
                 except:
-                    dbgLog("INVALID!!")
                     continue
             #if pgid==foundpgid
         #for proc in procs
@@ -849,7 +1269,7 @@ def getCPU(pgid=0,pid=0):
             ps = psutil.Process(pid)
             totalcpu = ps.get_cpu_percent()
         except Exception as e:
-            dbgLog("get cpu fail: "+str(e))
+            pass
     #get total cpu for a process
     return totalcpu
 #end getCPU
@@ -886,6 +1306,48 @@ def getPorts():
                 ports[parts[0]] = int(parts[1])
     return ports
 
+def addVic(pid=0,pgid=0,ref=False,timeout=4,force=False):
+    hitlist.append({
+        'pid':pid,
+        'pgid':pgid,
+        'ref':ref,
+        'timeout':timeout,
+        'force':force,
+        'count':0 #how many times the kill was attempted
+        })
+
+def procKiller():
+    global SHUTDOWN
+    killing = True
+    try:
+        while killing and not SHUTDOWN:
+            if(len(hitlist)<=0):
+                time.sleep(0.5) #no victims in the queue
+                continue
+            if(str(hitlist[0])=='stop'):
+                killing=False
+                break
+            time.sleep(0.5)
+            # killList = copy.deepcopy(hitlist)
+            killList = hitlist
+            # go through the queue and try to kill all victims
+            for victim in killList:
+                if(not victim in hitlist):
+                    continue #this process was killed
+                vicID = hitlist.index(victim)
+                #increment kill attempt count
+                hitlist[vicID]['count'] += 1
+                #try to kill it
+                psKill(pid=victim['pid'],ref=victim['ref'], pgid=victim['pgid'],timeout=victim['timeout'],force=victim['force'])
+                if(victim in hitlist and not psOnID(victim['pid'],victim['pgid'])):
+                    hitlist.remove(victim) #the process is dead - remove it
+                elif(hitlist[vicID]['count']>2): #the process didn't die after 3 attempts - force kill next time
+                    hitlist[vicID]['force'] = True
+            #for victim...
+        #while killing..
+    except Exception as e:
+        pass
+#end procKiller
 # attempts to kill a process based on PID (sends SIGKILL, equivalent to -9)
 # @param (int) pid - process ID
 # @param (int) pgid - process group ID
@@ -893,59 +1355,64 @@ def getPorts():
 # @param (int) timeout - timeout in seconds how long to try and kill the process
 # @param (bool) force - whether to force exit a process (sends KILL - non-catchable, non-ignorable kill)
 def psKill(pid=0,pgid=0,ref=False,timeout=3,force=False):
-    start_time = time.time()
-    now = start_time
-    timeout = now+timeout
     if(not(pid or pgid)):
         return #one must be specified 
-    dbgLog("KILLING: "+str(pid)+" "+str(pgid))
-    #attempt to kill it every second until it's dead or timeout reached
-    while(psOnID(pid=pid,pgid=pgid) and ((timeout-now)>0)):
-        if(now-start_time<1): #keep running until it's dead
-            now = time.time()
-            time.sleep(0.05) #dramatically reduces the load on the CPU
-            continue
+    timeout += time.time()
+    #continue trying to kill it until it's dead or timeout reached
+    while(psOnID(pid=pid,pgid=pgid) and ((timeout-time.time())>0)):
         try:
-            if(force): #forcing a quit - send kill (-9)
-                sigToSend = signal.SIGKILL
-            else:#gentle quit, send term (-15)
-                sigToSend = signal.SIGTERM
-            # at first, try to kill the process softly, give it some time
-            if(pgid):#for group kills, sigterm needs to be sent to the entire group (parent+children) otherwise there will be zombies
-                os.killpg(pgid, sigToSend)
-            elif(pid):
-                os.kill(pid,sigToSend)
-            if(ref):
+            dbgLog("PROC ALIVE!!! "+str(pid))
+            if(ref):#this is the proper way to stop a process opened with Popen
+                if(force):
+                    ref.kill()
+                else:
+                    dbgLog("sending sigint...")
+                    # ref.send_signal(15)
+                    # ref.terminate()
+                    ref.send_signal(signal.SIGINT)
                 ref.communicate()
+            else:
+                if(force): #forcing a quit - send kill (-9)
+                    sigToSend = signal.SIGKILL
+                else:#gentle quit, send term (-15)
+                    sigToSend = signal.SIGTERM
+                if(pgid):#for group kills, sigterm needs to be sent to the entire group (parent+children) otherwise there will be zombies
+                    os.killpg(pgid, sigToSend)
+                elif(pid):
+                    os.kill(pid,sigToSend)
+            time.sleep(2)
         except Exception as e:
-            dbgLog("!!!!!!!!!!!!!!!!!!!kill fail: "+str(e))
+            dbgLog("kill err::::::::::::::::::"+str(e)+str(sys.exc_traceback.tb_lineno))
             pass
-        start_time = now
     #end while psOnID
-    # if exited loop on timeout, attempt another 'harsher' way to end the process:
     if(psOnID(pid=pid,pgid=pgid)):
+        dbgLog("did not kill!!!!!!!! try again!!!!!")
+        # exited loop on timeout - process is still alive, try to kill the process again with a SIGKILL this time
         try:
-            if(pgid):
-                os.killpg(pgid, signal.SIGKILL)
-            elif(pid):
-                os.kill(pid,signal.SIGKILL)
             if(ref):
+                ref.terminate()
+                time.sleep(0.5)
                 ref.communicate()
+            elif(pid):
+                os.kill(pid, signal.SIGKILL)
+            elif(pgid):
+                os.killpg(pgid, signal.SIGKILL)
         except:
             pass
     time.sleep(1) #wait for a bit
-    # if that hasn't worked, last resort - kill this monkey!!!
     if(psOnID(pid=pid,pgid=pgid)):
+        # nothing has worked, last resort - kill this monkey!!!
         try:
-            if(pgid):
+            if(ref):
+                ref.send_signal(signal.SIGHUP)
+                time.sleep(0.5)
+                ref.communicate()
+            elif(pgid):
                 os.killpg(pgid, signal.SIGHUP)
             elif(pid):
                 os.kill(pid,signal.SIGHUP)
-            if(ref):
-                ref.communicate()
         except:
             pass
-    dbgLog("PID: "+str(pid)+" PGID: "+str(pgid)+" IS "+str(psOnID(pid=pid,pgid=pgid)))
 #checks if process is on (By name)
 def psOn(process):
     if (platform.system()=="Windows"):    #system can be Linux, Darwin
@@ -973,9 +1440,10 @@ def psOnID(pid=0,pgid=0):
             p = psutil.Process(pid)
         else:#need to change this to look for all processes with this pgid
             p = psutil.Process(pgid)
+        psOn = p.is_running()
     except:
         return False
-    return p.is_running()
+    return psOn
     # cmd = "kill -0 "+str(pid) #"ps -A | pgrep "+process+" > /dev/null"
     # #result of the cmd is 0 if it was successful (i.e. the process exists)
     # return os.system(cmd)==0
@@ -1024,114 +1492,174 @@ def addMsg(client,msg,c=False):
     # add the data to the BBQ for this client
     globalBBQ[client][0][timestamp]={'ACK':0,'timesSent':0,'lastSent':(timestamp-3000),'data':str(timestamp)+"|"+msg}
 
-class PubProtocol(basic.LineReceiver):
-    def __init__(self, factory):
-        self.factory = factory
-        globalBBQ = {}
-
-    def connectionMade(self):
-        global globalBBQ
-        # user just connected
-        # add him to the factory
-        self.factory.clients.add(self)
-        clientID = str(self.transport.getPeer().host)+"_"+str(self.transport.getPeer().port)
-        globalBBQ[clientID] = [{},self,True]
-        dbgLog("connected: "+str(clientID))
-    def connectionLost(self, reason):
-        self.factory.clients.remove(self)
-        clientID = str(self.transport.getPeer().host)+"_"+str(self.transport.getPeer().port)
-        del globalBBQ[clientID]
-    def dataReceived(self, data):
-        global globalBBQ
+# try to turn on the cameras until at least one is connected
+def turnOnCams():
+    global SHUTDOWN
+    cams = 0
+    while(cams<1 and not SHUTDOWN):
         try:
-            # client IP address
-            senderIP = str(self.transport.getPeer().host)
-            # client port
-            senderPT = str(self.transport.getPeer().port)
-            #if it was a command, it'll be split into segments by vertical bars
-            dataParts = data.split('|')
-            # if(senderIP!="127.0.0.1"):
-                # dbgLog("got data: "+data+" from: "+senderIP)
-            if(len(dataParts)>0):                
-                # this is a service request
-                if(senderIP=="127.0.0.1"):
-                    # these actions can only be sent from the local server
-                    if(dataParts[0]=='RMF'): #remove file
-                        rmFiles.append(dataParts[1])
-                    if(dataParts[0]=='RMD'): #remove directory
-                        rmDirs.append(dataParts[1])
-                    if(dataParts[0]=='STR'): #start encode
-                        tdStartCap()
-                    if(dataParts[0]=='STP'): #stop encode
-                        tdStopCap()
-                #end if sender=127.0.0.1
-                if(dataParts[0]=='ACK'): # acknowledgement of message receipt
-                    cmdID = dataParts[1].strip() #the ack's come in format ACK|<message_id>
-                    # broadcast acknowledgment received - remove that request from the queue of sent events
-                    try:
-                        # del globalBBQ[senderIP+"_"+senderPT][0][int(cmdID)]
-                        globalBBQ[senderIP+"_"+senderPT][0][int(cmdID)]['ACK']=1
-                    except Exception as e:
-                        pass
-                    return
-                #if dataparts=='do'
-            #if len(dataparts)>0
+            time.sleep(5)#give the system a few seconds to detect encoders
+            camera.camOn()
+            cams = len(camera.getOnCams())
+        except:
+            pass
+
+####################################################################
+def DataHandler(data,addr):
+    try:
+        # client IP address
+        senderIP = str(addr[0])
+        # client port
+        senderPT = str(addr[1])
+        dbgLog("............... BBQ GOT: "+str(data))
+        #if it was a command, it'll be split into segments by vertical bars
+        dataParts = data.split('|')
+        # if(senderIP!="127.0.0.1"):
+            # dbgLog("got data: "+data+" from: "+senderIP)
+        if(len(dataParts)>0):
+            # this is a service request
+            if(senderIP=="127.0.0.1"):
+                nobroadcast = False #local server allows broadcasting
+                # these actions can only be sent from the local server - do not broadcast these
+                if(dataParts[0]=='RMF'): #remove file
+                    rmFiles.append(dataParts[1])
+                    nobroadcast = True
+                if(dataParts[0]=='RMD'): #remove directory
+                    rmDirs.append(dataParts[1])
+                    nobroadcast = True
+                if(dataParts[0]=='STR'): #start encode
+                    tdStartCap()
+                    nobroadcast = True
+                if(dataParts[0]=='STP'): #stop encode
+                    tdStopCap()
+                    nobroadcast = True
+            #end if sender=127.0.0.1
+            if(dataParts[0]=='ACK'): # acknowledgement of message receipt
+                nobroadcast = True
+                cmdID = dataParts[1].strip() #the ack's come in format ACK|<message_id>
+                # broadcast acknowledgment received - remove that request from the queue of sent events
+                try:
+                    # del globalBBQ[senderIP+"_"+senderPT][0][int(cmdID)]
+                    globalBBQ[senderIP+"_"+senderPT][0][int(cmdID)]['ACK']=1
+                except Exception as e:
+                    pass
+                return
+            #if dataparts=='do'
+        #if len(dataparts)>0
         ###########################################
         #             broadcasting                #
         ###########################################
-            if(senderIP!="127.0.0.1"): #only local host can broadcast messages
-                return
-            for c in self.factory.clients:
-                try:
-                    # get the ip address of the client
-                    clientID = c.transport.getPeer().host+"_"+str(c.transport.getPeer().port)
-                    # add message to the queue (and send it)
-                    addMsg(clientID,data,c)
-                except Exception as e:
-                    pass
-        except:
-            pass
-    #end dataReceived
+        if(nobroadcast or senderIP!="127.0.0.1"): #only local host can broadcast messages
+            return
+        BBQcopy = copy.deepcopy(globalBBQ)
+        for clientID in BBQcopy:
+            try:
+                # add message to the queue (and send it)
+                addMsg(clientID,data)
+            except Exception as e:
+                pass
+    except:
+        pass
 
-class PubFactory(protocol.Factory):
-    def __init__(self):
-        self.clients = set()
+def SockHandler(sock,addr):
+    while 1:
+        data = sock.recv(4096)
+        if not data:#exit when client disconnects
+            break
+        # got some data
+        DataHandler(data,addr)
+        # clientsock.send(msg)
+    #client disconnected
+    clientID = str(addr[0])+"_"+str(addr[1])
+    del globalBBQ[clientID]
+    dbgLog("disconnected: "+clientID)
+    sock.close()
 
-    def buildProtocol(self, addr):
-        return PubProtocol(self)
+
+
+
 #make sure there is only 1 instance of this script running
 me = singleton.SingleInstance() 
 tmr = {}
+# remove old encoders from the list, the file will be re-created when the service finds encoders
+dbgLog("starting...")
+try:
+    os.remove(c.tdCamList)
+    # remove cameras
+    camera.camOff()
+except:
+    pass
 #pxp socket communication is done on port 2232
-reactor.listenTCP(2232, PubFactory()) 
-
-# stream monitor (checks if there is an encoding device connected)
-tmr['streamMon'] = TimedThread(streamMon,period=4)
 
 # set up messages(tags) queue manager to execute every second
-tmr['BBQ'] = TimedThread(bbqManage,period=0.1)
+# this manages all socket communication (e.g. broadcasting new tags, sennds start/stop/pause/resume messages to tablets)
+tmr['BBQ']          = TimedThread(bbqManage,period=0.1)
 
 # start a watchdog timer
-tmr['dogeKick'] = TimedThread(kickDoge,period=30)
+# sends a periodic 'kick' to the watchdogE on the clients - to make sure socket is still alive
+tmr['dogeKick']     = TimedThread(kickDoge,period=30)
+
 # register pxp on bonjour service
-# thread.start_new_thread(pubBonjour,())
-tmr['bonjour'] = TimedThread(pubBonjour)
+tmr['bonjour']      = TimedThread(pubBonjour)
+
 # look for teradek cube's on bonjour
-tmr['tdFind'] = TimedThread(tdFind,period=10)
+tmr['tdFind']       = TimedThread(tdFind,period=10)
 
-tmr['camMonitor'] = TimedThread(camMonitor,period=2)
+#looks for matrox Monarch HD using SSDP (a UPnP service)
+tmr['mtFind']       = TimedThread(mtFind,period=20)
 
-tmr['idleMon'] = TimedThread(idleProcMon,period=0.5)
+tmr['camMonitor']   = TimedThread(camMonitor,period=10) #pinging teradek too often causes it to fall off after ~30 minutes
+
+tmr['idleMon']      = TimedThread(idleProcMon,period=0.5)
 
 # start deleter timer (deletes files that are not needed/old/etc.)
-tmr['delFiles'] = TimedThread(deleteFiles,period=2)
+tmr['delFiles']     = TimedThread(deleteFiles,period=2)
 
-tmr['cleanupEvts'] = TimedThread(removeOldEvents,period=10)
-
+tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
 #start the threads for forwarding the blue screen to udp ports (will not forward if everything is working properly)
 # tmr['fwdMP4'] = TimedThread(portFwd,(blueMP4,'mp4'))
 # tmr['fwdHLS'] = TimedThread(portFwd,(blueHLS,'hls'))
 #register what happens on ^C:
 signal.signal(signal.SIGINT, pxpCleanup)
 
-reactor.run()
+# thread that kills processes from the hitlist
+tmr['procKiller']   = TimedThread(procKiller)
+
+# timer checks if camera is connected (simply checks resolution)
+tmr['tdCamCon']     = TimedThread(tdCamConnectionMon,period=3)
+# after everything was started, wait for cameras to appear and set them as active
+tmr['startcam']     = TimedThread(turnOnCams)
+# when clients connect, their threads will sit here:
+tmr['clients'] = {}
+dbgLog("main...")
+if __name__=='__main__':
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        dbgLog("got socket.")
+        s.bind(("127.0.0.1",sockInPort))
+        dbgLog("bind")
+        s.listen(2)
+        dbgLog("listen")
+        appRunning = True
+        dbgLog("run: "+str(appRunning))
+        while appRunning:
+            try:
+                dbgLog("LISTENING ON "+str(sockInPort))
+                sock, addr = s.accept()
+                #will get here as soon as there's a connection
+                clientID = str(addr[0])+"_"+str(addr[1])
+                dbgLog("connected: "+clientID)
+                #add new client to the list
+                globalBBQ[clientID] = [{},sock,True]
+                #client connected:
+                tmr['clients'][clientID] = TimedThread(SockHandler, (sock, addr))
+            except KeyboardInterrupt:
+                pxpCleanup()
+                appRunning = False
+                break
+            except Exception as e:
+                appRunning = False
+                break
+                pass
+    except Exception as e:
+        dbgLog("ERROR IN MAIN???"+str(e))

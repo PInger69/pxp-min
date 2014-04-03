@@ -22,9 +22,18 @@ if(os.path.exists(c.approot+"pxpservice.py")):
 	os.system("/usr/bin/python "+c.approot+"pxpservice.py &")
 else:
 	os.system("/usr/bin/python "+c.approot+"pxpservice.pyc &")
+time.sleep(20)
 #wait until pxpservice creates a new camera list
 while(not os.path.exists(c.tdCamList)):
 	time.sleep(1)
+cams = 0
+while(cams<1):
+	try:
+		time.sleep(3)
+		camera.camOn()
+		cams = len(camera.getOnCams())
+	except:
+		pass
 # activate all teradeks found
 try:
 	camera.camOn()
