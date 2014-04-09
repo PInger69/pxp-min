@@ -17,8 +17,8 @@ class Controller:
 			suffix=""
 		else:
 			suffix="c"
-		if (not pu.disk.psOn("pxplistmon")):
-			os.system("/usr/bin/python "+c.approot+"pxplistmon.py"+suffix+" >/dev/null 2>/dev/null &")
+		# if (not pu.disk.psOn("pxplistmon")):
+		# 	os.system("/usr/bin/python "+c.approot+"pxplistmon.py"+suffix+" >/dev/null 2>/dev/null &")
 		# make sure socket service is on (for push instead of pull notifications)
 		if(os.path.exists(c.approot+"pxpservice.py")):
 			suffix=""

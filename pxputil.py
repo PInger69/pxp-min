@@ -371,7 +371,6 @@ class c_io:
 				return True
 			return respText
 		except Exception as e:
-			print "url:",url," err:",e, sys.exc_traceback.tb_lineno
 			return False
 	# checks if there is connection to myplayxplay.net website
 	def isweb(self):
@@ -520,7 +519,7 @@ class c_ssdp:
 			'M-SEARCH * HTTP/1.1',
 			'HOST: {0}:{1}',
 			'MAN: "ssdp:discover"',
-			'ST: {st}','MX: 3','',''])
+			'ST: {st}','MX: {timeout}','',''])
 		#B-Search
 		#group = ("255.255.255.255",1990) #might have to change this to your own broadcast address (e.g. 192.168.0.255)
 		#message = "\r\n".join([
@@ -540,7 +539,7 @@ class c_ssdp:
 			# make socket multicast-aware, set TTL (=2)
 			sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
 			# send the SEARCH request to the multicast adress
-			sock.sendto(message.format(*group, st=service), group)
+			sock.sendto(message.format(*group, st=service,timeout=timeout), group)
 			while True:
 				try:
 					data = sock.recv(1024)

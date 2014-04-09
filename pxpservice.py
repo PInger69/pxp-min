@@ -35,6 +35,8 @@ globalBBQ = {}
 #     ...
 # ]
 hitlist = []
+# list of processes that are managed (e.g. status monitored, started/stopped auto re-started if paused, etc.)
+procs = []
 
 lastStatus = 0
 # when was a kill sig issued
@@ -111,7 +113,9 @@ camHLSbase = 22600 #ffmpeg captures rtsp stream and outputs MPEG-TS here
 
 sockInPort = 2232
 # blueFwds = {'mp4':[],'hls':[]} #add -1 to kill the port fwd process
+###################################################
 ################## delete files ##################
+###################################################
 rmFiles = []
 rmDirs = []
 bonjouring = [True] #has to be a list to stop bonjour externally
@@ -173,8 +177,13 @@ def removeOldEvents():
     except:
         pass
 #end removeOldEvents
+###################################################
 ################ end delete files ################
+###################################################
+
+###################################################
 ################## util functions ################
+###################################################
 def pxpCleanup(signal=False, frame=False):
     global SHUTDOWN
     try:
@@ -240,7 +249,34 @@ def readFile(filename):
     with open(filename,"rb") as f:
         contents = f.read()
     return contents
-#################end util functions ##############
+
+#returns true if both ip addresses belong to the same subnet
+def sameSubnet(ip1,ip2):
+    return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
+
+def get_lan_ip():
+    try:
+        ipaddr = "127.0.0.1"
+        for dev in ni.interfaces():
+                adds = ni.ifaddresses(dev)
+                for addr in adds:
+                        for add in adds[addr]:
+                                if('addr' in add):
+                                        ip = add['addr']
+                                        ipp = ip.split('.')
+                                        if(len(ipp)==4 and ip!=ipaddr): #this is a standard X.X.X.X address (ipv4)
+                                            ipaddr = ip
+                                        if(not sameSubnet("127.0.0.1",ipaddr)): #first non-localhost ip found returns - should be en0 - or ethernet connection (not wifi)
+                                            return ipaddr
+    except:
+        pass
+    return ipaddr
+#end getlanip
+
+###################################################
+################# end util functions ##############
+###################################################
+
 def encState(state):
     #       app starting
     #       | encoder streaming
@@ -307,28 +343,6 @@ def bbqManage():
     #for client in globalBBQ
 #end bbqManage
 ################## network management ##################
-#returns true if both ip addresses belong to the same subnet
-def sameSubnet(ip1,ip2):
-    return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
-
-def get_lan_ip():
-    try:
-        ipaddr = "127.0.0.1"
-        for dev in ni.interfaces():
-                adds = ni.ifaddresses(dev)
-                for addr in adds:
-                        for add in adds[addr]:
-                                if('addr' in add):
-                                        ip = add['addr']
-                                        ipp = ip.split('.')
-                                        if(len(ipp)==4 and ip!=ipaddr): #this is a standard X.X.X.X address (ipv4)
-                                            ipaddr = ip
-                                        if(not sameSubnet("127.0.0.1",ipaddr)): #first non-localhost ip found returns - should be en0 - or ethernet connection (not wifi)
-                                            return ipaddr
-    except:
-        pass
-    return ipaddr
-#end getlanip
 # registers pxp as bonjour service
 def pubBonjour():
     global SHUTDOWN
@@ -410,7 +424,7 @@ def portFwd(portIN,portSet):
 
 ################## teradek management ##################
 def camPortMon(port):
-    global SHUTDOWN
+    global SHUTDOWN, LIVE
     try:
         host = '127.0.0.1'          #local ip address    
         sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)      #Create a socket object
@@ -438,15 +452,20 @@ def camPortMon(port):
                 # sOUT.sendto(data,("54.221.235.84",20202))
             except socket.error, msg:
                 # only gets here if the connection is refused
-                if(portIn in portIns):
-                    portIns[portIn]['active']=False
-                    devID = portIns[portIn]['camera']
-                    if(portIns[portIn]['status']=='live'):
-                        encoders[devID]['on']=False#only set teradek status if this camera is active (recording)
-                # time.sleep(0.5)
-                # if(port['type'] in blueOut and not (port in blueOut[port['type']])):
-                #     blueOut[port['type']].append(port)
-                # pass
+                try:
+                    # print "sock err: ", msg, " port: ", portIn, "--",(portIn in portIns)
+                    if(portIn in portIns):
+                        portIns[portIn]['active']=False
+                        devID = portIns[portIn]['camera']
+                        if(LIVE):
+                            print "setting ", devID, "to false!!!!!!!!"
+                            encoders[devID]['on']=False #only set encoder status if there is a live event
+                    # time.sleep(0.5)
+                    # if(port['type'] in blueOut and not (port in blueOut[port['type']])):
+                    #     blueOut[port['type']].append(port)
+                    # pass
+                except Exception as e:
+                    print "error in sock exception????",e,sys.exc_traceback.tb_lineno
 
             except Exception as e:
                 dbgLog("camportmon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
@@ -457,31 +476,10 @@ def camPortMon(port):
         pass
 #end tdPortMon
 
-# # stops acquisition (either blue screen, ffmpeg or both)
-# # @param (string) td    - id of the encoder to stop
-# # @param (bool) group   - use PGID if true, PID if false
-# def capKill(td, group=False):
-#     if(not (td in encRefs)):
-#         return #it's been killed
-#     if('scapRef' in encRefs[td]):
-#         #this process was started earlier
-#         if('scapPID' in encRefs[td]):# pid specified
-#             #kill the process
-#             if(group):#pgid was specified
-#                 addVic(pgid=encRefs[td]['scapPID'])
-#             else:#pid was specified
-#                 addVic(pid=encRefs[td]['scapPID'],ref=encRefs[td]['scapRef'])
-#             # remove the process from monitoring
-#             if(encRefs[td]['scapPID'] in procMons):
-#                 del procMons[encRefs[td]['scapPID']]
-#             # delete the pid
-#             del encRefs[td]['scapPID']
-#         # after process was killed and pid/pgid was removed, delete the reference
-#         del encRefs[td]['scapRef']
-# #end tdKill
 
 #starts mp4/hls capture on all cameras
 def tdStartCap():
+    global LIVE
     LIVE = True
     cameras = camera.getOnCams()
     try:
@@ -515,8 +513,10 @@ def tdStartCap():
             else: #multiple cameras - need to identify each file by camID
               fileSuffix = camID
             ffmp4Out +=" -map "+camID+" -codec copy "+c.wwwroot+"live/video/main"+fileSuffix+".mp4"
+            # this is HLS capture (segmenter)
             segmenters[devID] = c.segbin+" -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+dskHLS
-            ffcaps[devID] = c.ffbin+" -rtsp_transport udp -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+dskMP4+" -codec copy -f mpegts udp://127.0.0.1:"+dskHLS
+            # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
+            ffcaps[devID] = c.ffbin+" -rtsp_transport tcp -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
             if(not (devID in encRefs)):
                 encRefs[devID]={}
             # each camera also needs its own port forwarder
@@ -538,10 +538,10 @@ def tdStartCap():
                 'output'      :int(dskHLS),
                 'active'       :True
                 }
-            # if(not 'portFwd' in tmr):
-            #     tmr['portFwd'] = {}
-            # tmr['portFwd']['MP4_'+camID] = TimedThread(camPortMon,portIns[int(camMP4)])
-            # tmr['portFwd']['HLS_'+camID] = TimedThread(camPortMon,portIns[int(camHLS)])
+            if(not 'portFwd' in tmr):
+                tmr['portFwd'] = {}
+            tmr['portFwd']['MP4_'+camID] = TimedThread(camPortMon,portIns[int(camMP4)])
+            tmr['portFwd']['HLS_'+camID] = TimedThread(camPortMon,portIns[int(camHLS)])
         #end for device in cameras
         # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
         ffMP4recorder = ffmp4Ins+ffmp4Out
@@ -555,6 +555,7 @@ def tdStartCap():
             encRefs[devID]['segmCmd']=cmd
             encRefs[devID]['segmPID']=ps.pid
             encRefs[devID]['segmRef']=ps
+            addMon(pid=ps.pid)
             # start monitoring the segmenter
             # addMon(pid=ps.pid)
             # ffmpeg RTSP capture
@@ -586,6 +587,7 @@ def tdProcOn(dev):
 #end tdProcOn
 #stops the capture, kills all ffmpeg's and segmenters
 def tdStopCap():
+    global LIVE
     try:
         refCopy = copy.deepcopy(encRefs)    
         # remove all forwaders
@@ -598,6 +600,7 @@ def tdStopCap():
                 if('segmPID' in refCopy[td] and psOnID(pid=refCopy[td]['segmPID'])):#kill segmenter
                     procPID = refCopy[td]['segmPID']
                     addVic(pid=procPID, ref=refCopy[td]['segmRef'], force=True)
+                    delMon(pid=procPID)
                 if('scapPID' in refCopy[td] and psOnID(pid=refCopy[td]['scapPID'])):#kill stream capture (ffmpeg)
                     procPID = refCopy[td]['scapPID']
                     addVic(pid=procPID, ref=refCopy[td]['scapRef'], force=True)
@@ -689,17 +692,19 @@ def tdStatus():
 #end tdStatus
 
 def camMonitor():
+    global LIVE
     # get all cameras that are active
     try:
         cams = camera.getOnCams()
         # get status of all connected encoders
         tds = tdStatus()
-        dbgLog("..........................refs: "+str(encRefs))
-        dbgLog("...........................TDS: "+str(tds))
+        # dbgLog("...........................TDS: "+str(tds))
         if(not LIVE):
+            dbgLog("no live event")
             return
         # go through active cameras and make sure they're all online and active
         for td in cams:
+            # set the activated camera status to the encoder status
             if(td in encoders and 'on' in encoders[td]):
                 camera.camParamSet("on",encoders[td]['on'],camID=td)
             # get local udp ports for this camera
@@ -732,7 +737,11 @@ def camMonitor():
                     portIns[camMP4]['status']='live'
                 if(camHLS in portIns):
                     portIns[camHLS]['status']='live'
-            if((td in tds) and tds[td]['on'] and (td in encRefs)):
+            dbgLog("cam: "+str(td))
+            if(td in tds):
+                dbgLog("details: "+str(tds[td]))
+            if((td in tds) and tds[td]['on'] and (td in encRefs) and (not procMons[encRefs[td]['segmPID']]['idle'])):
+                print "SHOULD BE OK"
                 #this camera is getting data
                 #check if its ffmpeg is live and kicking
                 if(not (('scapPID' in encRefs[td]) and psOnID(pid=encRefs[td]['scapPID']))):
@@ -742,9 +751,11 @@ def camMonitor():
                     encRefs[td]['scapPID']=ps.pid
                     encRefs[td]['scapRef']=ps
             else:
+                print "DEAD STREAM??"
                 #camera is inactive
                 # make sure ffmpeg is dead
                 if(td in encRefs and 'scapPID' in encRefs[td]):
+                    print "kill FFMPEG!!!!!!!"
                     addVic(pid=encRefs[td]['scapPID'], ref=encRefs[td]['scapRef'],force=True)
         #end for td in cams
     except Exception as e:
@@ -1217,18 +1228,14 @@ def idleProcMon():
             cpu = getCPU(pgid=procCopy[proc]['pgid'])
         else:
             cpu = 0
-        # if(not ('idle' in procCopy[proc])):
-        #     procCopy[proc]['idle']=0 #how many idle ticks this process has
-        # if(cpu<=0):
-        #     procCopy[proc]['alert']=True #idle process - set off an alert
         if(cpu<=0):#process idle, increment idle count
-            procCopy[proc]['idle']+=1
+            procCopy[proc]['idleTime']+=1
         else:#process is not idle, reset idle count
-            procCopy[proc]['idle']=0
-        if(procCopy[proc]['idle']>3):#process has been idle for 2 seconds, set off an alert
-            procCopy[proc]['alert']=True
-        else:#process has returned from idle state - clear the alert
-            procCopy[proc]['alert']=False
+            procCopy[proc]['idleTime']=0
+        if(procCopy[proc]['idleTime']>3):#process has been idle for 4 ticks, set off an idle alert
+            procCopy[proc]['idle']=True
+        else:#process has returned from idle state - clear the idle alert
+            procCopy[proc]['idle']=False
     #end for proc in procMons
     # copy back the processes
     for proc in procCopy:
@@ -1239,10 +1246,17 @@ def idleProcMon():
 # adds a process to monitor
 def addMon(pid=0,pgid=0):
     if(pid): #if this process monitor already exists, it just resets all counters
-        procMons[pid]={'pid':int(pid),'alert':False,'idle':0}
+        procMons[pid]={'pid':int(pid),'idle':False,'idleTime':0}
     if(pgid):
-        procMons[pgid]={'pgid':int(pgid),'alert':False,'idle':0}
+        procMons[pgid]={'pgid':int(pgid),'idle':False,'idleTime':0}
 #end addMon
+# remove a process monitor from the list
+def delMon(pid=0,pgid=0):
+    if(pid and pid in procMons):
+        del procMons[pid]
+    if(pgid and pgid in procMons):
+        del procMons[pgid]
+#end delMon
 ############## end process monitors ##############
 
 # finds cpu usage by all processes with the same pgid
@@ -1250,8 +1264,8 @@ def getCPU(pgid=0,pid=0):
     totalcpu = 0
     if(pgid):
         #list of all processes in the system
-        procs = psutil.get_process_list()
-        for proc in procs:
+        proclist = psutil.get_process_list()
+        for proc in proclist:
             try:#try to get pgid of the process
                 foundpgid = os.getpgid(proc.pid)
             except:
@@ -1263,7 +1277,7 @@ def getCPU(pgid=0,pid=0):
                 except:
                     continue
             #if pgid==foundpgid
-        #for proc in procs
+        #for proc in proclist
     elif(pid):#looking for cpu usage of one process by pid
         try:
             ps = psutil.Process(pid)
@@ -1305,6 +1319,152 @@ def getPorts():
             if(parts[0] in ports):
                 ports[parts[0]] = int(parts[1])
     return ports
+
+class procmgr():
+    def __init__(self):
+        self.procs = {} #processes in the system
+
+    # get the numeric index of a process based on its name and device it is associated with
+    def getProcIndex(self,devID,name):
+        procs = self.procs
+        foundIdx = -1 #if the process could not be found, return -1
+        for idx in procs:
+            proc = procs[idx]
+            if(proc['name']==name and proc['devID']==devID):
+                foundIdx = idx
+                break #to speed up the function, break out of the loop as soon as the process is found
+        return foundIdx
+    #end getProcIndex
+
+    #############################################################
+    # goes through the process list and kills those scheduled for termination
+    def killer(self):
+        killList = copy.deepcopy(self.procs)
+        # go through the queue and try to kill all processes that are scheduled for termination
+        for idx in killList:
+            victim = killList[idx]
+            if(not idx in self.procs or self.procs[idx]['run']): 
+                continue #this process was just killed or it isn't scheduled for termination
+            #increment kill attempt count
+            self.procs[idx]['killcount'] += 1
+            #try to kill it
+            psKill(pid=victim['pid'],ref=victim['ref'], force=victim['forceKill'])
+            if(idx in self.procs and not psOnID(pid=victim['pid'])):
+                #success - the process id dead!
+                self.premove(idx) #remove it from the process list
+            elif(idx in self.procs and self.procs[idx]['killCount']>2): #the process didn't die after 3 attempts - force kill next time
+                self.procs[idx]['forceKill'] = True
+        #for idx in killList...
+    #end killer
+    # this is the main function that monitors/manages processes
+    def manage(self):
+        procs = copy.deepcopy(self.procs)
+        for idx in procs:
+            proc = procs[idx]
+            if(proc['run']): #this process should be alive
+                if((not proc['alive']) and proc['keepalive']): #process is dead but needs to be (re)started
+                    self._start(idx)
+                elif(proc['alive'] and proc['cpu']<0.1 and proc['killIdle']): #process is alive but stalled and needs to be killed
+                    self._stop(idx)
+            else: #process is scheduled for termination - self.killer will take care of it
+                # if(proc['alive']):
+                #     #just wait for it to be killed
+                #     # psKill(pid=proc['pid'],ref=proc['ref'],force=proc['forceKill'])
+                # else:
+                #     # the proc is already dead - remove it from the list
+                #     self.premove(idx)
+                pass
+    #end manage
+    #############################################################
+
+    #monitors the process and sets various parameters (e.g. cpu usage, whether it's alive or not, etc.)
+    def monitor(self):
+        procs = self.procs
+        for idx in procs:
+            proc = procs[idx]
+            alive = psOnID(pid=proc['pid']) #check if the process is alive
+            cpu = getCPU(pid=proc['pid']) #get cpu usage
+            if(idx in self.procs):
+                self.procs['cpu'] = cpu
+                self.procs['alive'] = alive
+    
+    # add a new process
+    # @param str cmd        - execute this command to start the process
+    # @param str name       - process nickname (e.g. segmenter)
+    # @param str devID      - device id associated with this process (e.g. encoder IP address)
+    # @param bool keepAlive - restart the process if it's dead
+    # @param bool killIdle  - kill the process if it's idle
+    # @param bool forceKill - whether to force-kill the process (e.g. send SIGKILL instead of SIGINT)
+    def padd(self,cmd,name,devID,keepAlive=False,killIdle=False,forceKill=False):
+        idx = 0 #the index of the new process
+        procs = self.procs
+        #find the next available index
+        for pidx in procs:
+            if(pidx>idx):
+                idx = pidx+1
+        #add the process to the array of processes
+        self.procs[idx] = { #new process idx is just an increment of the last one
+            'cmd'       : cmd,
+            'name'      : name,
+            'devID'     : devID,
+            'keepalive' : keepAlive,
+            'killidle'  : killIdle,
+            'forceKill' : forceKill,
+            'pid'       : False,    # until the process starts - pid is false
+            'ref'       : False,    # process ref is also false until it's started
+            'alive'     : False,    # whether this process is alive or not
+            'cpu'       : 0,        # cpu usage
+            'run'       : True,     # process will be killed when this is set to False
+            'killcount' : 0         # number of times the process was attempted to stop
+            }
+    #end padd
+
+    # remove process from the list 
+    def premove(self,procidx):
+        if(procidx in self.procs):
+            del self.procs[procidx]
+    #end premove
+    # starts a process from its command and sets the pid/ref accordingly
+    def _start(self,procidx):
+        if(not procidx in self.procs):
+            return False
+        cmd = self.procs[procidx]['cmd']
+        # start the process
+        ps = sb.Popen(cmd.split(' '),stderr=FNULL)
+        # get its pid
+        self.procs[procidx]['pid']=ps.pid
+        # get the reference to the object (for communicating/killing it later)
+        self.procs[procidx]['ref']=ps
+        #set these 2 variables to make sure it doesn't get killed by the next monitor run
+        self.procs[procidx]['alive']=True 
+        self.procs[procidx]['cpu']=100
+    #end start
+    # sets the RUN status of the process to false, indicating this process is to be killed
+    def _stop(self,devID=0,name=0,procidx=-1):
+        if(devID and name):
+            idx = self.getProcIndex(devID,name)
+        else:
+            idx = procidx
+        if(idx in self.procs):
+            self.procs[idx]['run'] = False
+    #end stop
+#finds a gap in the sorted list of integers
+# def gap(arr,first,last):
+#     if(len(arr)<1)
+#         return 0
+#     if(first>=last):
+#         if(first>=arr[first]):
+#             return last+1
+#         return last    
+#     med = (last+first)>>1 #faster than divide by 2
+#     if(med<arr[med]):
+#         return gap(arr,first,med)
+#     return gap(arr,med+1,last)
+#end gap
+# arr = [0,1,3,5,10]
+# print gap(arr,0,count(arr)-1)
+
+#end procmgr
 
 def addVic(pid=0,pgid=0,ref=False,timeout=4,force=False):
     hitlist.append({
@@ -1354,7 +1514,7 @@ def procKiller():
 # @param (obj) ref - reference to the Popen process (used to .communicate() - should prevent zombies)
 # @param (int) timeout - timeout in seconds how long to try and kill the process
 # @param (bool) force - whether to force exit a process (sends KILL - non-catchable, non-ignorable kill)
-def psKill(pid=0,pgid=0,ref=False,timeout=3,force=False):
+def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
     if(not(pid or pgid)):
         return #one must be specified 
     timeout += time.time()
