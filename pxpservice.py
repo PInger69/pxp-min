@@ -1,6 +1,4 @@
 #!/usr/bin/python
-# from twisted.internet import reactor, protocol, task
-# from twisted.protocols import basic
 from tendo import singleton
 from datetime import datetime as dt
 from uuid import getnode as getmac
@@ -34,9 +32,6 @@ globalBBQ = {}
 #     }
 #     ...
 # ]
-hitlist = []
-# list of processes that are managed (e.g. status monitored, started/stopped auto re-started if paused, etc.)
-procs = []
 
 lastStatus = 0
 # when was a kill sig issued
@@ -72,9 +67,7 @@ tdSession   = {} # list of teradek session IDs - used for accessing the web API
 #       'ffref':<object reference>
 #   }
 # }
-encRefs = {}
-#processes being monitored
-procMons = {}
+
 # input ports with their statuses.
 # e.g.:
 # {
@@ -99,8 +92,11 @@ procMons = {}
 # }
 # 
 portIns = {}
-# blue screen will be forwarded to these ports (when they're specified)
-blueOut = {'mp4':[],'hls':[]}
+# used in UDP port forwarding - contains sets of ports, 
+# ports that are specified here will receive data from incoming ports (in the portFwd() function)
+# every port in a set will receive same packets
+# each set is a list with a name. e.g. 'mp4':[12345, 12346, 12347]
+portFwds = {}
 
 proxyBase  = 22000 #output port for rtsp stream (live555 takes in rtsp from the IP source and forwards it to local server on this port)
 
@@ -116,11 +112,11 @@ sockInPort = 2232
 ###################################################
 ################## delete files ##################
 ###################################################
-rmFiles = []
-rmDirs = []
-bonjouring = [True] #has to be a list to stop bonjour externally
-FNULL = open(os.devnull,"w") #for dumping all cmd output using Popen()
-SHUTDOWN   = False #set to true when pxpservive is shutting down
+rmFiles     = []
+rmDirs      = []
+bonjouring  = [True] #has to be a list to stop bonjour externally
+FNULL       = open(os.devnull,"w") #for dumping all cmd output using Popen()
+SHUTDOWN    = False #set to true when pxpservive is shutting down
 
 def deleteFiles():
     # if there is a deletion in progress - let it finish
@@ -184,22 +180,17 @@ def removeOldEvents():
 ###################################################
 ################## util functions ################
 ###################################################
+# def pxpAlarm(signal=False,frame=False):
+#     print "..........\n..........\n........ ALARM!!!!!!!!!!!"
+#     raise Exception("alarm")
+
 def pxpCleanup(signal=False, frame=False):
-    global SHUTDOWN
+    global SHUTDOWN, LIVE
     try:
+        print "..............SIG: ",signal
         dbgLog("terminating services...")
         SHUTDOWN = True
-        # blueOut['mp4']=[{'input':-1}] #stop forwarding blue screen to mp4 port
-        # blueOut['hls']=[{'input':-1}] #stop forwarding blue screen to hls port
-        # bonjouring[0] = False
-        # stop killing processes
-        # if(len(hitlist)<1):
-        #     hitlist.append("stop")
-        # else:
-        #     hitlist[0] = "stop"
-        #stop camera port forwarding
-        # for port in portIns:
-        #     portIns[port]['forwarding']=False
+        LIVE = False
         for tm in tmr:
             dbgLog(str(tm)+"...")
             if(type(tmr[tm]) is dict):
@@ -213,11 +204,11 @@ def pxpCleanup(signal=False, frame=False):
                     tmr[tm].kill()
                 except:
                     pass
-        # reactor.stop()
         dbgLog("terminated!")
     except Exception as e:
         pass
 #end pxpCleanup
+
 def dbgLog(msg, timestamp=True):
     try:
         print dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"), msg
@@ -379,8 +370,8 @@ def pubBonjour():
 
 #forwards a udp port to another (or several)
 #portIN - which port to read from
-#portSet - index of the set of ports where to forward ('hls','mp4'...)
-def portFwd(portIN,portSet):
+#portOutSet - index of the set of ports where to forward ('hls','mp4'...)
+def portFwd(portIN,portOutSet):
     # portIN = 2240
     global SHUTDOWN
     try:
@@ -390,23 +381,18 @@ def portFwd(portIN,portSet):
         sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)      #Create a socket object
         sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #create socket for outgoing packets    
         sIN.bind((host, portIN))    #Bind to the port
-        sIN.settimeout(2)
-        forwarding = True
-        while forwarding and not SHUTDOWN: #keep receiving until got all the data
+        sIN.settimeout(1)
+        while not SHUTDOWN: #keep receiving forever
             try:
-                ports = blueOut[portSet]
-                if(ports[0]['input']<=0):#stop this forwarder
-                    forwarding = False
-                    return
-                data, addr = sIN.recvfrom(1024)
-                if(len(data)<=0):
-                    continue
-                if(len(ports)<=0):
-                    data = ""
+                if(not (portOutSet in portFwds) or len(portFwds[portOutSet])<1):
                     time.sleep(0.1)
+                    continue #this set is not defined or is empty
+                ports = portFwds[portOutSet]
+                data, addr = sIN.recvfrom(1024)
+                if(len(data)<=0):#no data received
                     continue
                 for port in ports:
-                    sOUT.sendto(data,(host,port['output']))
+                    sOUT.sendto(data,(host,port))
             except socket.error, msg:
                 dbgLog("portFwd sock err: "+str(msg))
                 pass
@@ -427,26 +413,34 @@ def camPortMon(port):
     global SHUTDOWN, LIVE
     try:
         host = '127.0.0.1'          #local ip address    
-        sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)      #Create a socket object
-        sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #create socket for outgoing packets    
+        sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  #Create a socket object
+        sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #create socket for outgoing packets    
         portIn = port['input']
         portOut= port['output']
-        sIN.bind((host, portIn))    #Bind to the port
+        sIN.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        err = True
+        while(err):
+            try:
+                sIN.bind((host, portIn))    #Bind to the port
+                err = False
+            except:
+                time.sleep(1)
+                print "failed to connect to socket, try again..."
+                err = True
+        #end while err
+        sIN.setblocking(0)
         sIN.settimeout(0.5)
         while portIns[port['input']]['forwarding'] and not SHUTDOWN:
             try:
                 if(port['status']!='live'): #this camera is paused or stopped - do not forward anything
                     time.sleep(0.1) #reduce the cpu load
                     continue
-                data, addr = sIN.recvfrom(65536)
+                data, addr = sIN.recvfrom(65535)
                 if(len(data)<=0 and portIns[portIn]['active']):
                     # portIns[portIn]['active']=False
-                    # blueOut[port['type']].append(port)
                     continue
                 #if no data
                 portIns[portIn]['active']=True
-                if(port in blueOut[port['type']]): #data was received, but there is a blue screen forwader - remove it
-                    blueOut[port['type']].remove(port)
                 sOUT.sendto(data,(host,portOut))
                 # send to cloud
                 # sOUT.sendto(data,("54.221.235.84",20202))
@@ -458,23 +452,19 @@ def camPortMon(port):
                         portIns[portIn]['active']=False
                         devID = portIns[portIn]['camera']
                         if(LIVE):
-                            print "setting ", devID, "to false!!!!!!!!"
                             encoders[devID]['on']=False #only set encoder status if there is a live event
                     # time.sleep(0.5)
-                    # if(port['type'] in blueOut and not (port in blueOut[port['type']])):
-                    #     blueOut[port['type']].append(port)
-                    # pass
                 except Exception as e:
                     print "error in sock exception????",e,sys.exc_traceback.tb_lineno
 
             except Exception as e:
                 dbgLog("camportmon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
                 pass
-        #end while True
+        #end while
     except Exception as e:
         dbgLog("camportmon global err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
-#end tdPortMon
+#end camPortMon
 
 
 #starts mp4/hls capture on all cameras
@@ -516,9 +506,7 @@ def tdStartCap():
             # this is HLS capture (segmenter)
             segmenters[devID] = c.segbin+" -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+dskHLS
             # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
-            ffcaps[devID] = c.ffbin+" -rtsp_transport tcp -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
-            if(not (devID in encRefs)):
-                encRefs[devID]={}
+            ffcaps[devID] = c.ffbin+" -rtsp_transport tcp -probesize 100000 -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
             # each camera also needs its own port forwarder
             portIns[int(camMP4)]={
                 'forwarding'  :True,
@@ -546,94 +534,74 @@ def tdStartCap():
         # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
         ffMP4recorder = ffmp4Ins+ffmp4Out
         # this starts an ffmpeg instance to simulate blue scren in case the camera kicks off
-        # ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"/bluescreen.jpg -r 30 -vcodec libx264 -an -shortest -f h264 udp://127.0.0.1:"+str(blueMP4)+" -r 30 -vcodec libx264 -vbsf h264_mp4toannexb -f mpegts udp://127.0.0.1:"+str(blueHLS)
+        ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"/bluescreen.jpg -r 30 -vcodec libx264 -an -shortest -f h264 udp://127.0.0.1:"+str(blueMP4)+" -r 30 -vcodec libx264 -vbsf h264_mp4toannexb -f mpegts udp://127.0.0.1:"+str(blueHLS)
         # start the HLS segmenters and rtsp/rtmp captures
         for devID in segmenters:
             # segmenter
-            cmd = segmenters[devID]
-            ps = sb.Popen(cmd.split(' '),stdout=FNULL)
-            encRefs[devID]['segmCmd']=cmd
-            encRefs[devID]['segmPID']=ps.pid
-            encRefs[devID]['segmRef']=ps
-            addMon(pid=ps.pid)
-            # start monitoring the segmenter
-            # addMon(pid=ps.pid)
+            procMan.padd(name="segment",devID=devID,cmd=segmenters[devID],forceKill=True)
             # ffmpeg RTSP capture
-            cmd = ffcaps[devID]
-            ps = sb.Popen(cmd.split(' '),stderr=FNULL)
-            encRefs[devID]['scapCmd']=cmd
-            encRefs[devID]['scapPID']=ps.pid
-            encRefs[devID]['scapRef']=ps
-        # start blue screen
-        # ps = sb.Popen(ffBlue.split(' '),stderr=FNULL)
-        # encRefs['blue']={'cmd':ffBlue,'pid':ps.pid,'ref':ps}
+            procMan.padd(name="capture",devID=devID,cmd=ffcaps[devID],keepAlive=True,killIdle=True,forceKill=True)
+        #end for dev in segmenters
+
+        # start blue screen simulator
+        procMan.padd(cmd=ffBlue,       name="blue",  devID="ALL", keepAlive=True, killIdle = True, forceKill=True)        
         # start mp4 recording to file
-        ps = sb.Popen(ffMP4recorder.split(' '))
-        encRefs['mp4save']={'cmd':ffMP4recorder,'pid':ps.pid,'ref':ps}
+        procMan.padd(cmd=ffMP4recorder,name="record",devID="ALL")
     except Exception as e:
         dbgLog("START CAP ERR: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
 #end tdStartCap
 
-# checks if any of the encoders/segmenters in the specified device are on
-def tdProcOn(dev):
-    refCopy = copy.deepcopy(encRefs)    
-    for idx in refCopy:        
-        if(idx.lower()[-3:]=='pid'):
-            # this is a pid
-            if(psOnID(pid=refCopy[idx])):
-                return True
-    return False
-#end tdProcOn
 #stops the capture, kills all ffmpeg's and segmenters
 def tdStopCap():
     global LIVE
     try:
-        refCopy = copy.deepcopy(encRefs)    
         # remove all forwaders
         for port in portIns:
             portIns[port]['forwarding']=False
             portIns[port]['status']='stopped'
         # stop all captures
-        while(len(encRefs)>0):
-            for td in refCopy:
-                if('segmPID' in refCopy[td] and psOnID(pid=refCopy[td]['segmPID'])):#kill segmenter
-                    procPID = refCopy[td]['segmPID']
-                    addVic(pid=procPID, ref=refCopy[td]['segmRef'], force=True)
-                    delMon(pid=procPID)
-                if('scapPID' in refCopy[td] and psOnID(pid=refCopy[td]['scapPID'])):#kill stream capture (ffmpeg)
-                    procPID = refCopy[td]['scapPID']
-                    addVic(pid=procPID, ref=refCopy[td]['scapRef'], force=True)
-                if(td=='blue' or td=='mp4save'): #kill mp4-recorder/bluescreen-forwader (ffmpeg)
-                    procPID = refCopy[td]['pid']
-                    addVic(pid=procPID, ref=refCopy[td]['ref'] )
-                if(not tdProcOn(td) and td in encRefs):
-                    #all the processes associated with this encoder were terminated - delete it from the list
-                    del encRefs[td]
-            #end for
-            time.sleep(2) #wait for a few seconds before running through PIDs again
+        cameras = camera.getOnCams()
+        print "stopping segment and capture"
+        for devID in cameras:
+            procMan.stop(devID=devID,name="segment")
+            procMan.stop(devID=devID,name="capture")
         #end while
-        #remove any bluescreen forwarders (if any)
-        blueOut['mp4']=[]
-        blueOut['hls']=[]
-        # delete port forwarding threads
+        # wait for processes to stop        
+        while(procMan.findProc("capture")):
+            time.sleep(1)
+        print "stopped, forwarding the bluescreen"
+        # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls 
+        # start forwarding blue screen to all the mp4 recorder ports
+        if(not 'mp4' in portFwds):
+            portFwds['mp4']=[]
+        # blue port ----> mp4 recorder IN port
+        for portNum in portIns:
+            port = portIns[portNum]
+            if(port['type']=='mp4'):
+                portFwds['mp4'].append(port['output'])
+        print "stopping mp4 recorder"
+        procMan.stop(devID='ALL',name='record')
+        # wait for the recorder to stop, then kill blue screen forward
+        while(procMan.findProc("record")):
+            time.sleep(1)
+        print "mp4 record stopped"
+        # kill the blue screen ffmpeg process
+        procMan.stop(devID='ALL',name='blue')
+        # remove blue screen forwarders
+        portFwds['mp4'] = []
+        # delete port forwarding threads (cam OUT ---> disk IN)
         if('portFwd' in tmr):
             for thd in tmr['portFwd']:
                 tmr['portFwd'][thd].kill()
     except Exception as e:
         dbgLog("stopcap err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
-    os.system("killall -15 "+c.ffname)
-    os.system("killall -15 "+c.segname)
-    time.sleep(2)
-    os.system("killall -9 "+c.ffname)
-    os.system("killall -9 "+c.segname)    
-    time.sleep(1)
     LIVE = False
 #end tdStopCap
 
 #gets status of all encoders in the system
-def tdStatus():
+def encStatus():
     # list of active encoders
     validTDs = {}
     try:
@@ -660,7 +628,7 @@ def tdStatus():
                     data = s.recv(1024)
                 except Exception as e:
                     data = str(e)
-                    dbgLog("tdstatus err: "+str(e)+" at "+tdURL)
+                    dbgLog("encstatus err: "+str(e)+" at "+tdURL)
                 #close the socket
                 try:
                     s.close()
@@ -689,7 +657,7 @@ def tdStatus():
     except Exception as e:
         pass
     return validTDs
-#end tdStatus
+#end encStatus
 
 def camMonitor():
     global LIVE
@@ -697,8 +665,7 @@ def camMonitor():
     try:
         cams = camera.getOnCams()
         # get status of all connected encoders
-        tds = tdStatus()
-        # dbgLog("...........................TDS: "+str(tds))
+        tds = encStatus()
         if(not LIVE):
             dbgLog("no live event")
             return
@@ -719,6 +686,7 @@ def camMonitor():
                     portIns[camMP4]['status']='paused'
                 if(camHLS in portIns):
                     portIns[camHLS]['status']='paused'
+                print "paused"
                 continue #this camera is paused - no need to check anything else here
             elif('state' in cams[td] and cams[td]['state']=='stopped'):
                 #############
@@ -728,6 +696,7 @@ def camMonitor():
                     portIns[camMP4]['status']='stopped'
                 if(camHLS in portIns):
                     portIns[camHLS]['status']='stopped'
+                print "stopped"
                 continue #this camera is stopped
             else: #by default assume camera is live
                 ############
@@ -737,26 +706,10 @@ def camMonitor():
                     portIns[camMP4]['status']='live'
                 if(camHLS in portIns):
                     portIns[camHLS]['status']='live'
+                print "live"                
             dbgLog("cam: "+str(td))
             if(td in tds):
                 dbgLog("details: "+str(tds[td]))
-            if((td in tds) and tds[td]['on'] and (td in encRefs) and (not procMons[encRefs[td]['segmPID']]['idle'])):
-                print "SHOULD BE OK"
-                #this camera is getting data
-                #check if its ffmpeg is live and kicking
-                if(not (('scapPID' in encRefs[td]) and psOnID(pid=encRefs[td]['scapPID']))):
-                    #no ffmpeg - it must've died when the camera disconnected - resume it
-                    dbgLog("dead camera - resuming:"+str(encRefs[td]['scapCmd']))
-                    ps = sb.Popen(encRefs[td]['scapCmd'].split(' '),stderr=FNULL)
-                    encRefs[td]['scapPID']=ps.pid
-                    encRefs[td]['scapRef']=ps
-            else:
-                print "DEAD STREAM??"
-                #camera is inactive
-                # make sure ffmpeg is dead
-                if(td in encRefs and 'scapPID' in encRefs[td]):
-                    print "kill FFMPEG!!!!!!!"
-                    addVic(pid=encRefs[td]['scapPID'], ref=encRefs[td]['scapRef'],force=True)
         #end for td in cams
     except Exception as e:
         dbgLog("cammon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
@@ -1191,7 +1144,7 @@ def mtFind():
     monarchs = []
     while(attempts>0 and len(monarchs)<1 and not SHUTDOWN):
         #the Search Target for monarch is:
-        monarchs  = pu.ssdp.discover("urn:schemas-upnp-org:service:MonarchUpnpService1",timeout=2)
+        monarchs  = pu.ssdp.discover("urn:schemas-upnp-org:service:MonarchUpnpService1",timeout=3)
         attempts -= 1
     if(SHUTDOWN):
         return
@@ -1217,45 +1170,45 @@ def mtFind():
 
 ############### process monitors ###############
 #monitors processes, creates alerts for idle ones
-def idleProcMon():
-    # create a copy in case the original gets modified during this loop
-    procCopy = copy.deepcopy(procMons)
-    # go through all processes and check theirwCPU status
-    for proc in procCopy:
-        if ('pid' in procCopy[proc]):
-            cpu = getCPU(pid=procCopy[proc]['pid'])
-        elif('pgid' in procCopy[proc]):
-            cpu = getCPU(pgid=procCopy[proc]['pgid'])
-        else:
-            cpu = 0
-        if(cpu<=0):#process idle, increment idle count
-            procCopy[proc]['idleTime']+=1
-        else:#process is not idle, reset idle count
-            procCopy[proc]['idleTime']=0
-        if(procCopy[proc]['idleTime']>3):#process has been idle for 4 ticks, set off an idle alert
-            procCopy[proc]['idle']=True
-        else:#process has returned from idle state - clear the idle alert
-            procCopy[proc]['idle']=False
-    #end for proc in procMons
-    # copy back the processes
-    for proc in procCopy:
-        if(proc in procMons):
-            procMons[proc]=procCopy[proc]
+# def idleProcMon():
+#     # create a copy in case the original gets modified during this loop
+#     procCopy = copy.deepcopy(procMons)
+#     # go through all processes and check theirwCPU status
+#     for proc in procCopy:
+#         if ('pid' in procCopy[proc]):
+#             cpu = getCPU(pid=procCopy[proc]['pid'])
+#         elif('pgid' in procCopy[proc]):
+#             cpu = getCPU(pgid=procCopy[proc]['pgid'])
+#         else:
+#             cpu = 0
+#         if(cpu<=0):#process idle, increment idle count
+#             procCopy[proc]['idleTime']+=1
+#         else:#process is not idle, reset idle count
+#             procCopy[proc]['idleTime']=0
+#         if(procCopy[proc]['idleTime']>3):#process has been idle for 4 ticks, set off an idle alert
+#             procCopy[proc]['idle']=True
+#         else:#process has returned from idle state - clear the idle alert
+#             procCopy[proc]['idle']=False
+#     #end for proc in procMons
+#     # copy back the processes
+#     for proc in procCopy:
+#         if(proc in procMons):
+#             procMons[proc]=procCopy[proc]
 #end idleProcMon    
 
 # adds a process to monitor
-def addMon(pid=0,pgid=0):
-    if(pid): #if this process monitor already exists, it just resets all counters
-        procMons[pid]={'pid':int(pid),'idle':False,'idleTime':0}
-    if(pgid):
-        procMons[pgid]={'pgid':int(pgid),'idle':False,'idleTime':0}
+# def addMon(pid=0,pgid=0):
+#     if(pid): #if this process monitor already exists, it just resets all counters
+#         procMons[pid]={'pid':int(pid),'idle':False,'idleTime':0}
+#     if(pgid):
+#         procMons[pgid]={'pgid':int(pgid),'idle':False,'idleTime':0}
 #end addMon
 # remove a process monitor from the list
-def delMon(pid=0,pgid=0):
-    if(pid and pid in procMons):
-        del procMons[pid]
-    if(pgid and pgid in procMons):
-        del procMons[pgid]
+# def delMon(pid=0,pgid=0):
+#     if(pid and pid in procMons):
+#         del procMons[pid]
+#     if(pgid and pgid in procMons):
+#         del procMons[pgid]
 #end delMon
 ############## end process monitors ##############
 
@@ -1323,14 +1276,25 @@ def getPorts():
 class procmgr():
     def __init__(self):
         self.procs = {} #processes in the system
-
+    # look for process by name (returns list of idx'es of processes that have this name)
+    # @param str procName - name of the process to find
+    # @return mixed - list of IDX's of processes with this name or False if no process found
+    def findProc(self, procName):
+        procs = self.procs.copy()
+        foundProcs = []
+        for idx in procs:
+            if(procs[idx]['name']==procName):
+                foundProcs.append(idx)
+        if(len(foundProcs)>0):
+            return foundProcs
+        return False
     # get the numeric index of a process based on its name and device it is associated with
     def getProcIndex(self,devID,name):
-        procs = self.procs
+        procs = self.procs.copy()
         foundIdx = -1 #if the process could not be found, return -1
         for idx in procs:
             proc = procs[idx]
-            if(proc['name']==name and proc['devID']==devID):
+            if(proc['name']==name and proc['dev']==devID):
                 foundIdx = idx
                 break #to speed up the function, break out of the loop as soon as the process is found
         return foundIdx
@@ -1339,56 +1303,66 @@ class procmgr():
     #############################################################
     # goes through the process list and kills those scheduled for termination
     def killer(self):
-        killList = copy.deepcopy(self.procs)
+        killList = self.procs.copy()
         # go through the queue and try to kill all processes that are scheduled for termination
         for idx in killList:
             victim = killList[idx]
-            if(not idx in self.procs or self.procs[idx]['run']): 
+            # print "KILLER:",idx, killList[idx]
+            if(not idx in self.procs or victim['run']):
                 continue #this process was just killed or it isn't scheduled for termination
             #increment kill attempt count
             self.procs[idx]['killcount'] += 1
             #try to kill it
-            psKill(pid=victim['pid'],ref=victim['ref'], force=victim['forceKill'])
+            # psKill(pid=victim['pid'], force=victim['forcekill'])
+            psKill(pid=victim['pid'],ref=victim['ref'], force=victim['forcekill'])
             if(idx in self.procs and not psOnID(pid=victim['pid'])):
                 #success - the process id dead!
-                self.premove(idx) #remove it from the process list
-            elif(idx in self.procs and self.procs[idx]['killCount']>2): #the process didn't die after 3 attempts - force kill next time
-                self.procs[idx]['forceKill'] = True
+                if(victim['resume']): #the process should be restarted
+                    self.procs[idx]['run']=True #mark it for startup
+                    self.procs[idx]['resume']=False #reset the resume flag
+                else:#the process was terminated for good
+                    self.premove(idx) #remove it from the process list
+            elif(idx in self.procs and self.procs[idx]['killcount']>2): #the process didn't die after 3 attempts - force kill next time
+                self.procs[idx]['forcekill'] = True
         #for idx in killList...
     #end killer
     # this is the main function that monitors/manages processes
-    def manage(self):
-        procs = copy.deepcopy(self.procs)
-        for idx in procs:
-            proc = procs[idx]
-            if(proc['run']): #this process should be alive
-                if((not proc['alive']) and proc['keepalive']): #process is dead but needs to be (re)started
-                    self._start(idx)
-                elif(proc['alive'] and proc['cpu']<0.1 and proc['killIdle']): #process is alive but stalled and needs to be killed
-                    self._stop(idx)
-            else: #process is scheduled for termination - self.killer will take care of it
-                # if(proc['alive']):
-                #     #just wait for it to be killed
-                #     # psKill(pid=proc['pid'],ref=proc['ref'],force=proc['forceKill'])
-                # else:
-                #     # the proc is already dead - remove it from the list
-                #     self.premove(idx)
-                pass
+    def manager(self):
+        try:
+            procs = self.procs.copy()
+            for idx in procs:
+                proc = procs[idx]
+                if(proc['run']): #this process should be alive
+                    if((not proc['alive']) and proc['keepalive']): #process is dead but needs to be (re)started
+                        self._start(idx)
+                    elif(proc['alive'] and proc['cpu']<0.1 and proc['killidle']): #process is alive but stalled and needs to be killed
+                        self.stop(procidx=idx,restart=True)
+                    elif(not (proc['alive'] or proc['keepalive'])): #the process died, and shouldn't be kept alive - remove it from the list
+                        self.premove(idx)
+                else: #process is scheduled for termination - self.killer will take care of it
+                    pass
+        except Exception as e:
+            print "mgr err: ",e,sys.exc_traceback.tb_lineno
     #end manage
     #############################################################
 
     #monitors the process and sets various parameters (e.g. cpu usage, whether it's alive or not, etc.)
     def monitor(self):
-        procs = self.procs
-        for idx in procs:
-            proc = procs[idx]
-            alive = psOnID(pid=proc['pid']) #check if the process is alive
-            cpu = getCPU(pid=proc['pid']) #get cpu usage
-            if(idx in self.procs):
-                self.procs['cpu'] = cpu
-                self.procs['alive'] = alive
-    
-    # add a new process
+        global LIVE
+        try:
+            procs = self.procs.copy()
+            for idx in procs:
+                proc = procs[idx]
+                # print proc['name'],"|",proc['cpu'],"|", proc['dev'],"|", proc['pid'],"|", proc['alive'], "|", proc['run']
+                alive = psOnID(pid=proc['pid']) #check if the process is alive
+                cpu = getCPU(pid=proc['pid']) #get cpu usage
+                if(idx in self.procs):
+                    self.procs[idx]['cpu'] = cpu
+                    self.procs[idx]['alive'] = alive
+                    self.procs[idx]['run'] = self.procs[idx]['run'] and LIVE
+        except Exception as e:
+            print "monitor err: ", e, sys.exc_traceback.tb_lineno
+    # add a new process and starts it
     # @param str cmd        - execute this command to start the process
     # @param str name       - process nickname (e.g. segmenter)
     # @param str devID      - device id associated with this process (e.g. encoder IP address)
@@ -1397,26 +1371,29 @@ class procmgr():
     # @param bool forceKill - whether to force-kill the process (e.g. send SIGKILL instead of SIGINT)
     def padd(self,cmd,name,devID,keepAlive=False,killIdle=False,forceKill=False):
         idx = 0 #the index of the new process
-        procs = self.procs
+        procs = self.procs.copy()
         #find the next available index
         for pidx in procs:
-            if(pidx>idx):
+            if(pidx>=idx):
                 idx = pidx+1
         #add the process to the array of processes
         self.procs[idx] = { #new process idx is just an increment of the last one
             'cmd'       : cmd,
             'name'      : name,
-            'devID'     : devID,
+            'dev'       : devID,
             'keepalive' : keepAlive,
             'killidle'  : killIdle,
-            'forceKill' : forceKill,
+            'forcekill' : forceKill,
             'pid'       : False,    # until the process starts - pid is false
-            'ref'       : False,    # process ref is also false until it's started
+            'ref'       : False,    # process reference is also false until it's started
             'alive'     : False,    # whether this process is alive or not
             'cpu'       : 0,        # cpu usage
             'run'       : True,     # process will be killed when this is set to False
-            'killcount' : 0         # number of times the process was attempted to stop
+            'killcount' : 0,        # number of times the process was attempted to stop
+            'resume'    : False     # this will be set to true when process is being killed but needs to restart
             }
+        # start the process as soon as it's added
+        self._start(idx)
     #end padd
 
     # remove process from the list 
@@ -1430,24 +1407,35 @@ class procmgr():
             return False
         cmd = self.procs[procidx]['cmd']
         # start the process
-        ps = sb.Popen(cmd.split(' '),stderr=FNULL)
+        if(self.procs[procidx]['forcekill']):
+            ps = sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
+        else:
+            ps = sb.Popen(cmd.split(' '))
         # get its pid
         self.procs[procidx]['pid']=ps.pid
         # get the reference to the object (for communicating/killing it later)
         self.procs[procidx]['ref']=ps
-        #set these 2 variables to make sure it doesn't get killed by the next monitor run
+        #set these 2 variables to make sure it doesn't get killed by the next manager run
         self.procs[procidx]['alive']=True 
         self.procs[procidx]['cpu']=100
+        self.procs[procidx]['resume']=False
     #end start
     # sets the RUN status of the process to false, indicating this process is to be killed
-    def _stop(self,devID=0,name=0,procidx=-1):
+    # @param int [devID] - id of the device associated with this process
+    # @param str [name]  - name of the process to stop
+    # @param int procidx - numeric id of the process (if previous two arguments were not specified)
+    # @param bool restart - whether to restart this process once it's killed
+    def stop(self,devID=0,name=0,procidx=-1,restart=False):
         if(devID and name):
             idx = self.getProcIndex(devID,name)
         else:
             idx = procidx
         if(idx in self.procs):
             self.procs[idx]['run'] = False
+            self.procs[idx]['resume'] = restart
     #end stop
+#end procmgr CLASS
+
 #finds a gap in the sorted list of integers
 # def gap(arr,first,last):
 #     if(len(arr)<1)
@@ -1464,50 +1452,7 @@ class procmgr():
 # arr = [0,1,3,5,10]
 # print gap(arr,0,count(arr)-1)
 
-#end procmgr
 
-def addVic(pid=0,pgid=0,ref=False,timeout=4,force=False):
-    hitlist.append({
-        'pid':pid,
-        'pgid':pgid,
-        'ref':ref,
-        'timeout':timeout,
-        'force':force,
-        'count':0 #how many times the kill was attempted
-        })
-
-def procKiller():
-    global SHUTDOWN
-    killing = True
-    try:
-        while killing and not SHUTDOWN:
-            if(len(hitlist)<=0):
-                time.sleep(0.5) #no victims in the queue
-                continue
-            if(str(hitlist[0])=='stop'):
-                killing=False
-                break
-            time.sleep(0.5)
-            # killList = copy.deepcopy(hitlist)
-            killList = hitlist
-            # go through the queue and try to kill all victims
-            for victim in killList:
-                if(not victim in hitlist):
-                    continue #this process was killed
-                vicID = hitlist.index(victim)
-                #increment kill attempt count
-                hitlist[vicID]['count'] += 1
-                #try to kill it
-                psKill(pid=victim['pid'],ref=victim['ref'], pgid=victim['pgid'],timeout=victim['timeout'],force=victim['force'])
-                if(victim in hitlist and not psOnID(victim['pid'],victim['pgid'])):
-                    hitlist.remove(victim) #the process is dead - remove it
-                elif(hitlist[vicID]['count']>2): #the process didn't die after 3 attempts - force kill next time
-                    hitlist[vicID]['force'] = True
-            #for victim...
-        #while killing..
-    except Exception as e:
-        pass
-#end procKiller
 # attempts to kill a process based on PID (sends SIGKILL, equivalent to -9)
 # @param (int) pid - process ID
 # @param (int) pgid - process group ID
@@ -1517,42 +1462,53 @@ def procKiller():
 def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
     if(not(pid or pgid)):
         return #one must be specified 
+    #this function is required to enable proper .communicate with ref - in case it stalls, it doesn't hang entire function
+    def comm(ref):
+        print "comm start...", ref.pid
+        ref.communicate('q')
+        ref.communicate('')
+        print "comm done...", ref.pid
     timeout += time.time()
     #continue trying to kill it until it's dead or timeout reached
     while(psOnID(pid=pid,pgid=pgid) and ((timeout-time.time())>0)):
         try:
-            dbgLog("PROC ALIVE!!! "+str(pid))
+            dbgLog("---------------PROC ALIVE "+str(pid))
             if(ref):#this is the proper way to stop a process opened with Popen
                 if(force):
+                    dbgLog("................killing ref")
                     ref.kill()
                 else:
-                    dbgLog("sending sigint...")
-                    # ref.send_signal(15)
+                    dbgLog("................terminating ref")
                     # ref.terminate()
-                    ref.send_signal(signal.SIGINT)
-                ref.communicate()
-            else:
+                    # os.kill(pid,signal.SIGINT)
+                    os.system("kill -15 "+str(pid))
+                t = TimedThread(comm,(ref,)) #same as ref.communicate()
+                if(not force):
+                    time.sleep(1)
+            else:#no reference was specified - just send the signal to the pid
                 if(force): #forcing a quit - send kill (-9)
+                    dbgLog("................killing noref")
                     sigToSend = signal.SIGKILL
-                else:#gentle quit, send term (-15)
-                    sigToSend = signal.SIGTERM
-                if(pgid):#for group kills, sigterm needs to be sent to the entire group (parent+children) otherwise there will be zombies
+                else:#gentle quit, sigint
+                    dbgLog("................terminating noref")
+                    sigToSend = signal.SIGINT
+                if(pgid):#for group kills, signal needs to be sent to the entire group (parent+children) otherwise there will be zombies
                     os.killpg(pgid, sigToSend)
                 elif(pid):
                     os.kill(pid,sigToSend)
-            time.sleep(2)
+            time.sleep(1)
         except Exception as e:
             dbgLog("kill err::::::::::::::::::"+str(e)+str(sys.exc_traceback.tb_lineno))
             pass
     #end while psOnID
     if(psOnID(pid=pid,pgid=pgid)):
-        dbgLog("did not kill!!!!!!!! try again!!!!!")
+        dbgLog("????????????did not kill?????? try again!!!!!")
         # exited loop on timeout - process is still alive, try to kill the process again with a SIGKILL this time
         try:
             if(ref):
-                ref.terminate()
+                ref.kill()
                 time.sleep(0.5)
-                ref.communicate()
+                t = TimedThread(comm,(ref,)) #same as ref.communicate()
             elif(pid):
                 os.kill(pid, signal.SIGKILL)
             elif(pgid):
@@ -1566,7 +1522,7 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
             if(ref):
                 ref.send_signal(signal.SIGHUP)
                 time.sleep(0.5)
-                ref.communicate()
+                t = TimedThread(comm,(ref,)) #same as ref.communicate
             elif(pgid):
                 os.killpg(pgid, signal.SIGHUP)
             elif(pid):
@@ -1738,25 +1694,32 @@ def SockHandler(sock,addr):
 
 
 
+dbgLog("starting...")
 #make sure there is only 1 instance of this script running
 me = singleton.SingleInstance() 
 tmr = {}
-# remove old encoders from the list, the file will be re-created when the service finds encoders
-dbgLog("starting...")
+procMan = procmgr()
 try:
+    # remove old encoders from the list, the file will be re-created when the service finds encoders
     os.remove(c.tdCamList)
     # remove cameras
     camera.camOff()
 except:
     pass
-#pxp socket communication is done on port 2232
 
-# set up messages(tags) queue manager to execute every second
+# process monitor - gets various statuses
+tmr['procmon']      = TimedThread(procMan.monitor,period=0.5)
+# process manager - starts/stops processes
+tmr['procman']      = TimedThread(procMan.manager,period=5)
+# process killer  - terminates processes stopped by the manager
+tmr['prockil']      = TimedThread(procMan.killer,period=3)
+
+# set up messages(tags) queue manager
 # this manages all socket communication (e.g. broadcasting new tags, sennds start/stop/pause/resume messages to tablets)
 tmr['BBQ']          = TimedThread(bbqManage,period=0.1)
 
 # start a watchdog timer
-# sends a periodic 'kick' to the watchdogE on the clients - to make sure socket is still alive
+# sends a periodic 'kick' to the watchdoge on the clients - to make sure socket is still alive
 tmr['dogeKick']     = TimedThread(kickDoge,period=30)
 
 # register pxp on bonjour service
@@ -1770,20 +1733,17 @@ tmr['mtFind']       = TimedThread(mtFind,period=20)
 
 tmr['camMonitor']   = TimedThread(camMonitor,period=10) #pinging teradek too often causes it to fall off after ~30 minutes
 
-tmr['idleMon']      = TimedThread(idleProcMon,period=0.5)
-
 # start deleter timer (deletes files that are not needed/old/etc.)
 tmr['delFiles']     = TimedThread(deleteFiles,period=2)
 
 tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
 #start the threads for forwarding the blue screen to udp ports (will not forward if everything is working properly)
-# tmr['fwdMP4'] = TimedThread(portFwd,(blueMP4,'mp4'))
+tmr['fwdMP4'] = TimedThread(portFwd,(blueMP4,'mp4'))
 # tmr['fwdHLS'] = TimedThread(portFwd,(blueHLS,'hls'))
+
+# signal.signal(signal.SIGALRM, pxpAlarm)
 #register what happens on ^C:
 signal.signal(signal.SIGINT, pxpCleanup)
-
-# thread that kills processes from the hitlist
-tmr['procKiller']   = TimedThread(procKiller)
 
 # timer checks if camera is connected (simply checks resolution)
 tmr['tdCamCon']     = TimedThread(tdCamConnectionMon,period=3)
@@ -1822,4 +1782,8 @@ if __name__=='__main__':
                 break
                 pass
     except Exception as e:
-        dbgLog("ERROR IN MAIN???"+str(e))
+        pxpCleanup()
+        appRunning = False
+        # dbgLog("ERROR IN MAIN???"+str(e)+str(sys.exc_traceback.tb_lineno))
+        print "MAIN ERRRRR????????? ",e
+        print sys.exc_traceback.tb_lineno

@@ -350,7 +350,7 @@ import urllib, urllib2
 class c_io:
 	frm = None
 	def __init__(self):
-		import cgitb; cgitb.enable()
+		# import cgitb; cgitb.enable()
 		import cgi
 		if not self.frm:
 			self.frm = cgi.FieldStorage()
@@ -512,6 +512,7 @@ import httplib
 import StringIO
  
 class c_ssdp:
+	# to find all the SSDP-compatible services, enter "ssdp:all" as service
 	def discover(self, service, timeout=2, retries=1):
 		#M-Search
 		group = ("239.255.255.250", 1900)
@@ -613,7 +614,7 @@ class c_tt(Thread):
 		super(TimedThread, self).__init__()
 		self.running = True
 		self.timeout = period #how often to run a specified function
-		self.sleeptime = min(1,period/2) #how much to sleep while waiting to run the next time
+		self.sleeptime = min(1,period/2) #how much to sleep while waiting to run the next time - sleep for 1 second at most or half of the desired period (if sub-second)
 		self.callback = callback
 		self.args = params
 		if(autostart):
@@ -652,7 +653,8 @@ class c_tt(Thread):
 				self.running = False
 				break
 			except Exception as e:
-				print "THREAD ",self.callback.__name__," ERROR: ",e
+				print "ERROR:",e
+				print "THREAD:",self.callback.__name__
 				pass
 		#end while
 	#end run
