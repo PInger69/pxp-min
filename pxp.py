@@ -1,7 +1,7 @@
 from time import sleep
 import pxputil as pu
 import constants as c
-import os, json
+import os, json, re
 #######################################################
 #######################################################
 ################debug section goes here################
@@ -604,6 +604,7 @@ def encstart():
 		hmteam = io.get('hmteam')
 		vsteam = io.get('vsteam')
 		league = io.get('league')
+		quality = io.get('quality')
 		if not (hmteam and vsteam and league):
 			return _err("Please specify teams and league")
 		# # make sure everything is off before starting a new stream
@@ -653,13 +654,14 @@ def encstart():
 		# add entry to the database that the encoding has started
 		msg = _logSql(ltype="enc_start",lid=(hmteamHID+','+vsteamHID+','+leagueHID),dbfile=c.wwwroot+"live/pxp.db")
 		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
-
+		if(not(quality=='low' or quality=='high')):
+			quality='high'
 		# _portSet() #set ports for blackmagic 
 		# # start hls segmenter
 		# success = success and not os.system("mediastreamsegmenter -p -t 1s -S 1 -B segm -i list.m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:2222 >/dev/null &")
 		# # start mp4 capture
 		# success = success and not os.system("ffmpeg -f mpegts -i 'udp://127.0.0.1:2223?fifo_size=1000000&overrun_nonfatal=1' -re -y -strict experimental -codec copy -f mp4 "+c.wwwroot+"live/video/main.mp4 2>/dev/null >/dev/null &")
-		success = success and camera.camStart()
+		success = success and camera.camStart(quality)
 		# return _err(minEvtHid)
 		if success:
 			evtHid = minEvtHid
@@ -848,6 +850,7 @@ def logout( sess):
 def prepdown():
 	io = pu.io
 	event = io.get('event')
+	appid = io.get('appid')
 	try:
 		if not event: #event was not specified
 			return _err()
@@ -903,7 +906,24 @@ def prepdown():
 			os.remove(c.wwwroot+event+'/extra.plist')
 		# plist file is ready, write it out:
 		pu.disk.file_set_contents(c.wwwroot+event+'/extra.plist',xmlOutput)
-
+		# event folder has to have spaces escaped (otherwise it'll break the command)
+		eventFolder = event.replace(" ","\ ")
+		# make sure kill idevcopy isn't running (otherwise the ipads used by it will be unresponsive)
+		os.system("killall -9 idevcopy 2>/dev/null &")
+		# make sure the pipe for getting idevcopy output doesn't exist before starting
+		progressPipe = "/tmp/pxpidevprogress"
+		try: #put it in try...except block in case unlink fails, do not terminate the download process
+			if(os.path.exists(progressPipe)):
+				os.unlink(progressPipe)
+		except:
+			pass	
+		if(appid):
+			#make sure appid only contains alphanumerics, dot, and dash
+			if(re.search("[^A-z0-9\-\.]",appid)):
+				appid="" #user probably tried to 'hack' the system, submitted a separate command
+		else:
+			appid=""
+		os.system(c.wwwroot+"_db/idevcopy "+eventFolder+" "+c.wwwroot+eventFolder+" "+appid+">/dev/null &")
 		return {"success":True}
 	except Exception as e:
 		import sys 

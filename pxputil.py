@@ -355,7 +355,10 @@ class c_io:
 		if not self.frm:
 			self.frm = cgi.FieldStorage()
 	def get(self, fieldName):
-		return self.frm.getvalue(fieldName)
+		try:
+			return self.frm.getvalue(fieldName)
+		except:
+			return False
 	#end get
 	# creates a url call (i.e. a 'get' request)
 	def url(self,url,params=False,timeout=60):

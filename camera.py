@@ -119,16 +119,22 @@ def camParam(param,camIndex=0,camID=False):
 # sets a camera parameter
 def camParamSet(param,value,camIndex=0,camID=False):
 	cams = getOnCams() #get all enabled cameras
-	if(not camID):#get the device ID (e.g. 192.168.1.101)
-		camID = getCamID(camIndex)
-	if(not camID in cams):
-		return False
-	cams[camID][param]=value
+	# if neither camera index nor camID were set, apply this setting to all cameras
+	if(camIndex or camID):
+		if(not camID):#get the device ID (e.g. 192.168.1.101)
+			camID = getCamID(camIndex)
+		if(not camID in cams):
+			return False
+		cams[camID][param]=value
+	else:
+		#applying setting to every camera
+		for cam in cams:
+			cams[cam][param]=value
 	return pdisk.cfgSet(section="cameras",value=cams)
 #end camParamSet
 
 # start an encode from all cameras
-def camStart():
+def camStart(quality='high'):
 	import os
 	# make sure encode is not already running
 	if(camStatus()=='live' or camStatus=='paused'):
@@ -193,7 +199,7 @@ def camStart():
 	# streamid = 0
 	for devID in cameras:
 		cameras[devID]['state'] = 'live'
-	pdisk.sockSend('STR',addnewline=False)
+	pdisk.sockSend('STR|'+quality,addnewline=False)
 	# update camera statuses on the disk
 	pdisk.cfgSet(section="cameras",value=cameras)
 	sleep(3) #wait for 3 seconds before returning result - to make sure streams start up properly

@@ -77,8 +77,8 @@ tdSession   = {} # list of teradek session IDs - used for accessing the web API
 #           type        :'mp4',             #--type of stream on this port
 #           camera      :'192.168.1.119',   #--devID for this camera
 #           input       :22700,             #--where data is being received
-#           output      :22000,             #--output port
-#           active      :True              #--False if no data is being received on this port, True if receiving data
+#           output      :22000,             #--where data is being sent
+#           active      :True               #--False if no data is being received on this port, True if receiving data
 #       },
 #   2280:{
 #           forwarding  :True,
@@ -180,14 +180,10 @@ def removeOldEvents():
 ###################################################
 ################## util functions ################
 ###################################################
-# def pxpAlarm(signal=False,frame=False):
-#     print "..........\n..........\n........ ALARM!!!!!!!!!!!"
-#     raise Exception("alarm")
 
 def pxpCleanup(signal=False, frame=False):
     global SHUTDOWN, LIVE
     try:
-        print "..............SIG: ",signal
         dbgLog("terminating services...")
         SHUTDOWN = True
         LIVE = False
@@ -425,7 +421,6 @@ def camPortMon(port):
                 err = False
             except:
                 time.sleep(1)
-                print "failed to connect to socket, try again..."
                 err = True
         #end while err
         sIN.setblocking(0)
@@ -447,7 +442,6 @@ def camPortMon(port):
             except socket.error, msg:
                 # only gets here if the connection is refused
                 try:
-                    # print "sock err: ", msg, " port: ", portIn, "--",(portIn in portIns)
                     if(portIn in portIns):
                         portIns[portIn]['active']=False
                         devID = portIns[portIn]['camera']
@@ -468,7 +462,7 @@ def camPortMon(port):
 
 
 #starts mp4/hls capture on all cameras
-def tdStartCap():
+def tdStartCap(quality):
     global LIVE
     LIVE = True
     cameras = camera.getOnCams()
@@ -502,11 +496,16 @@ def tdStartCap():
               fileSuffix = ""
             else: #multiple cameras - need to identify each file by camID
               fileSuffix = camID
+
             ffmp4Out +=" -map "+camID+" -codec copy "+c.wwwroot+"live/video/main"+fileSuffix+".mp4"
             # this is HLS capture (segmenter)
             segmenters[devID] = c.segbin+" -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+dskHLS
+            if(quality=='low' and 'preview' in cameras[devID]):
+                camURL = cameras[devID]['preview']
+            else:
+                camURL = cameras[devID]['url']
             # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
-            ffcaps[devID] = c.ffbin+" -rtsp_transport tcp -probesize 100000 -i "+cameras[devID]['url']+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
+            ffcaps[devID] = c.ffbin+" -rtsp_transport tcp -probesize 100000 -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
             # each camera also needs its own port forwarder
             portIns[int(camMP4)]={
                 'forwarding'  :True,
@@ -562,7 +561,7 @@ def tdStopCap():
             portIns[port]['status']='stopped'
         # stop all captures
         cameras = camera.getOnCams()
-        print "stopping segment and capture"
+        dbgLog("stopping segment and capture")
         for devID in cameras:
             procMan.stop(devID=devID,name="segment")
             procMan.stop(devID=devID,name="capture")
@@ -570,7 +569,7 @@ def tdStopCap():
         # wait for processes to stop        
         while(procMan.findProc("capture")):
             time.sleep(1)
-        print "stopped, forwarding the bluescreen"
+        dbgLog("stopped, forwarding the bluescreen")
         # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls 
         # start forwarding blue screen to all the mp4 recorder ports
         if(not 'mp4' in portFwds):
@@ -580,12 +579,12 @@ def tdStopCap():
             port = portIns[portNum]
             if(port['type']=='mp4'):
                 portFwds['mp4'].append(port['output'])
-        print "stopping mp4 recorder"
+        dbgLog("stopping mp4 recorder")
         procMan.stop(devID='ALL',name='record')
         # wait for the recorder to stop, then kill blue screen forward
         while(procMan.findProc("record")):
             time.sleep(1)
-        print "mp4 record stopped"
+        dbgLog("mp4 record stopped")
         # kill the blue screen ffmpeg process
         procMan.stop(devID='ALL',name='blue')
         # remove blue screen forwarders
@@ -663,12 +662,11 @@ def camMonitor():
     global LIVE
     # get all cameras that are active
     try:
-        cams = camera.getOnCams()
         # get status of all connected encoders
         tds = encStatus()
         if(not LIVE):
-            dbgLog("no live event")
-            return
+            camera.camOn() #enable all available cameras (this will be useful if user wants to hot-swap encoders)
+        cams = camera.getOnCams()
         # go through active cameras and make sure they're all online and active
         for td in cams:
             # set the activated camera status to the encoder status
@@ -706,7 +704,7 @@ def camMonitor():
                     portIns[camMP4]['status']='live'
                 if(camHLS in portIns):
                     portIns[camHLS]['status']='live'
-                print "live"                
+                print "live"
             dbgLog("cam: "+str(td))
             if(td in tds):
                 dbgLog("details: "+str(tds[td]))
@@ -904,10 +902,6 @@ def tdLogin(td):
 # sets it appropriately, if it is
 def tdSetFramerate(td):
     try:
-        print ""
-        print ""
-        print ""
-        print "checking framerate..."
         if(not td in encoders):
             return
         url = "http://"+td+"/cgi-bin/api.cgi"
@@ -938,19 +932,6 @@ def tdSetFramerate(td):
         if(not framerates):
             return
         framerates = framerates.split(',')
-        # for option in settings:
-        #     op = option.strip().split('=')
-        #     if(len(op)!=2):
-        #         continue #this option does not have the standard NAME = VALUE format - skip it
-        #     opName = op[0].strip().lower().split(".")[-1].strip()
-        #     opVal = op[1].strip().lower()            
-        #     if(opName=='framerate'):
-        #         # found frame rate
-        #         framerate = int(opVal)
-        #     nativeframe = nativeframe or (opName=='use_native_framerate' and opVal=='1')
-        #     if(opName=="framerates"):
-        #         framerates = opVal.split(",")
-        # #end for ..settings
 
         # got framerate - now make sure it's <=30
         if(not framerate or framerate<=30):
@@ -1144,6 +1125,7 @@ def mtFind():
     monarchs = []
     while(attempts>0 and len(monarchs)<1 and not SHUTDOWN):
         #the Search Target for monarch is:
+        #to find ALL ssdp devices simply enter ssdp:all as the target
         monarchs  = pu.ssdp.discover("urn:schemas-upnp-org:service:MonarchUpnpService1",timeout=3)
         attempts -= 1
     if(SHUTDOWN):
@@ -1153,7 +1135,9 @@ def mtFind():
         for dev in monarchs:
             try:            
                 devIP, devPT = mtParseURI(dev.location)
-                if(devIP and devPT):                    
+                if(devIP and devPT):
+                    if(devIP in encoders and encoders[devIP]['on']):
+                        continue #skip encoders that are working properly and have not been disconnected
                     params = mtGetParams(devIP)
                     if(params['rtsp_url'] and params['rtsp_port']):
                         if(not devIP in encoders):
@@ -1167,50 +1151,6 @@ def mtFind():
                 pass
 #end mtFind
 ############# end matrox monarch management #############
-
-############### process monitors ###############
-#monitors processes, creates alerts for idle ones
-# def idleProcMon():
-#     # create a copy in case the original gets modified during this loop
-#     procCopy = copy.deepcopy(procMons)
-#     # go through all processes and check theirwCPU status
-#     for proc in procCopy:
-#         if ('pid' in procCopy[proc]):
-#             cpu = getCPU(pid=procCopy[proc]['pid'])
-#         elif('pgid' in procCopy[proc]):
-#             cpu = getCPU(pgid=procCopy[proc]['pgid'])
-#         else:
-#             cpu = 0
-#         if(cpu<=0):#process idle, increment idle count
-#             procCopy[proc]['idleTime']+=1
-#         else:#process is not idle, reset idle count
-#             procCopy[proc]['idleTime']=0
-#         if(procCopy[proc]['idleTime']>3):#process has been idle for 4 ticks, set off an idle alert
-#             procCopy[proc]['idle']=True
-#         else:#process has returned from idle state - clear the idle alert
-#             procCopy[proc]['idle']=False
-#     #end for proc in procMons
-#     # copy back the processes
-#     for proc in procCopy:
-#         if(proc in procMons):
-#             procMons[proc]=procCopy[proc]
-#end idleProcMon    
-
-# adds a process to monitor
-# def addMon(pid=0,pgid=0):
-#     if(pid): #if this process monitor already exists, it just resets all counters
-#         procMons[pid]={'pid':int(pid),'idle':False,'idleTime':0}
-#     if(pgid):
-#         procMons[pgid]={'pgid':int(pgid),'idle':False,'idleTime':0}
-#end addMon
-# remove a process monitor from the list
-# def delMon(pid=0,pgid=0):
-#     if(pid and pid in procMons):
-#         del procMons[pid]
-#     if(pgid and pgid in procMons):
-#         del procMons[pgid]
-#end delMon
-############## end process monitors ##############
 
 # finds cpu usage by all processes with the same pgid
 def getCPU(pgid=0,pid=0):
@@ -1226,7 +1166,7 @@ def getCPU(pgid=0,pid=0):
             if(pgid==foundpgid):#this process belongs to the same group
                 try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
                     ps = psutil.Process(proc.pid)
-                    totalcpu += ps.get_cpu_percent()
+                    totalcpu += ps.get_cpu_percent(interval=0.1)
                 except:
                     continue
             #if pgid==foundpgid
@@ -1234,7 +1174,7 @@ def getCPU(pgid=0,pid=0):
     elif(pid):#looking for cpu usage of one process by pid
         try:
             ps = psutil.Process(pid)
-            totalcpu = ps.get_cpu_percent()
+            totalcpu = ps.get_cpu_percent(interval=0.1)
         except Exception as e:
             pass
     #get total cpu for a process
@@ -1330,17 +1270,21 @@ class procmgr():
     def manager(self):
         try:
             procs = self.procs.copy()
+            print "------------------------------------------"
             for idx in procs:
                 proc = procs[idx]
+                print idx, proc['name'], proc['alive'], proc['cpu'], proc['pid'], proc['keepalive']
                 if(proc['run']): #this process should be alive
                     if((not proc['alive']) and proc['keepalive']): #process is dead but needs to be (re)started
                         self._start(idx)
                     elif(proc['alive'] and proc['cpu']<0.1 and proc['killidle']): #process is alive but stalled and needs to be killed
                         self.stop(procidx=idx,restart=True)
+                        pass
                     elif(not (proc['alive'] or proc['keepalive'])): #the process died, and shouldn't be kept alive - remove it from the list
                         self.premove(idx)
                 else: #process is scheduled for termination - self.killer will take care of it
                     pass
+            print "------------------------------------------"
         except Exception as e:
             print "mgr err: ",e,sys.exc_traceback.tb_lineno
     #end manage
@@ -1407,10 +1351,7 @@ class procmgr():
             return False
         cmd = self.procs[procidx]['cmd']
         # start the process
-        if(self.procs[procidx]['forcekill']):
-            ps = sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
-        else:
-            ps = sb.Popen(cmd.split(' '))
+        ps = sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
         # get its pid
         self.procs[procidx]['pid']=ps.pid
         # get the reference to the object (for communicating/killing it later)
@@ -1556,7 +1497,11 @@ def psOnID(pid=0,pgid=0):
             p = psutil.Process(pid)
         else:#need to change this to look for all processes with this pgid
             p = psutil.Process(pgid)
-        psOn = p.is_running()
+        try:#for python 2.7.2 psutil.status is a method
+            pstatus = p.status()
+        except:#in python v2.7.5 or greater the psutil.status is a property, not a method
+            pstatus = p.status
+        psOn = p.is_running() and pstatus != psutil.STATUS_ZOMBIE
     except:
         return False
     return psOn
@@ -1565,32 +1510,32 @@ def psOnID(pid=0,pgid=0):
     # return os.system(cmd)==0
 
 # monitors the pxpstream app - if the app stops streaming, restarts it
-def streamMon():
-    global lastKillSig, lastStartSig, bitCAM, bitENC, bitSTREAM, bitSTART
-    # check ports
-    ports = getPorts()
-    if(ports["CHK"]!=65535):
-        # check port is set, so the video should be streaming - make sure that it is
-        now = int(time.time())
-        encstat = int(readFile("/tmp/pxpstreamstatus"))
-        if((int(sockRead())!=1) and (encstat&bitCAM) and (not(encstat&bitSTART)) and ((now-lastStartSig)>10)):
-            # no data or wrong data received - pxp is not streaming properly, but the camera is connected
-            # restart the pxp streaming app
-            now = int(time.time())
-            # if the app is on and it's been at least 5 seconds since the last kill sig, try to kill it
-            if(psOn("pxpStream.app") and (lastKillSig==0 or (now-lastKillSig)>5)):
-                lastKillSig = now
-                # if the pass is running, restart it
-                # os.system("/usr/bin/killall pxpStream")
-        now = int(time.time())
-        if((not psOn("pxpStream.app")) and (lastStartSig==0 or (now-lastStartSig)>5)):
-            #when the app is not on, start it to enable streaming
-            # start the pxp app
-            lastStartSig = now
-            # os.system("/usr/bin/open /Applications/pxpStream.app")
-    else:
-        pass
-#end streamMon
+# def streamMon():
+#     global lastKillSig, lastStartSig, bitCAM, bitENC, bitSTREAM, bitSTART
+#     # check ports
+#     ports = getPorts()
+#     if(ports["CHK"]!=65535):
+#         # check port is set, so the video should be streaming - make sure that it is
+#         now = int(time.time())
+#         encstat = int(readFile("/tmp/pxpstreamstatus"))
+#         if((int(sockRead())!=1) and (encstat&bitCAM) and (not(encstat&bitSTART)) and ((now-lastStartSig)>10)):
+#             # no data or wrong data received - pxp is not streaming properly, but the camera is connected
+#             # restart the pxp streaming app
+#             now = int(time.time())
+#             # if the app is on and it's been at least 5 seconds since the last kill sig, try to kill it
+#             if(psOn("pxpStream.app") and (lastKillSig==0 or (now-lastKillSig)>5)):
+#                 lastKillSig = now
+#                 # if the pass is running, restart it
+#                 # os.system("/usr/bin/killall pxpStream")
+#         now = int(time.time())
+#         if((not psOn("pxpStream.app")) and (lastStartSig==0 or (now-lastStartSig)>5)):
+#             #when the app is not on, start it to enable streaming
+#             # start the pxp app
+#             lastStartSig = now
+#             # os.system("/usr/bin/open /Applications/pxpStream.app")
+#     else:
+#         pass
+# #end streamMon
 
 # adds message for a client to the BBQ
 # client - id of the client (ip + port)
@@ -1644,7 +1589,10 @@ def DataHandler(data,addr):
                     rmDirs.append(dataParts[1])
                     nobroadcast = True
                 if(dataParts[0]=='STR'): #start encode
-                    tdStartCap()
+                    if(len(dataParts)>1):
+                        tdStartCap(dataParts[1])
+                    else:
+                        tdStartCap()
                     nobroadcast = True
                 if(dataParts[0]=='STP'): #stop encode
                     tdStopCap()
