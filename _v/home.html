@@ -15,13 +15,13 @@ def iff(cond,if_true,if_false=""):
 	<div class="row">
 		<h3>encoder management</h3>
 	</div>
-@if encoder['status']=="off" or encoder['status']=="stopped":
+@if encoder['status']=="ready":
 	<div class="row">
 		<p>Start a new event</p>
 	</div>
 @end
 	<div class="row">
-@if encoder['status']=="off" or encoder['status']=="stopped":
+@if encoder['status']=="ready":
 		<div class="col_5">
 				<div class="col_12">
 		 			<label for="hmteam" class="cw_4">Home Team</label>
@@ -56,7 +56,7 @@ def iff(cond,if_true,if_false=""):
 		<div class="col_12">
 @end #if encoder stopped..else
 			<div class="row">
-@if encoder['status']=="off" or encoder['status']=="stopped":
+@if encoder['status']=="ready":
 				<button class="medium green col_3 ajaxbtn" action="encstart" param="hmteam,vsteam,league">
 					<span class="icon-play"></span> Start
 				</button>
@@ -71,7 +71,7 @@ def iff(cond,if_true,if_false=""):
 					<span class="icon-play"></span> Resume
 				</button>
 @end
-@if (encoder['status']=='live' or encoder['status']=='paused'): #@if (encoder['code']&16):
+@if (encoder['status']=='live' or encoder['status']=='paused' or encoder['status']=='starting'):
 				<button class="medium red col_3 ajaxbtn" action="encstop">
 					<span class="icon-stop"></span> Stop
 				</button>

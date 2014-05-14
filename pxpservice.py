@@ -43,7 +43,6 @@ bitCAM      =  1 << 1
 bitSTREAM   =  1 << 2
 bitSTART    =  1 << 3
 
-LIVE        = False
 #encoder devices found through bonjour
 # in this format: 
 # encoders = {
@@ -117,7 +116,6 @@ rmDirs      = []
 bonjouring  = [True] #has to be a list to stop bonjour externally
 FNULL       = open(os.devnull,"w") #for dumping all cmd output using Popen()
 SHUTDOWN    = False #set to true when pxpservive is shutting down
-
 def deleteFiles():
     # if there is a deletion in progress - let it finish
     if (psOn("rm -f") or psOn("rm -rf") or psOn("xargs -0 rm")):
@@ -150,6 +148,7 @@ def deleteFiles():
 
 # deleting old events
 def removeOldEvents():
+
     if(len(rmDirs)>0):
         return #only do this if the service is not busy deleting other things
     try:
@@ -181,12 +180,92 @@ def removeOldEvents():
 ################## util functions ################
 ###################################################
 
+class encoder:
+    """
+    encoder status/configuration class
+    """
+    code = 0 #encoder status code
+    status = 'unknown'
+
+    #pre-defined status codes
+    STAT_UNKNOWN        = 0
+    STAT_INIT           = 1<<0 #encoder is initializing (pxpservice just started)
+    STAT_CAM_LOADING    = 1<<1 #the camera is initializing (searching for teradek cube's or matrox monarch's)
+    STAT_READY          = 1<<2 #encoder is ready to start an event
+    STAT_LIVE           = 1<<3 #there is a live event
+    STAT_SHUTDOWN       = 1<<4 #encoder is shutting down
+    STAT_PAUSED         = 1<<5 #the live event is paused
+    STAT_STOP           = 1<<6 #live event is stopping
+    STAT_START          = 1<<7 #live event starting
+    STAT_NOCAM          = 1<<8 #no camera found
+
+    def __init__(self):
+        self.statusSet(self.STAT_INIT)
+    def statusRead(self):
+        """ reads status from the disk into a json dictionary """
+        txtStatus = pu.disk.file_get_contents(c.encStatFile)
+        jsonStatus = json.loads(txtStatus)
+        # self.
+    #end statusRead
+    def statusSet(self,newStatus,autoWrite=True, overwrite=True):
+        """Set a new encoder status code and appropriate status text 
+        newStatus - new status of the encoder to set
+        autoWrite - (optional) write the status to disk right away (default=True)
+        overwrite - (optional) overwrite the current status with the new one, if False, status will be added (all statuses are bit-shifted)
+        """
+        try:
+            if(overwrite):
+                self.code = newStatus
+            else:
+                self.code = self.code | newStatus
+            self.status = self.statusTxt(newStatus)
+            dbgLog("status: "+self.status)
+            if(autoWrite):
+                self.statusWrite()
+        except Exception as e:
+            print e, sys.exc_traceback.tb_lineno
+    #end status
+    def statusWrite(self):
+        """ writes out current status to disk """
+        # this function is executed automatically (initialized at the bottom of this file), simply records current pxp status in a file
+        # the text status is saved simply as 'status' and the numeric status code is saved as 'statuscode'
+        # replace() is to make sure that if status has \ or ', it won't break the command and give invalid status
+        os.system("echo '"+json.dumps({"status":self.status.replace("\"","\\\""), "code":self.code})+"' > "+c.encStatFile)
+    #end statusWrite
+
+    def statusTxt(self, statusCode):
+        """ return the text corresponding to the status code """
+        if(statusCode & self.STAT_INIT):
+            return 'initializing'
+        if(statusCode & self.STAT_CAM_LOADING):
+            return 'loading camera'
+        if(statusCode & self.STAT_READY):
+            return 'ready'
+        if(statusCode & self.STAT_LIVE):
+            return 'live'
+        if(statusCode & self.STAT_SHUTDOWN):
+            return 'shutting down'
+        if(statusCode & self.STAT_PAUSED):
+            return 'paused'
+        if(statusCode & self.STAT_STOP):
+            return 'stopping'
+        if(statusCode & self.STAT_START):
+            return 'starting'
+        if(statusCode & self.STAT_NOCAM):
+            return 'no camera'
+        return 'unknown'
+    #end statusTxt
+#end encoder class
+
 def pxpCleanup(signal=False, frame=False):
-    global SHUTDOWN, LIVE
+    global SHUTDOWN
     try:
         dbgLog("terminating services...")
+        if(enc.code & (enc.STAT_LIVE | enc.STAT_PAUSED)):
+            encStopCap(force=True)
         SHUTDOWN = True
-        LIVE = False
+        enc.statusSet(newStatus=enc.STAT_SHUTDOWN)
+        dbgLog("stopping timers...")
         for tm in tmr:
             dbgLog(str(tm)+"...")
             if(type(tmr[tm]) is dict):
@@ -196,7 +275,7 @@ def pxpCleanup(signal=False, frame=False):
                     except:
                         pass
             else:
-                try: #use try here in case the thread was stopped previoulsy    
+                try: #use try here in case the thread was stopped previoulsy
                     tmr[tm].kill()
                 except:
                     pass
@@ -227,15 +306,6 @@ def kickDoge():
         if(len(myCMDs)<=0):
             addMsg(client,"doge")
 #end kickDoge
-
-# reads a text file and returns it
-def readFile(filename):
-    if(not os.path.exists(filename)):
-        return 0
-    contents = ""
-    with open(filename,"rb") as f:
-        contents = f.read()
-    return contents
 
 #returns true if both ip addresses belong to the same subnet
 def sameSubnet(ip1,ip2):
@@ -285,11 +355,11 @@ def encState(state):
 def bbqManage():
     global globalBBQ, lastStatus
     # get encoder status
-    pxpStatus = int(readFile("/tmp/pxpstreamstatus")) #contains status code
+    newStatus = enc.code #int(pu.disk.file_get_contents("/tmp/pxpstreamstatus")) #contains status code
     sendStatus = False
-    if(pxpStatus != lastStatus):
-        sendStatus = encState(pxpStatus)
-    lastStatus = pxpStatus
+    if(newStatus != lastStatus):
+        sendStatus = newStatus #encState(pxpStatus)
+    lastStatus = newStatus
     now = int(time.time()*1000) #current time
     # go through each sent command and if it wasn't ACK'd in 3 seconds, send it again
     BBQcopy = copy.deepcopy(globalBBQ)
@@ -323,12 +393,12 @@ def bbqManage():
                 #     # requests that have been sent over 5 times need to be deleted
                 #     del globalBBQ[client][0][cmdID]
                     # if a client did not respond, remove the client
-            
             #for cmd in client
         except Exception as e:
             pass
     #for client in globalBBQ
 #end bbqManage
+
 ################## network management ##################
 # registers pxp as bonjour service
 def pubBonjour():
@@ -363,7 +433,6 @@ def pubBonjour():
     finally:
         sdRef.close()
 #end pubBonjour
-
 #forwards a udp port to another (or several)
 #portIN - which port to read from
 #portOutSet - index of the set of ports where to forward ('hls','mp4'...)
@@ -400,24 +469,22 @@ def portFwd(portIN,portOutSet):
         dbgLog("portFwd global err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
 #end main
-
 ################## network management ##################
-
 
 ################## teradek management ##################
 def camPortMon(port):
-    global SHUTDOWN, LIVE
+    global SHUTDOWN
     try:
-        host = '127.0.0.1'          #local ip address    
+        host = '127.0.0.1'          #local ip address
         sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  #Create a socket object
-        sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #create socket for outgoing packets    
+        sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #create socket for outgoing packets
         portIn = port['input']
         portOut= port['output']
         sIN.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         err = True
-        while(err):
+        while (err):
             try:
-                sIN.bind((host, portIn))    #Bind to the port
+                sIN.bind((host, portIn)) #Bind to the port
                 err = False
             except:
                 time.sleep(1)
@@ -425,6 +492,7 @@ def camPortMon(port):
         #end while err
         sIN.setblocking(0)
         sIN.settimeout(0.5)
+        timeStart = time.time()
         while portIns[port['input']]['forwarding'] and not SHUTDOWN:
             try:
                 if(port['status']!='live'): #this camera is paused or stopped - do not forward anything
@@ -432,9 +500,10 @@ def camPortMon(port):
                     continue
                 data, addr = sIN.recvfrom(65535)
                 if(len(data)<=0 and portIns[portIn]['active']):
-                    # portIns[portIn]['active']=False
                     continue
-                #if no data
+                #pxp status should be 'live' at this point
+                if((enc.code & enc.STAT_START) and (time.time()-timeStart)>2):
+                    enc.statusSet(enc.STAT_LIVE,autoWrite=False)
                 portIns[portIn]['active']=True
                 sOUT.sendto(data,(host,portOut))
                 # send to cloud
@@ -442,15 +511,15 @@ def camPortMon(port):
             except socket.error, msg:
                 # only gets here if the connection is refused
                 try:
+                    timeStart = time.time()
                     if(portIn in portIns):
                         portIns[portIn]['active']=False
                         devID = portIns[portIn]['camera']
-                        if(LIVE):
+                        if(enc.code & enc.STAT_LIVE):
                             encoders[devID]['on']=False #only set encoder status if there is a live event
                     # time.sleep(0.5)
                 except Exception as e:
-                    print "error in sock exception????",e,sys.exc_traceback.tb_lineno
-
+                    pass
             except Exception as e:
                 dbgLog("camportmon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
                 pass
@@ -460,11 +529,53 @@ def camPortMon(port):
         pass
 #end camPortMon
 
+def encBitrateSet(bitrate, camIdx=-1):
+    """set new bitrate for a specified camera"""
+    print "set bitrate....................", bitrate, camIdx
+    cameras = camera.getOnCams()
+    try:
+        camIdx = int(camIdx)
+    except:
+        camIdx = -1
+    if(camIdx>=0):
+        print "ONE CAMERA!!!!!!!!"
+        camID = cameras.getCamID(camIdx)
+        if(camID):#camera is still enabled
+            # set bitrate
+            if('enctype' in cameras[camID] and cameras[camID]['enctype']=='td_cube'):
+                #this is a teradek cube, set bitrate accordingly
+                try:
+                    val = int(bitrate)
+                    if(val>=1000 and val<=5000): #valid bitrate
+                        bpsBitrate = val*1000 #convert bitrate to bps (for teradek)
+                        tdSetBitrate(camID,bpsBitrate)
+                except:
+                    pass
+        #end if camID
+        else:
+            return
+    else:#camera wasn't specified - set bitrate for all cameras
+        for camID in cameras:
+            print "......\n......\n......\nsetting bitrate for ", cameras[camID]
+            if('enctype' in cameras[camID] and cameras[camID]['enctype']=='td_cube'):
+                #this is a teradek cube - set bitrate accordingly
+                try:
+                    val = int(bitrate)
+                    if(val>=1000 and val<=5000): #valid bitrate
+                        bpsBitrate = val*1000 #convert bitrate to bps (for teradek)
+                        tdSetBitrate(camID,bpsBitrate)
+                except:
+                    pass
+        #end for camID in cameras
+    #end if camIdx>0 ... else
+#end encBitrateSet
 
 #starts mp4/hls capture on all cameras
-def tdStartCap(quality):
-    global LIVE
-    LIVE = True
+def encStartCap(quality):
+    enc.statusSet(enc.STAT_START)
+    # make sure ffmpeg's and segmenters are off:
+    os.system("killall -9 "+c.segname+" 2>/dev/null")
+    os.system("killall -9 "+c.ffname+" 2>/dev/null")
     cameras = camera.getOnCams()
     try:
         # ffstreamIns = []
@@ -532,14 +643,14 @@ def tdStartCap(quality):
         #end for device in cameras
         # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
         ffMP4recorder = ffmp4Ins+ffmp4Out
-        # this starts an ffmpeg instance to simulate blue scren in case the camera kicks off
+        # this starts an ffmpeg instance to simulate blue scren in case the camera kicks off when the event is being stopped
         ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"/bluescreen.jpg -r 30 -vcodec libx264 -an -shortest -f h264 udp://127.0.0.1:"+str(blueMP4)+" -r 30 -vcodec libx264 -vbsf h264_mp4toannexb -f mpegts udp://127.0.0.1:"+str(blueHLS)
         # start the HLS segmenters and rtsp/rtmp captures
         for devID in segmenters:
             # segmenter
             procMan.padd(name="segment",devID=devID,cmd=segmenters[devID],forceKill=True)
             # ffmpeg RTSP capture
-            procMan.padd(name="capture",devID=devID,cmd=ffcaps[devID],keepAlive=True,killIdle=True,forceKill=True)
+            procMan.padd(name="capture", devID=devID, cmd=ffcaps[devID], keepAlive=True, killIdle=True, forceKill=True)
         #end for dev in segmenters
 
         # start blue screen simulator
@@ -547,14 +658,21 @@ def tdStartCap(quality):
         # start mp4 recording to file
         procMan.padd(cmd=ffMP4recorder,name="record",devID="ALL")
     except Exception as e:
+        enc.statusSet(enc.STAT_READY)
         dbgLog("START CAP ERR: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
-#end tdStartCap
+#end encStartCap
 
-#stops the capture, kills all ffmpeg's and segmenters
-def tdStopCap():
-    global LIVE
+def encStopCap(force=False):
+    """stops the capture, kills all ffmpeg's and segmenters
+    force - (optional) force-kill all the processes - makes stopping process faster
+    """
+    global SHUTDOWN
     try:
+        dbgLog("stopping capture... force:"+str(force))
+        if(not(enc.code & (enc.STAT_LIVE | enc.STAT_PAUSED))):
+            force = True #the encode didn't finish starting or didn't start properly - force shut down everything
+        enc.statusSet(enc.STAT_STOP)
         # remove all forwaders
         for port in portIns:
             portIns[port]['forwarding']=False
@@ -563,30 +681,32 @@ def tdStopCap():
         cameras = camera.getOnCams()
         dbgLog("stopping segment and capture")
         for devID in cameras:
-            procMan.stop(devID=devID,name="segment")
-            procMan.stop(devID=devID,name="capture")
+            procMan.stop(devID=devID,name="segment", force=force)
+            procMan.stop(devID=devID,name="capture", force=force)
         #end while
-        # wait for processes to stop        
-        while(procMan.findProc("capture")):
+        # wait for processes to stop
+        while((procMan.findProc("capture") or procMan.findProc("segment")) and not SHUTDOWN):
             time.sleep(1)
         dbgLog("stopped, forwarding the bluescreen")
-        # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls 
+        # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls and ffmpeg produces a broken MP4 file
         # start forwarding blue screen to all the mp4 recorder ports
         if(not 'mp4' in portFwds):
             portFwds['mp4']=[]
-        # blue port ----> mp4 recorder IN port
+        # forward bluescreen OUT port ----> mp4 recorder IN port
         for portNum in portIns:
             port = portIns[portNum]
             if(port['type']=='mp4'):
                 portFwds['mp4'].append(port['output'])
         dbgLog("stopping mp4 recorder")
-        procMan.stop(devID='ALL',name='record')
+        procMan.stop(devID='ALL',name='record',force=force)
         # wait for the recorder to stop, then kill blue screen forward
-        while(procMan.findProc("record")):
+        while(procMan.findProc("record") and not SHUTDOWN):
             time.sleep(1)
         dbgLog("mp4 record stopped")
         # kill the blue screen ffmpeg process
-        procMan.stop(devID='ALL',name='blue')
+        procMan.stop(devID='ALL',name='blue', force=force)
+        while(procMan.findProc("blue") and not SHUTDOWN): #wait for bluescreen ffmpeg to stop
+            time.sleep(1)
         # remove blue screen forwarders
         portFwds['mp4'] = []
         # delete port forwarding threads (cam OUT ---> disk IN)
@@ -596,11 +716,15 @@ def tdStopCap():
     except Exception as e:
         dbgLog("stopcap err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
-    LIVE = False
-#end tdStopCap
+    enc.statusSet(enc.STAT_READY)
+#end encStopCap
 
-#gets status of all encoders in the system
-def encStatus():
+def encPauseCap():
+    enc.statusSet(enc.STAT_PAUSED)
+def encResumeCap():
+    enc.statusSet(enc.STAT_LIVE)
+#gets status of all encoder devices in the system
+def devStatus():
     # list of active encoders
     validTDs = {}
     try:
@@ -627,7 +751,7 @@ def encStatus():
                     data = s.recv(1024)
                 except Exception as e:
                     data = str(e)
-                    dbgLog("encstatus err: "+str(e)+" at "+tdURL)
+                    dbgLog("devstatus err: "+str(e)+" at "+tdURL)
                 #close the socket
                 try:
                     s.close()
@@ -656,15 +780,14 @@ def encStatus():
     except Exception as e:
         pass
     return validTDs
-#end encStatus
+#end devStatus
 
 def camMonitor():
-    global LIVE
     # get all cameras that are active
     try:
         # get status of all connected encoders
-        tds = encStatus()
-        if(not LIVE):
+        tds = devStatus()
+        if(not(enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED))): #when there's no live event, just enable all cameras so that the user will be able to start a live event
             camera.camOn() #enable all available cameras (this will be useful if user wants to hot-swap encoders)
         cams = camera.getOnCams()
         # go through active cameras and make sure they're all online and active
@@ -835,24 +958,28 @@ def tdFind():
 # VideoEncoder.Settings.1.framerate = 30
 # etc...
 def tdGetParam(response,parameter):
-    lines = response.split("\n")
-    if(len(lines)<1 or not(isinstance(lines,list))):
-        return False #wrong response type
-    for line in lines:
-        parts = line.split("=")
-        # make sure the line is in the format: SETTING = VALUE
-        if(len(parts)<2 or not(isinstance(parts,list))):
-            continue
-        # this line appears to have the right format
-        # make sure the setting name is in the right format
-        nameparts = parts[0].split('.')
-        if(len(nameparts)<2 or not(isinstance(nameparts,list))):
-            continue
-        # correct name format, check if this is the parameter we're looking for
-        if(nameparts[-1].strip().lower()==parameter.lower().strip()):
-            # found the right parameter, return its value
-            return parts[1].strip() #make sure there is no empty space around the result
-    return False
+    try:
+        lines = response.split("\n")
+        if(len(lines)<1 or not(isinstance(lines,list))):
+            return False #wrong response type
+        for line in lines:
+            parts = line.split("=")
+            # make sure the line is in the format: SETTING = VALUE
+            if(len(parts)<2 or not(isinstance(parts,list))):
+                continue
+            # this line appears to have the right format
+            # make sure the setting name is in the right format
+            nameparts = parts[0].split('.')
+            if(len(nameparts)<2 or not(isinstance(nameparts,list))):
+                continue
+            # correct name format, check if this is the parameter we're looking for
+            if(nameparts[-1].strip().lower()==parameter.lower().strip()):
+                # found the right parameter, return its value
+                return parts[1].strip() #make sure there is no empty space around the result
+        #end for line in lines
+        return False #if could not find the right parameter or its value is missing, return false
+    except:
+        return False
 #end tdGetParam
 
 # monitors encoders to make sure camera was not disconnected
@@ -865,16 +992,27 @@ def tdCamConnectionMon():
             if(not (td in tdSession and tdSession[td])):
                 tdLogin(td)
             url = "http://"+td+"/cgi-bin/api.cgi?session="+tdSession[td]
-            response = pu.io.url(url+"&command=get&q=VideoInput.Info.1.resolution&q=VideoEncoder.Settings.1.framerate")
+            response = pu.io.url(url+"&command=get&q=VideoInput.Info.1.resolution&q=VideoEncoder.Settings.1.framerate&q=VideoEncoder.Settings.1.bitrate")
             if(not response): #didn't get a response - timeout?
                 return 
             resolution = tdGetParam(response,'resolution')
             framerate = tdGetParam(response,'framerate')
+            bitrate = tdGetParam(response,'bitrate') #this is in bps
+            if(bitrate):#convert bitrate to kbps
+                try:
+                    intBitrate = int(bitrate)
+                    intBitrate = int(intBitrate / 1000)
+                except:
+                    intBitrate = False
+                    pass
+            # set bitrate for the settings page
+            camera.camParamSet('bitrate',bitrate,td)
             # set the camera resolution for displaying on the web page
             camera.camParamSet('resolution',resolution,td)
             try:
                 encoders[td]['resolution']=resolution
                 encoders[td]['framerate']=framerate
+                encoders[td]['bitrate'] = intBitrate
             except:#may fail if the device was removed from the encoders list
                 pass
             # if(framerate and int(framerate)>30):#frame rate was changed ??
@@ -898,6 +1036,43 @@ def tdLogin(td):
         return
 #end tdLogin
 
+def tdSetBitrate(td,bitrate):
+    try:
+        print "tdSetBitrate"
+        if(not td in encoders):
+            return
+        url = "http://"+td+"/cgi-bin/api.cgi"
+        if(not (td in tdSession and tdSession[td])):
+            tdLogin(td)
+        #end if not tdSession
+        print "logged in: ", tdSession[td]
+        url +="?session="+tdSession[td]
+
+        print "NEW BITRATE:.....................................", bitrate
+        setcmd = "&VideoEncoder.Settings.1.bitrate="+str(bitrate)
+        savecmd = "&q=VideoEncoder.Settings.1.bitrate"
+
+        print "setting..."
+        answer = False
+        while(not answer):
+            answer = pu.io.url(url+"&command=set"+setcmd,timeout=10)
+        print answer
+        # apply settings
+        print "applying..."
+        answer = False
+        while(not answer):
+            answer = pu.io.url(url+"&command=apply"+savecmd,timeout=10)
+            print answer
+        print answer
+        # save the settings
+        print "saving..."
+        answer = False
+        while(not answer):
+            answer = pu.io.url(url+"&command=save"+savecmd,timeout=10)
+        print answer
+    except Exception as e:
+        print "BRRRRRRRRRRRRRRRRRRRRRRRRRRRR: ", e, sys.exc_traceback.tb_lineno
+#end tdSetBitrate
 # checks if teradek framerate is above 30 
 # sets it appropriately, if it is
 def tdSetFramerate(td):
@@ -950,7 +1125,7 @@ def tdSetFramerate(td):
         print "NEW RATE:.....................................", newrate
         setcmd = "&VideoEncoder.Settings.1.framerate="+str(newrate)
         savecmd = "&q=VideoEncoder.Settings.1.framerate"
-        if(nativeframe):#currently native frame rate is set - need to set it manually
+        if(nativeframe):#currently native frame rate is set - need to reset it manually
             setcmd +="&VideoEncoder.Settings.1.use_native_framerate=0"
             savecmd = "&q=VideoEncoder.Settings.1.use_native_framerate"
         # set the frame rate
@@ -1126,29 +1301,34 @@ def mtFind():
     while(attempts>0 and len(monarchs)<1 and not SHUTDOWN):
         #the Search Target for monarch is:
         #to find ALL ssdp devices simply enter ssdp:all as the target
-        monarchs  = pu.ssdp.discover("urn:schemas-upnp-org:service:MonarchUpnpService1",timeout=3)
+        monarchs  = pu.ssdp.discover("MonarchUpnp",timeout=5)
         attempts -= 1
     if(SHUTDOWN):
         return
     if(len(monarchs)>0):
         # found at least one monarch 
-        for dev in monarchs:
-            try:            
+        for devLoc in monarchs:
+            try:
+                dev = monarchs[devLoc]
                 devIP, devPT = mtParseURI(dev.location)
                 if(devIP and devPT):
-                    if(devIP in encoders and encoders[devIP]['on']):
-                        continue #skip encoders that are working properly and have not been disconnected
+                    # if(devIP in encoders and encoders[devIP]['on']):
+                        # continue #skip encoders that are working properly and have not been disconnected
                     params = mtGetParams(devIP)
                     if(params['rtsp_url'] and params['rtsp_port']):
                         if(not devIP in encoders):
                             encoders[devIP] = {}
                             encoders[devIP]['on'] = False
+                        else:
+                            print devIP, "::::::::::::::", params
                         encoders[devIP]['enctype']='mt_monarch'
                         encoders[devIP]['url'] = params['rtsp_url']
                         encoders[devIP]['url_port'] = params['rtsp_port']
                         encoders[devIP]['resolution'] = params['inputResolution']
             except: #may fail if the device is invalid or doesn't have required attributes
                 pass
+        #end for devLoc in monarchs
+    #end if monarchs>0
 #end mtFind
 ############# end matrox monarch management #############
 
@@ -1203,7 +1383,7 @@ def sockRead(udpAddr="127.0.0.1", udpPort=2224, timeout=1, sizeToRead=1):
 # gets ports set in the config file
 def getPorts():
     ports = {"HLS":65535,"FFM":65535,"CHK":65535}
-    contents = readFile("/tmp/pxpports")
+    contents = pu.disk.file_get_contents("/tmp/pxpports")
     if not contents:
         return ports
     for line in contents.split("\n"):
@@ -1247,10 +1427,10 @@ class procmgr():
         # go through the queue and try to kill all processes that are scheduled for termination
         for idx in killList:
             victim = killList[idx]
-            # print "KILLER:",idx, killList[idx]
             if(not idx in self.procs or victim['run']):
                 continue #this process was just killed or it isn't scheduled for termination
             #increment kill attempt count
+            print "killing: ", self.procs[idx]
             self.procs[idx]['killcount'] += 1
             #try to kill it
             # psKill(pid=victim['pid'], force=victim['forcekill'])
@@ -1292,7 +1472,6 @@ class procmgr():
 
     #monitors the process and sets various parameters (e.g. cpu usage, whether it's alive or not, etc.)
     def monitor(self):
-        global LIVE
         try:
             procs = self.procs.copy()
             for idx in procs:
@@ -1303,7 +1482,7 @@ class procmgr():
                 if(idx in self.procs):
                     self.procs[idx]['cpu'] = cpu
                     self.procs[idx]['alive'] = alive
-                    self.procs[idx]['run'] = self.procs[idx]['run'] and LIVE
+                    self.procs[idx]['run'] = self.procs[idx]['run'] and not (enc.code & enc.STAT_READY)
         except Exception as e:
             print "monitor err: ", e, sys.exc_traceback.tb_lineno
     # add a new process and starts it
@@ -1336,6 +1515,7 @@ class procmgr():
             'killcount' : 0,        # number of times the process was attempted to stop
             'resume'    : False     # this will be set to true when process is being killed but needs to restart
             }
+        print " added:::::::::::::::: ",idx, self.procs[idx]
         # start the process as soon as it's added
         self._start(idx)
     #end padd
@@ -1364,14 +1544,17 @@ class procmgr():
     # sets the RUN status of the process to false, indicating this process is to be killed
     # @param int [devID] - id of the device associated with this process
     # @param str [name]  - name of the process to stop
-    # @param int procidx - numeric id of the process (if previous two arguments were not specified)
-    # @param bool restart - whether to restart this process once it's killed
-    def stop(self,devID=0,name=0,procidx=-1,restart=False):
+    # @param int [procidx] - numeric id of the process (if previous two arguments were not specified)
+    # @param bool [restart] - whether to restart this process once it's killed
+    # @param bool [force] - to force stop the process (regardless of its current flag setting) 
+    def stop(self,devID=0,name=0,procidx=-1,restart=False,force=False):
         if(devID and name):
             idx = self.getProcIndex(devID,name)
         else:
             idx = procidx
+        print "STOP CALLED!!!!!: ", name, idx, devID, procidx
         if(idx in self.procs):
+            self.procs[idx]['forcekill'] = force
             self.procs[idx]['run'] = False
             self.procs[idx]['resume'] = restart
     #end stop
@@ -1405,10 +1588,8 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
         return #one must be specified 
     #this function is required to enable proper .communicate with ref - in case it stalls, it doesn't hang entire function
     def comm(ref):
-        print "comm start...", ref.pid
         ref.communicate('q')
         ref.communicate('')
-        print "comm done...", ref.pid
     timeout += time.time()
     #continue trying to kill it until it's dead or timeout reached
     while(psOnID(pid=pid,pgid=pgid) and ((timeout-time.time())>0)):
@@ -1416,22 +1597,16 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
             dbgLog("---------------PROC ALIVE "+str(pid))
             if(ref):#this is the proper way to stop a process opened with Popen
                 if(force):
-                    dbgLog("................killing ref")
                     ref.kill()
                 else:
-                    dbgLog("................terminating ref")
-                    # ref.terminate()
-                    # os.kill(pid,signal.SIGINT)
                     os.system("kill -15 "+str(pid))
                 t = TimedThread(comm,(ref,)) #same as ref.communicate()
                 if(not force):
                     time.sleep(1)
             else:#no reference was specified - just send the signal to the pid
                 if(force): #forcing a quit - send kill (-9)
-                    dbgLog("................killing noref")
                     sigToSend = signal.SIGKILL
                 else:#gentle quit, sigint
-                    dbgLog("................terminating noref")
                     sigToSend = signal.SIGINT
                 if(pgid):#for group kills, signal needs to be sent to the entire group (parent+children) otherwise there will be zombies
                     os.killpg(pgid, sigToSend)
@@ -1509,34 +1684,6 @@ def psOnID(pid=0,pgid=0):
     # #result of the cmd is 0 if it was successful (i.e. the process exists)
     # return os.system(cmd)==0
 
-# monitors the pxpstream app - if the app stops streaming, restarts it
-# def streamMon():
-#     global lastKillSig, lastStartSig, bitCAM, bitENC, bitSTREAM, bitSTART
-#     # check ports
-#     ports = getPorts()
-#     if(ports["CHK"]!=65535):
-#         # check port is set, so the video should be streaming - make sure that it is
-#         now = int(time.time())
-#         encstat = int(readFile("/tmp/pxpstreamstatus"))
-#         if((int(sockRead())!=1) and (encstat&bitCAM) and (not(encstat&bitSTART)) and ((now-lastStartSig)>10)):
-#             # no data or wrong data received - pxp is not streaming properly, but the camera is connected
-#             # restart the pxp streaming app
-#             now = int(time.time())
-#             # if the app is on and it's been at least 5 seconds since the last kill sig, try to kill it
-#             if(psOn("pxpStream.app") and (lastKillSig==0 or (now-lastKillSig)>5)):
-#                 lastKillSig = now
-#                 # if the pass is running, restart it
-#                 # os.system("/usr/bin/killall pxpStream")
-#         now = int(time.time())
-#         if((not psOn("pxpStream.app")) and (lastStartSig==0 or (now-lastStartSig)>5)):
-#             #when the app is not on, start it to enable streaming
-#             # start the pxp app
-#             lastStartSig = now
-#             # os.system("/usr/bin/open /Applications/pxpStream.app")
-#     else:
-#         pass
-# #end streamMon
-
 # adds message for a client to the BBQ
 # client - id of the client (ip + port)
 # msg - message to send
@@ -1557,14 +1704,16 @@ def addMsg(client,msg,c=False):
 def turnOnCams():
     global SHUTDOWN
     cams = 0
+    enc.statusSet(enc.STAT_CAM_LOADING)
     while(cams<1 and not SHUTDOWN):
         try:
-            time.sleep(5)#give the system a few seconds to detect encoders
+            time.sleep(1) #wait to make sure encoders get detected
             camera.camOn()
             cams = len(camera.getOnCams())
-        except:
+        except Exception as e:
+            print e, sys.exc_traceback.tb_lineno
             pass
-
+    enc.statusSet(enc.STAT_READY)
 ####################################################################
 def DataHandler(data,addr):
     try:
@@ -1590,12 +1739,22 @@ def DataHandler(data,addr):
                     nobroadcast = True
                 if(dataParts[0]=='STR'): #start encode
                     if(len(dataParts)>1):
-                        tdStartCap(dataParts[1])
+                        encStartCap(dataParts[1])
                     else:
-                        tdStartCap()
+                        encStartCap()
                     nobroadcast = True
                 if(dataParts[0]=='STP'): #stop encode
-                    tdStopCap()
+                    encStopCap()
+                    nobroadcast = True
+                if(dataParts[0]=='PSE'): #pause encode
+                    encPauseCap()
+                    nobroadcast = True
+                if(dataParts[0]=='RSM'): #resume encode
+                    encResumeCap()
+                    nobroadcast = True
+                if(dataParts[0]=='BTR' and len(dataParts)>2): #change bitrate
+                    # data is in format BTR|<bitrate>|<camID>
+                    encBitrateSet(dataParts[1],dataParts[2])
                     nobroadcast = True
             #end if sender=127.0.0.1
             if(dataParts[0]=='ACK'): # acknowledgement of message receipt
@@ -1608,8 +1767,8 @@ def DataHandler(data,addr):
                 except Exception as e:
                     pass
                 return
-            #if dataparts=='do'
-        #if len(dataparts)>0
+            
+        #if len(dataParts)>0
         ###########################################
         #             broadcasting                #
         ###########################################
@@ -1640,11 +1799,12 @@ def SockHandler(sock,addr):
     sock.close()
 
 
+# set encoder status
 
-
+enc = encoder()
 dbgLog("starting...")
 #make sure there is only 1 instance of this script running
-me = singleton.SingleInstance() 
+me = singleton.SingleInstance()
 tmr = {}
 procMan = procmgr()
 try:
@@ -1689,7 +1849,6 @@ tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
 tmr['fwdMP4'] = TimedThread(portFwd,(blueMP4,'mp4'))
 # tmr['fwdHLS'] = TimedThread(portFwd,(blueHLS,'hls'))
 
-# signal.signal(signal.SIGALRM, pxpAlarm)
 #register what happens on ^C:
 signal.signal(signal.SIGINT, pxpCleanup)
 
@@ -1697,8 +1856,11 @@ signal.signal(signal.SIGINT, pxpCleanup)
 tmr['tdCamCon']     = TimedThread(tdCamConnectionMon,period=3)
 # after everything was started, wait for cameras to appear and set them as active
 tmr['startcam']     = TimedThread(turnOnCams)
+# writes out the pxp encoder status to file (for others to use)
+tmr['pxpStatusSet'] = TimedThread(enc.statusWrite,period=1)
 # when clients connect, their threads will sit here:
-tmr['clients'] = {}
+tmr['clients']      = {}
+
 dbgLog("main...")
 if __name__=='__main__':
     try:

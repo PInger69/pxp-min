@@ -9,7 +9,7 @@ def iff(cond,if_true,if_false=""):
 )
 <div class="col_12">
 	<div class="row">
-		<!--
+@if settings['video']['bitrate']:
 		<section name="video">
 			<div class="col_2">
 				Stream Quality
@@ -23,6 +23,8 @@ def iff(cond,if_true,if_false=""):
 				<ajaxSpin></ajaxSpin>
 			</div>
 		</section>
+@end #if settings['video']
+		<!--
 		<section name="clips"> 
 			<div class="col_2">
 				MyClip Quality

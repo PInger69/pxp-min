@@ -1,5 +1,6 @@
 import pxp, pxputil as pu
 import constants as c
+import sys, inspect
 
 # extend the main MVC class
 class Controller:
@@ -17,16 +18,15 @@ class Controller:
 			suffix=""
 		else:
 			suffix="c"
-		# if (not pu.disk.psOn("pxplistmon")):
-		# 	os.system("/usr/bin/python "+c.approot+"pxplistmon.py"+suffix+" >/dev/null 2>/dev/null &")
+		if (not pu.disk.psOn("pxplistmon")):
+			os.system("/usr/bin/python "+c.approot+"pxplistmon.py"+suffix+" >/dev/null 2>/dev/null &")
 		# make sure socket service is on (for push instead of pull notifications)
 		if(os.path.exists(c.approot+"pxpservice.py")):
 			suffix=""
 		else:
 			suffix="c"
-		# if (not pu.disk.psOn("pxpservice.py")):
-			# os.system("/usr/bin/python "+c.approot+"pxpservice.py"+suffix+" >/dev/null 2>/dev/null &")
-		# super(Controller, self).__init__()
+		if (not pu.disk.psOn("pxpservice.py")):
+			os.system("/usr/bin/python "+c.approot+"pxpservice.py"+suffix+" >/dev/null 2>/dev/null &")
 		self.d['version']=c.ver
 	#this function is executed first
 	def _run(self):
@@ -113,7 +113,6 @@ class Controller:
 				self.page(functionName)
 		except Exception as e:
 			# in an event of unhandled error, output the result
-			import sys, inspect
 			pu.sstr.jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run","url":pu.uri.uriString})
 	#end run
 	#logs user out
@@ -126,22 +125,26 @@ class Controller:
 	# outputs the requested page
 	def page(self,page):
 		#assign the page name
-		self.d["page"]=page
-		# get info about the disk
-		self.d["disk"]=pxp._diskStat()
-		# get encoder status info
-		self.d['encoder']=pxp.encoderstatus(textOnly=False)
-		# home page requires list of leagues and teams
-		if(page=="home"):
-			self.d['leagues']=pxp._listLeagues()
-			self.d['teams']=pxp._listTeams()
-		# past events page requires list of past events
-		if(page=="past"):
-			self.d['events']=pxp._listEvents(showDeleted=False)
-		if(page=='sett'):
-			self.d['settings']=pxp.settingsGet()
-		# output the page
-		self._out(page+'.html',self.d)
+		try:
+			self.d["page"]=page
+			# get info about the disk
+			self.d["disk"]=pxp._diskStat()
+			# get encoder status info
+			self.d['encoder']=pxp.encoderstatus(textOnly=False)
+			# home page requires list of leagues and teams
+			if(page=="home"):
+				self.d['leagues']=pxp._listLeagues()
+				self.d['teams']=pxp._listTeams()
+			# past events page requires list of past events
+			if(page=="past"):
+				self.d['events']=pxp._listEvents(showDeleted=False)
+			if(page=='sett'):
+				self.d['settings']=pxp.settingsGet()
+			# output the page
+			self._out(page+'.html',self.d)
+		except Exception as e:
+			pu.sstr.jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.page","url":pu.uri.uriString})
+			pass
 ######################################
 ##		 internal functions	   		##
 ######################################

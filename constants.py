@@ -19,3 +19,4 @@ segname 				= "mediastreamsegmenter"
 segbin 					= "/usr/bin/"+segname
 #path to the list of all teradek cameras
 tdCamList 				= wwwroot+"_db/.tdlist"
+encStatFile				= wwwroot+"_db/.encstat"

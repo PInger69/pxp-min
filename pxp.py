@@ -445,7 +445,7 @@ def evtdelete():
 # either json or plain text (depending on textOnly)
 #######################################################
 def encoderstatus(textOnly=True):
-	import camera
+	# import camera
 	#		ffmpeg or mediasegmenter are on
 	#       | app starting
 	#       | | encoder streaming
@@ -497,18 +497,24 @@ def encoderstatus(textOnly=True):
 		# 	state &= ~16; 
 		# else:
 		# 	state |= 16; #when stopped bit 4 will be set to 1
-		status = camera.camStatus()
-		if(not status):
+		# status = camera.camStatus()
+		txtStatus = pu.disk.file_get_contents(c.encStatFile)
+		if(not txtStatus):#this will only happen if the encoder is not initialized (or someone deleted the config file)
+			enc = {'status':'','code':0}
+		else:
+			enc = json.loads(txtStatus)
+		if(not 'status' in enc):
 			state = 0
 			status = "pro recorder disconnected"
 		else:
-			state = 1+2+4#+8+16 #encoder + camera + streaming + ffmpeg + 
+			state = enc['code'] #1+2+4#+8+16 #encoder + camera + streaming + ffmpeg + 
+			status = enc['status']
 		if (textOnly):
 			return status
 		return {"status":status,"code":state}
 	except Exception as e:
 		import sys
-		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e)+ ' '+str(txtStatus))
 #end encoderstatus
 def encoderstatjson():
 	return encoderstatus(textOnly = False)
@@ -923,7 +929,7 @@ def prepdown():
 				appid="" #user probably tried to 'hack' the system, submitted a separate command
 		else:
 			appid=""
-		os.system(c.wwwroot+"_db/idevcopy "+eventFolder+" "+c.wwwroot+eventFolder+" "+appid+">/dev/null &")
+		os.system(c.wwwroot+"_db/idevcopy "+eventFolder+" "+c.wwwroot+eventFolder+" "+appid+" >/dev/null &")
 		return {"success":True}
 	except Exception as e:
 		import sys 
@@ -1148,20 +1154,28 @@ def service():
 # retreives the settings file in json format
 def settingsGet():
 	from collections import OrderedDict
+	import camera
 	settings = pu.disk.cfgGet(c.pxpConfigFile)
 	try:
 		# go through each section and assign possible values for it
 		# make sure the setting section is available (if it's not, add it)
+		
 		# video settings
-		if(not 'video' in settings): #video setting was not set
-			settings['video']={'bitrate':5000}
+		# get current bitrate (if its available from the encoder)
+		bitrate = camera.camParam('bitrate')
+		#default bitrate
+		settings['video']={'bitrate':5000}
 		try:
-			# check that bitrate is a valid number
-			val = int(settings['video']['bitrate'])
-			if(val<1000):
-				settings['video']['bitrate']=5000
+			if(bitrate):
+				# check that bitrate is a valid number
+				val = int(bitrate)
+				if(val>=1000 and val<=5000):
+					settings['video']['bitrate']=bitrate
+			else:
+				#cannot set bitrate on this camera
+				settings['video']['bitrate'] = False
 		except:
-			settings['video']['bitrate']=5000
+			pass
 		settings['video']['bitrate_options']=OrderedDict([
 			(5000,"Very high (5Mbps)"),
 			(3000,"High (3Mbps)"),
@@ -1238,10 +1252,13 @@ def settingsSet():
 	sett = io.get("setting")
 	vals = io.get("value")
 	if(secc=='video' and sett=='bitrate'):
+		#the following 2 commands are for blackmagic only
 		# changing video stream quality
 		pu.disk.file_set_contents(c.wwwroot+"_db/.cfgenc",vals)
 		# reset the streaming app
 		pu.disk.file_set_contents("/tmp/pxpcmd","2")
+		# this is for teradek/matrox - set bitrate for camera index -1: meaning all cameras
+		pu.disk.sockSend("BTR|"+str(vals)+"|-1",addnewline=False)
 		# add an event to live stream to indicate that the bitrate was changed
 		_logSql(ltype="changed_bitrate",lid=str(vals),dbfile=c.wwwroot+"live/pxp.db")
 	# will be true or false depending on success/failure

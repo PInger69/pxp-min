@@ -137,11 +137,9 @@ def camParamSet(param,value,camIndex=0,camID=False):
 def camStart(quality='high'):
 	import os
 	# make sure encode is not already running
-	if(camStatus()=='live' or camStatus=='paused'):
+	current_status = camStatus()
+	if(current_status=='live' or current_status=='paused'):
 		return False
-	# make sure no cameras are active
-	camStop()
-	sleep(3)
 	# reset all cameras - in case some encoders changed their ip address
 	camOff()
 	sleep(1)
@@ -234,6 +232,7 @@ def camPause(camID = False):
 			if(cameras[camID]['state']=='live'):
 				cameras[camID]['state']='paused'
 	pdisk.cfgSet(section="cameras",value=cameras)
+	pdisk.sockSend("PSE",addnewline=False)
 	return True
 #end camPause
 #resume paused cameras
@@ -250,6 +249,7 @@ def camResume(camID = False):
 			if(cameras[camID]['state']=='paused'):
 				cameras[camID]['state']='live'
 	pdisk.cfgSet(section="cameras",value=cameras)
+	pdisk.sockSend("RSM",addnewline=False)
 	return True
 #end camResume
 def camStatus(camID = False):

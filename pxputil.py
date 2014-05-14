@@ -1,8 +1,16 @@
 import constants as c
 import os
+from threading import Thread
+import time
+import sqlite3
+import urllib, urllib2
+import sha, shelve, time, Cookie, os, sys
+import socket
+import struct
+import httplib
+import StringIO
 
 #sqlite database management class
-import sqlite3
 class c_sqdb:
 	con = None
 	c   = None
@@ -209,59 +217,6 @@ class c_disk:
 		f = open(filename,"w")
 		f.write(text)
 		f.close()	
-	# retreives data from a config file in a dictionary format
-	# def iniGet(self,cfgfile):
-	# 	import ConfigParser, os
-	# 	parser = ConfigParser.ConfigParser()
-	# 	cfgParams = {}
-	# 	if(not os.path.exists(cfgfile)):
-	# 		# file does not exist, return empty dictionary
-	# 		return cfgParams
-	# 	# get all sections
-	# 	parser.read(cfgfile)
-	# 	# parse sections
-	# 	for section in parser.sections():
-	# 		options = parser.options(section)
-	# 		# each section is a dictionary
-	# 		cfgParams[section]={}
-	# 		# get list of options in each section
-	# 		for option in options:
-	# 			try:
-	# 				# try to get the value for this parameter
-	# 				cfgParams[section][option] = parser.get(section, option)
-	# 			except:
-	# 				# value was not specified, leave it as blank (not null)
-	# 				cfgParams[section][option] = ''
-	# 	return cfgParams
-	#end iniGet
-	# sets a config file parameter, returns true on success, false on failure
-	# def iniSet(self,cfgFile,section,param,value):
-	# 	import ConfigParser, os
-	# 	try:
-	# 		# init the parser
-	# 		parser = ConfigParser.ConfigParser()
-	# 		# check if the config file exist
-	# 		fp = None
-	# 		if(not os.path.exists(cfgFile)):
-	# 			# file does not exist, create it
-	# 			fp = open(cfgFile,"w")
-	# 		# get the config file info (if any) to make sure any other settings don't get overwritten
-	# 		parser.read(cfgFile)
-	# 		if (not fp):
-	# 			fp = open(cfgFile,"w")
-	# 		# make sure the section we're setting exists
-	# 		if(not section in parser.sections()):
-	# 			# add if it doesn't
-	# 			parser.add_section(section)
-	# 		# set the value
-	# 		parser.set(section,param,value)
-	# 		# save the file
-	# 		parser.write(fp)
-	# 		fp.close()
-	# 		return True
-	# 	except Exception as e:
-	# 		return False
-	#end iniSet
 	def mkdir(self, dirpath, perm=0777):
 		import os
 		try:
@@ -345,7 +300,6 @@ class c_enc:
 		return ''.join(chr(c) for c in [ord(a) ^ ord(b) for a,b in zip(s1,s2)])
 	#end sxor
 #end enc class
-import urllib, urllib2
 #web input/output class
 class c_io:
 	frm = None
@@ -442,7 +396,6 @@ class c_io:
 #end c_io class
 
 #session management class
-import sha, shelve, time, Cookie, os, sys
 class c_session(object):
 	def close(self):
 		self.data.close()
@@ -496,84 +449,55 @@ class c_session(object):
 	#end set_expires
 #end session class
 
-#   Copyright 2014 Dan Krause
-#
-#   Licensed under the Apache License, Version 2.0 (the "License");
-#   you may not use this file except in compliance with the License.
-#   You may obtain a copy of the License at
-#
-#       http://www.apache.org/licenses/LICENSE-2.0
-#
-#   Unless required by applicable law or agreed to in writing, software
-#   distributed under the License is distributed on an "AS IS" BASIS,
-#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#   See the License for the specific language governing permissions and
-#   limitations under the License.
- 
-import socket
-import httplib
-import StringIO
- 
 class c_ssdp:
-	# to find all the SSDP-compatible services, enter "ssdp:all" as service
-	def discover(self, service, timeout=2, retries=1):
-		#M-Search
-		group = ("239.255.255.250", 1900)
-		message = "\r\n".join([
-			'M-SEARCH * HTTP/1.1',
-			'HOST: {0}:{1}',
-			'MAN: "ssdp:discover"',
-			'ST: {st}','MX: {timeout}','',''])
-		#B-Search
-		#group = ("255.255.255.255",1990) #might have to change this to your own broadcast address (e.g. 192.168.0.255)
-		#message = "\r\n".join([
-		#	 'B-SEARCH * HTTP/1.1',
-		#	 'HOST:{0}:{1}',
-		#	 'MAN: "ssdp:discover"',
-		#	 'ST: {st}','MX: 3','',''])
-		# socket.setdefaulttimeout(timeout)
-		responses = {}
-		for retryNum in range(retries):
-			# set up UDP socket
-			sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-			# make sure it doesn't hang if nothing found
-			sock.settimeout(timeout)
-			# make sure socket doesn't get locked up by this process
-			sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-			# make socket multicast-aware, set TTL (=2)
-			sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-			# send the SEARCH request to the multicast adress
-			sock.sendto(message.format(*group, st=service,timeout=timeout), group)
-			while True:
-				try:
-					data = sock.recv(1024)
-					response = self.SSDPResponse(data)
-					responses[response.location] = response
-				except socket.timeout:
-					break
-				except KeyboardInterrupt:
-					break
-		return responses.values()
-
-	class SSDPResponse(object):
-		class _FakeSocket(StringIO.StringIO):
-			def makefile(self, *args, **kw):
-				return self
+	class ssdpObject(object):
 		def __init__(self, response):
-			r = httplib.HTTPResponse(self._FakeSocket(response))
-			r.begin()
-			self.location = r.getheader("location")
-			self.usn = r.getheader("usn")
-			self.st = r.getheader("st")
-			self.cache = r.getheader("cache-control").split("=")[1]
+			self.location 	= ""
+			self.usn 		= ""
+			self.st 		= ""
+			# get LOCATION
+			posstr = response.find("LOCATION:")
+			if(posstr>=0):
+				posend = response.find("\n",posstr)
+				self.location = response[posstr+10:posend-1].strip()
+			# get USN
+			posstr = response.find("USN:")
+			if(posstr>=0):
+				posend = response.find("\n",posstr)
+				self.usn = response[posstr+4:posend-1].strip()
+			# get NT
+			posstr = response.find("NT:")
+			if(posstr>=0):
+				posend = response.find("\n",posstr)
+				self.st = response[posstr+3:posend-1].strip()
 		def __repr__(self):
-			return "<SSDPResponse({location}, {st}, {usn})>".format(**self.__dict__)
- 
- 
-# Example:
-# ssdp.discover("roku:ecp")
+			return "<ssdpObject({location}, {st}, {usn})>".format(**self.__dict__)
+	def discover(self, service, timeout=5):
 
+		multicast_group   = "239.255.255.250"
+		multicast_port  = 1900
+		buffer_size = 1500
 
+		sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+		sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		mreq = struct.pack('=4sl', socket.inet_aton(multicast_group), socket.INADDR_ANY) # pack multicast_group correctly
+		sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)         # Request multicast_group
+
+		sock.bind((multicast_group, multicast_port))                           # bind on all interfaces
+		devices = {}
+		sock.settimeout(timeout)
+		tm_start = time.time()
+		while (time.time()-tm_start)<=timeout:
+			try:
+				data, srv_sock = sock.recvfrom(buffer_size)              # Receive data (blocking)
+				srv_addr, srv_srcport = srv_sock[0], srv_sock[1]
+				device = self.ssdpObject(data)
+				if((service in data or service=="ssdp:all") and not device.location in devices):
+					devices[device.location]=device
+			except Exception as e:
+				pass
+		return devices
+ 
 #string class
 class c_str():
 	#outputs a dictionary as json-formatted response
@@ -609,8 +533,6 @@ class c_str():
 #  this will call tst("a",5) every 3 seconds                     #
 #                                                                #
 ##################################################################
-from threading import Thread
-import time
 # timed thread class. 
 class c_tt(Thread):
 	def __init__(self,callback,params=(),period=0, autostart=True):
