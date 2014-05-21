@@ -1873,6 +1873,7 @@ def teleset():
 		# ol = ol.convert("RGBA")
 		bg.paste(ol, (0, 0), ol)
 		bg.save(bgFile,quality=100)
+		sleep(2)
 		_sockData(event=event,tag=t)
 		return t #already contains telestration url
 	except Exception as e:

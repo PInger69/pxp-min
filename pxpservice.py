@@ -207,24 +207,39 @@ class encoder:
         jsonStatus = json.loads(txtStatus)
         # self.
     #end statusRead
-    def statusSet(self,newStatus,autoWrite=True, overwrite=True):
+    def statusSet(self,statusBit,autoWrite=True, overwrite=True):
         """Set a new encoder status code and appropriate status text 
-        newStatus - new status of the encoder to set
+        statusBit - new status of the encoder to set (add or overwrite)
         autoWrite - (optional) write the status to disk right away (default=True)
         overwrite - (optional) overwrite the current status with the new one, if False, status will be added (all statuses are bit-shifted)
         """
         try:
             if(overwrite):
-                self.code = newStatus
+                self.code = statusBit
+                self.status = self.statusTxt(statusBit)
             else:
-                self.code = self.code | newStatus
-            self.status = self.statusTxt(newStatus)
-            dbgLog("status: "+self.status)
+                self.code = self.code | statusBit            
+            dbgLog("status: "+self.status+' '+str(bin(self.code)))
             if(autoWrite):
                 self.statusWrite()
         except Exception as e:
             print e, sys.exc_traceback.tb_lineno
     #end status
+
+    def statusUnset(self,statusBit, autoWrite = True):
+        """Resets the status bit 
+        statusBit - which bit to unset (set to 0)
+        autoWrite - (optional) write the status to disk right away (default=True)
+        """
+        try:
+            self.code = self.code & ~statusBit
+            self.status = self.statusTxt(self.code)
+            dbgLog("status: "+self.status+' '+str(bin(self.code)))
+            if(autoWrite):
+                self.statusWrite()
+        except Exception as e:
+            print e, sys.exc_traceback.tb_lineno
+    #end statusUnset
     def statusWrite(self):
         """ writes out current status to disk """
         # this function is executed automatically (initialized at the bottom of this file), simply records current pxp status in a file
@@ -262,9 +277,10 @@ def pxpCleanup(signal=False, frame=False):
     try:
         dbgLog("terminating services...")
         if(enc.code & (enc.STAT_LIVE | enc.STAT_PAUSED)):
+            print "stopping live event"
             encStopCap(force=True)
         SHUTDOWN = True
-        enc.statusSet(newStatus=enc.STAT_SHUTDOWN)
+        enc.statusSet(enc.STAT_SHUTDOWN)
         dbgLog("stopping timers...")
         for tm in tmr:
             dbgLog(str(tm)+"...")
@@ -744,14 +760,14 @@ def devStatus():
                 # message that should receive RTSP/1.0 200 OK response from a valid rtsp stream
                 msg = "DESCRIBE "+tdURL+" RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\nUser-Agent: Python MJPEG Client\r\n\r\n"""
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(1)
+                s.settimeout(2)
                 try:
                     s.connect((tdAddress, int(tdPort)))
                     s.send(msg)
                     data = s.recv(1024)
                 except Exception as e:
                     data = str(e)
-                    dbgLog("devstatus err: "+str(e)+" at "+tdURL)
+                    dbgLog("devstatus err: "+str(e)+" at "+str(tdAddress)+':'+str(tdPort)+' '+str(sys.exc_traceback.tb_lineno))
                 #close the socket
                 try:
                     s.close()
@@ -787,7 +803,8 @@ def camMonitor():
     try:
         # get status of all connected encoders
         tds = devStatus()
-        if(not(enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED))): #when there's no live event, just enable all cameras so that the user will be able to start a live event
+        if(not(enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED | enc.STAT_STOP))): #when there's no live event, just enable all cameras so that the user will be able to start a live event
+            camera.camOff()
             camera.camOn() #enable all available cameras (this will be useful if user wants to hot-swap encoders)
         cams = camera.getOnCams()
         # go through active cameras and make sure they're all online and active
@@ -1006,9 +1023,20 @@ def tdCamConnectionMon():
                     intBitrate = False
                     pass
             # set bitrate for the settings page
-            camera.camParamSet('bitrate',bitrate,td)
+            camera.camParamSet('bitrate',intBitrate,camID=td)
+            print resolution
+            if(resolution.strip().lower()=='vidloss' or resolution.strip().lower()=='unknown'):
+                resolution = 'N/A'
+                # lost camera
+                # set status bit to NO CAMERA
+                enc.statusSet(enc.STAT_NOCAM,overwrite=((enc.code & enc.STAT_READY)>0))#overwrite when encoder is ready
+            else:
+                if(enc.code == enc.STAT_NOCAM): #status was set to NOCAM, when camera returns it should be reset to ready
+                    enc.statusSet(enc.STAT_READY)
+                else:#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
+                    enc.statusUnset(enc.STAT_NOCAM)
             # set the camera resolution for displaying on the web page
-            camera.camParamSet('resolution',resolution,td)
+            camera.camParamSet('resolution',resolution,camID=td)
             try:
                 encoders[td]['resolution']=resolution
                 encoders[td]['framerate']=framerate

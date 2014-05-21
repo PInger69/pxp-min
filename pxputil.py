@@ -142,9 +142,12 @@ class c_sqdb:
 		#success when there was at least 1 row affected
 		return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
 	def rollback(self):
-		self.autocommit = True
-		if self.con:
-			self.con.rollback()
+		try:
+			self.autocommit = True
+			if self.con:
+				self.con.rollback()
+		except:
+			pass
 	#end commit()
 	#begin transaction - user must commit or rollback manually
 	def transBegin(self):
