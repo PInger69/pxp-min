@@ -201,6 +201,9 @@ class encoder:
 
     def __init__(self):
         self.statusSet(self.STAT_INIT)
+    def busy(self):
+        """ returns true when encoder is busy (i.e. live, starting a live event or still stopping a live event) """
+        return self.code & (self.STAT_LIVE | self.STAT_START | self.STAT_STOP | self.STAT_PAUSED)
     def statusRead(self):
         """ reads status from the disk into a json dictionary """
         txtStatus = pu.disk.file_get_contents(c.encStatFile)
@@ -218,7 +221,7 @@ class encoder:
                 self.code = statusBit
                 self.status = self.statusTxt(statusBit)
             else:
-                self.code = self.code | statusBit            
+                self.code = self.code | statusBit
             dbgLog("status: "+self.status+' '+str(bin(self.code)))
             if(autoWrite):
                 self.statusWrite()
@@ -632,7 +635,7 @@ def encStartCap(quality):
             else:
                 camURL = cameras[devID]['url']
             # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
-            ffcaps[devID] = c.ffbin+" -rtsp_transport tcp -probesize 100000 -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
+            ffcaps[devID] = c.ffbin+" -rtsp_transport udp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
             # each camera also needs its own port forwarder
             portIns[int(camMP4)]={
                 'forwarding'  :True,
@@ -745,6 +748,11 @@ def devStatus():
     validTDs = {}
     try:
         teraCopy = copy.deepcopy(encoders)
+        print "...................."
+        print "...................."
+        print teraCopy
+        print "...................."
+        print "...................."
         myip = get_lan_ip()
         for td in teraCopy:
             if(not(('url_port' in teraCopy[td]) and ('url' in teraCopy[td]))):
@@ -776,15 +784,20 @@ def devStatus():
                     pass
                 # make sure the framerate is ok on this device 
                 strdata = data.lower().strip()
-                if(strdata.find('timed out')>-1 or strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
-                    # found a "ghost": this device recently disconnected - skip it
+                print "^^^^^^^^^^^^^^^^^^^^^^^^devStatus data:", strdata
+                if(strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
+                    # found a "ghost": this device recently disconnected
+                    if(not enc.busy()):
+                        #no active encode - remove this device from the list so it doesn't interfere with other ones
+                        del encoders[td]                    
+                    continue
+                if(strdata.find('timed out')>-1): #the connection is down (maybe temporarily?)
                     continue
                 #a device is not available (either just connected or it's removed from the system)
                 #when connection can't be established or a response does not contain RTSP/1.0 200 OK
                 teraCopy[td]['on'] = (data.find('RTSP/1.0 200 OK')>=0)
                 if(td in encoders): #this may be false if during the execution of this loop a teradek dropped off the system
                     encoders[td]['on'] = teraCopy[td]['on']
-                # make sure the frame rate is not above 30fps
 
             #if not teracopy
             validTDs[td] = teraCopy[td]
@@ -803,7 +816,7 @@ def camMonitor():
     try:
         # get status of all connected encoders
         tds = devStatus()
-        if(not(enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED | enc.STAT_STOP))): #when there's no live event, just enable all cameras so that the user will be able to start a live event
+        if(not enc.busy()): #when there's no live event, just enable all cameras so that the user will be able to start a live event
             camera.camOff()
             camera.camOn() #enable all available cameras (this will be useful if user wants to hot-swap encoders)
         cams = camera.getOnCams()
@@ -889,6 +902,8 @@ def tdFind():
         def query_record_callback(sdRef, flags, interfaceIndex, errorCode, fullname, rrtype, rrclass, rdata, ttl):
             if errorCode == pybonjour.kDNSServiceErr_NoError:
                 ipAddr = socket.inet_ntoa(rdata)
+                if(not sameSubnet(ipAddr,get_lan_ip())): #ignore encoders with an ip address from a different subnet
+                    return
                 queried.append(True)
                 # found teradek, add it to the list
                 # get details about this device
@@ -898,6 +913,7 @@ def tdFind():
                 else:
                     strport = ""
                 camID = ipAddr
+
                 if(not camID in encoders):
                     encoders[camID] = {}
                     encoders[camID]['on']=False
@@ -999,22 +1015,53 @@ def tdGetParam(response,parameter):
         return False
 #end tdGetParam
 
-# monitors encoders to make sure camera was not disconnected
-def tdCamConnectionMon():
-    teraCopy = copy.deepcopy(encoders)
+def tdCamMon():
+    """ checks parameters of the teradek cubes """
+    devCopy = copy.deepcopy(encoders)
+    # dbgLog("cam con mon ENCODERS:"+str(devCopy))
     try:
-        for td in teraCopy:
-            if(teraCopy[td]['enctype']!='td_cube'):
+        myip = get_lan_ip()
+        for dev in devCopy:
+            print "checking..............................", dev
+            if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
+                print "shutting down camconmon"
+                return
+            if(devCopy[dev]['enctype']!='td_cube'):
+                print "not a cube"
                 continue
-            if(not (td in tdSession and tdSession[td])):
-                tdLogin(td)
-            url = "http://"+td+"/cgi-bin/api.cgi?session="+tdSession[td]
-            response = pu.io.url(url+"&command=get&q=VideoInput.Info.1.resolution&q=VideoEncoder.Settings.1.framerate&q=VideoEncoder.Settings.1.bitrate")
+            if(not sameSubnet(dev,myip)):
+                print "subnet mismatch camconmon"
+                try: # if the encoder is from a different ip group - don't bother recording it
+                    del encoders[dev]
+                except:
+                    pass
+                continue #skip encoders that are not on local network
+            if(not (dev in tdSession and tdSession[dev])):
+                tdLogin(dev)
+            if(not (dev in tdSession)):#could not log in to the device - most likely it's gone from the network, set its status to off
+                if((dev in encoders) and not enc.busy()):
+                    print "encoder off!!!!!!!!!!!!!!!!!!!!!!!!!!",encoders[dev]
+                    if((dev in encoders) and not enc.busy()):
+                        if(encoders[dev]['on']): #the encoder was set as active - perhaps it's a temporary glitch - set ON status as False for now
+                            encoders[dev]['on']=False
+                        else:#the encoder was already inactive - most likely it dropped off the network - remove it from the system
+                            del encoders[dev]
+                else:
+                    print "dev not in encoders??????", dev in encoders
+                    print "enc busy??????????", enc.busy()
+                continue
+            url = "http://"+dev+"/cgi-bin/api.cgi?session="+tdSession[dev]
+            url2= "&command=get&q=VideoInput.Info.1.resolution&q=VideoEncoder.Settings.1.framerate&q=VideoEncoder.Settings.1.bitrate"
+            response = pu.io.url(url+url2, timeout=15)
             if(not response): #didn't get a response - timeout?
-                return 
+                dbgLog("no response from: "+url+url2)
+                if(dev in tdSession):
+                    del tdSession[dev]
+                continue 
             resolution = tdGetParam(response,'resolution')
             framerate = tdGetParam(response,'framerate')
             bitrate = tdGetParam(response,'bitrate') #this is in bps
+            dbgLog("res: "+str(resolution)+" frm: "+str(framerate)+" brt: "+str(bitrate))
             if(bitrate):#convert bitrate to kbps
                 try:
                     intBitrate = int(bitrate)
@@ -1023,8 +1070,7 @@ def tdCamConnectionMon():
                     intBitrate = False
                     pass
             # set bitrate for the settings page
-            camera.camParamSet('bitrate',intBitrate,camID=td)
-            print resolution
+            camera.camParamSet('bitrate',intBitrate,camID=dev)
             if(resolution.strip().lower()=='vidloss' or resolution.strip().lower()=='unknown'):
                 resolution = 'N/A'
                 # lost camera
@@ -1036,32 +1082,31 @@ def tdCamConnectionMon():
                 else:#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
                     enc.statusUnset(enc.STAT_NOCAM)
             # set the camera resolution for displaying on the web page
-            camera.camParamSet('resolution',resolution,camID=td)
+            camera.camParamSet('resolution',resolution,camID=dev)
             try:
-                encoders[td]['resolution']=resolution
-                encoders[td]['framerate']=framerate
-                encoders[td]['bitrate'] = intBitrate
+                encoders[dev]['resolution']=resolution
+                encoders[dev]['framerate']=framerate
+                encoders[dev]['bitrate'] = intBitrate
             except:#may fail if the device was removed from the encoders list
                 pass
             # if(framerate and int(framerate)>30):#frame rate was changed ??
-            #     TimedThread(tdSetFramerate(td))
+            #     TimedThread(tdSetFramerate(dev))
     except Exception as e:
-        print "camconmon ERRRR: ",e,sys.exc_traceback.tb_lineno
-        pass
-#end tdCamConnectionMon
+        dbgLog("camconmon ERRRR: "+str(e)+" "+str(sys.exc_traceback.tb_lineno))
+#end tdCamMon
 
 def tdLogin(td):
     url = "http://"+td+"/cgi-bin/api.cgi"
     # did not connect to the cube previously - login first
-    response = pu.io.url(url+"?command=login&user=admin&passwd=admin")
+    response = pu.io.url(url+"?command=login&user=admin&passwd=admin",timeout=15)
     # get session id
     if(not response):
-        return
+        return False
     response = response.strip().split('=')
     if(response[0].strip().lower()=='session' and len(response)>1):#login successful
         tdSession[td] = response[1].strip()
     else:#could not log in - probably someone changed username/password
-        return
+        return False
 #end tdLogin
 
 def tdSetBitrate(td,bitrate):
@@ -1181,11 +1226,59 @@ def tdSetFramerate(td):
 ############### end teradek management ################
 
 ############### matrox monarch management ###############
-# extracts ip address and port from a uri.
-# the url is usually in this format: "http://X.X.X.X:PORT/"
-# e.g. from http://192.168.1.103:5953/
-# will return 192.168.1.103 and 5953
+def mtCamMon():    
+    """ monitors camera connected to matrox monarch, gets resolution/bitrate updates"""
+    encCopy = copy.deepcopy(encoders)
+    myip = get_lan_ip()
+    for dev in encCopy:
+        print "checking..............................", dev
+        if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
+            print "shutting down mtCamMon"
+            return
+        if(encCopy[dev]['enctype']!='mt_monarch'):
+            print "not a monarch"
+            continue
+        if(not sameSubnet(dev,myip)):
+            print "subnet mismatch mtCamMon"
+            try: # if the encoder is from a different ip group - don't bother processing it
+                del encoders[dev]
+            except:
+                pass
+            continue #skip encoders that are not on local network
+        # get parameters of the encoder:
+        params = mtGetParams(dev)
+        if(not params): #the encoder dropped off?
+            if(dev in encoders and not enc.busy()): #device is still listed in the array and there is no live event
+                if(encCopy[dev]['on']): #status was set to active, encoder was working fine
+                    encoders[dev]['on']=False #set it to inactive (perhaps this is a temporary downtime)
+                else:#encoder was already inactive - most likely it dropped off the network for good
+                    del encoders[dev] #remove the device from the list
+            continue
+        #end if not params
+        if(params['rtsp_url'] and params['rtsp_port']):
+            encoders[dev]['url'] = params['rtsp_url']
+            encoders[dev]['url_port'] = params['rtsp_port']
+        if(not params['inputResolution']): #no camera detected
+            resolution = 'N/A'
+            # lost camera
+            # set status bit to NO CAMERA
+            enc.statusSet(enc.STAT_NOCAM,overwrite=((enc.code & enc.STAT_READY)>0))#overwrite when encoder is ready
+        else:#camera detected
+            resolution = params['inputResolution']
+            if(enc.code == enc.STAT_NOCAM): #status was set to NOCAM, when camera returns it should be reset to ready
+                enc.statusSet(enc.STAT_READY)
+            else:#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
+                enc.statusUnset(enc.STAT_NOCAM)
+        encoders[dev]['resolution'] = resolution
+        camera.camParamSet('resolution',resolution,camID=dev)
+    #end for dev in encCopy
+#end mtConMon
+
 def mtParseURI(mtURL):
+    """extracts ip address and port from a uri.
+    the url is usually in this format: "http://X.X.X.X:PORT/"
+    e.g. from http://192.168.1.103:5953/
+    will return 192.168.1.103 and 5953"""
     addr  = ""
     parts = []
     ip    = False
@@ -1224,7 +1317,9 @@ def mtGetParams(mtIP):
         }
     # for now the only way to extract this information is using the monarch home page (no login required for this one)
     # when they provide API, then we can use that
-    mtPage = pu.io.url("http://"+str(mtIP)+"/Monarch")
+    mtPage = pu.io.url("http://"+str(mtIP)+"/Monarch", timeout=15)
+    if(not mtPage):
+        return False #could not connect to the monarch page
     ########### get rtsp url ###########
     resPos = mtPage.find("ctl00_MainContent_RTSPStreamLabelC2") #this is the id of the label containing video input
     if(resPos>0):#found the video input label, find where the actual text is
@@ -1321,42 +1416,54 @@ def mtGetParams(mtIP):
     return params
 #end mtGetParams
 
+
+
 # looks for monarch HD on the network (assumes that it's sending NOTIFY to 239.255.255.0 multicast address)
 def mtFind():
     global SHUTDOWN
     attempts = 3 #try to find a monarch 3 times, then give up
     monarchs = []
+    print "mtfind........."
     while(attempts>0 and len(monarchs)<1 and not SHUTDOWN):
         #the Search Target for monarch is:
         #to find ALL ssdp devices simply enter ssdp:all as the target
         monarchs  = pu.ssdp.discover("MonarchUpnp",timeout=5)
         attempts -= 1
-    if(SHUTDOWN):
+    if(SHUTDOWN or (enc.code & enc.STAT_SHUTDOWN)):
         return
     if(len(monarchs)>0):
+        print "found ", len(monarchs)
+        myip = get_lan_ip()
         # found at least one monarch 
         for devLoc in monarchs:
             try:
                 dev = monarchs[devLoc]
                 devIP, devPT = mtParseURI(dev.location)
+                print "dev: ", devIP, devPT
+                if(not sameSubnet(devIP,myip)):
+                    print "subnet mismatch, mtfind: ", devIP, myip
+                    continue #devices on different networks are ignored
                 if(devIP and devPT):
-                    # if(devIP in encoders and encoders[devIP]['on']):
-                        # continue #skip encoders that are working properly and have not been disconnected
                     params = mtGetParams(devIP)
                     if(params['rtsp_url'] and params['rtsp_port']):
                         if(not devIP in encoders):
-                            encoders[devIP] = {}
-                            encoders[devIP]['on'] = False
-                        else:
-                            print devIP, "::::::::::::::", params
+                            encoders[devIP] = {'on':False}
                         encoders[devIP]['enctype']='mt_monarch'
                         encoders[devIP]['url'] = params['rtsp_url']
                         encoders[devIP]['url_port'] = params['rtsp_port']
-                        encoders[devIP]['resolution'] = params['inputResolution']
-            except: #may fail if the device is invalid or doesn't have required attributes
-                pass
+            except Exception as e: #may fail if the device is invalid or doesn't have required attributes
+                print e, sys.exc_traceback.tb_lineno
         #end for devLoc in monarchs
     #end if monarchs>0
+    else:
+        print "did not find monarchs!!!!!"
+        # devIP = "192.168.0.101"
+        # params = mtGetParams(devIP)
+        # if(not devIP in encoders):
+        #     encoders[devIP] = {'on':False}
+        # encoders[devIP]['enctype']='mt_monarch'
+        # encoders[devIP]['url'] = params['rtsp_url']
+        # encoders[devIP]['url_port'] = params['rtsp_port']
 #end mtFind
 ############# end matrox monarch management #############
 
@@ -1580,7 +1687,6 @@ class procmgr():
             idx = self.getProcIndex(devID,name)
         else:
             idx = procidx
-        print "STOP CALLED!!!!!: ", name, idx, devID, procidx
         if(idx in self.procs):
             self.procs[idx]['forcekill'] = force
             self.procs[idx]['run'] = False
@@ -1863,9 +1969,13 @@ tmr['bonjour']      = TimedThread(pubBonjour)
 
 # look for teradek cube's on bonjour
 tmr['tdFind']       = TimedThread(tdFind,period=10)
+# timer checks if camera is connected (simply checks resolution/bitrate)
+tmr['tdCamMon']     = TimedThread(tdCamMon,period=3)
 
 #looks for matrox Monarch HD using SSDP (a UPnP service)
-tmr['mtFind']       = TimedThread(mtFind,period=20)
+tmr['mtFind']       = TimedThread(mtFind,period=10)
+
+tmr['mtCamMon']     = TimedThread(mtCamMon,period=2) #monitor camera connected to a matrox monarch
 
 tmr['camMonitor']   = TimedThread(camMonitor,period=10) #pinging teradek too often causes it to fall off after ~30 minutes
 
@@ -1880,8 +1990,6 @@ tmr['fwdMP4'] = TimedThread(portFwd,(blueMP4,'mp4'))
 #register what happens on ^C:
 signal.signal(signal.SIGINT, pxpCleanup)
 
-# timer checks if camera is connected (simply checks resolution)
-tmr['tdCamCon']     = TimedThread(tdCamConnectionMon,period=3)
 # after everything was started, wait for cameras to appear and set them as active
 tmr['startcam']     = TimedThread(turnOnCams)
 # writes out the pxp encoder status to file (for others to use)

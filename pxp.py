@@ -1505,25 +1505,6 @@ def tagmod():
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 #end tagmod
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #######################################################
 #creates a new tag
 #information that needs to be submitted in json form:
@@ -1554,7 +1535,7 @@ def tagmod():
 #stop  d-line		= 6 - hockey	
 #period start		= 7 - hockey
 #period	stop		= 8 - hockey
-#strength start 	= 9- hockey
+#strength start 	= 9 - hockey
 #strength stop 		= 10- hockey
 #opp. o-line start 	= 11- hockey
 #opp. o-line stop 	= 12- hockey
@@ -1823,7 +1804,7 @@ def tagset( tagStr=False, sendSock=True):
 		return tagOut
 	except Exception as e:
 		db.rollback()
-		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
+		return _err(str(sys.exc_traceback.tb_lineno)+str(e))
 #end tagSet()
 #######################################################
 def teleset():
@@ -1965,14 +1946,14 @@ def upgrader():
 	# run each update file
 #end updateEnc
 def version():
-	return {"version":ver}
+	return {"version":c.ver}
 ###############################################
 ##	           utility functions             ##
 ###############################################
 #######################################################
 # XORs config file (simple 'encryption') to prevent tampering
 #######################################################
-def _cfgGet( cfgDir):
+def _cfgGet(cfgDir):
 	cfgFile = cfgDir+".cfg"
 	saltedKey = "3b2b2bcfee23d8377a3828fe3c155a868377a38"
 	# remove last 7 characters from the key
@@ -2107,7 +2088,7 @@ def _extractclip( tagid, event):
 		# 	return True # no need to re-create bookmarks that already exist
 		if(event!='live'):
 			# for past events, the mp4 file is ready for processing, extract clip from it
-			cmd = "/usr/local/bin/ffmpeg -ss "+str(startTime)+" -t "+str(duration)+" -i "+mainMP4File+" -codec copy -bsf h264_mp4toannexb "+bigTsFile
+			cmd = "/usr/local/bin/ffmpeg -ss "+str(startTime)+" -i "+mainMP4File+" -t "+str(duration)+" -codec copy -bsf h264_mp4toannexb "+bigTsFile
 			os.system(cmd)
 		if(not os.path.exists(bigTsFile) or event=='live'):
 			# either this is a live event or failed to extract a clip from the main.mp4 (may be corrupted)
@@ -2196,6 +2177,35 @@ def _hash( password):
 	s = hashlib.sha256(password+"azucar")
 	return s.hexdigest()
 #end hash
+def _getSN():
+	""" returns serial number of the computer"""
+	import sys, subprocess
+	if (sys.platform.lower().find('darwin')>=0): #mac os
+		try:
+			proc = subprocess.Popen('ioreg -l | grep -e \'"Serial Number" =\'',shell=True,stdout=subprocess.PIPE)
+			serialNum = ""
+			# the output will be similar to:
+			#     |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
+			for line in iter(proc.stdout.readline,""):
+				if(line.find("\"")):
+					lineParts = line.split("\"")
+					if(len(lineParts)>3):
+						serialNum +=lineParts[3]
+		except Exception as e:
+			print e
+			serialNum = "n/a"
+	elif(sys.platform.lower().find('linux')>=0): #linux
+		try:
+			proc = subprocess.Popen('dmidecode -s system-uuid',shell=True,stdout=subprocess.PIPE)
+			serialNum = ""
+			for line in iter(proc.stdout.readline,""):
+				serialNum = line
+		except Exception as e:
+			print e
+			serialNum = "n/a"
+		pass
+	return serialNum.strip()
+
 #######################################################
 #initializes the encoder
 #######################################################
@@ -2206,18 +2216,7 @@ def _init( email, password):
 	# make sure the credentials were supplied
 	url = "http://www.myplayxplay.net/max/activate/ajax"
 	# this only works on a mac!
-	try:
-		proc = subprocess.Popen('ioreg -l | grep IOPlatformSerialNumber',shell=True,stdout=subprocess.PIPE)
-		serialNum = ""
-		# the output will be similar to:
-		#     |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
-		for line in iter(proc.stdout.readline,""):
-			if(line.find("\"")):
-				lineParts = line.split("\"")
-				if(len(lineParts)>3):
-					serialNum +=lineParts[3]
-	except Exception as e:
-		serialNum = "n/a"
+	serialNum = _getSN()
 	params = {
 		'v0':pu.enc.sha('encoder'),
 		'v1':pu.enc.sha(email),
