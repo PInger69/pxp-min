@@ -3,8 +3,7 @@ from tendo import singleton
 from datetime import datetime as dt
 from uuid import getnode as getmac
 from pxputil import TimedThread
-import camera, constants as c, copy, json, os, psutil, platform, pxp, pxputil as pu, pybonjour, select, signal, socket, subprocess as sb, time
-import netifaces as ni
+import camera, constants as c, copy, json, os, psutil, pxp, pxputil as pu, pybonjour, select, signal, socket, subprocess as sb, time
 import sys
 # big broadcast queue - queue containing all of the sent messages for every client that it was sent to
 # in this format:
@@ -19,19 +18,6 @@ import sys
 #   }, <client ref>, <send_next>] 
 # }
 globalBBQ = {}
-
-# queue of PIDs that need to be killed in this format: 
-# [
-#     {
-#         'pid':<pid>,
-#         'pgid':<pgid>,
-#         'ref':<obj reference>, --reference to the process that was started 
-#         'timeout':<seconds>,
-#         'force':True/False,
-#         'count':<number> --of kill attempts
-#     }
-#     ...
-# ]
 
 lastStatus = 0
 # when was a kill sig issued
@@ -56,94 +42,52 @@ bitSTART    =  1 << 3
 #     }
 encoders    = {}
 tdSession   = {} # list of teradek session IDs - used for accessing the web API
-# references for subprocesses (to communicate with them)
-# {
-#   '192.168.1.153':{
-#       'bluecmd':"ffmpeg -loop 1 -re -i img.jpg.....",
-#       'blueref':<object reference>
-#       #OR
-#       'ffcmd':"ffmpeg -i rtsp://192.168.1.109:554/stream1 -map 0.....",
-#       'ffref':<object reference>
-#   }
-# }
 
-# input ports with their statuses.
-# e.g.:
-# {
-#   2270:{
-#           forwarding  :True,              #--whether this port is forwarding
-#           status      :'paused',          #--status of the camera, data will be forwarded here only when 'live'
-#           type        :'mp4',             #--type of stream on this port
-#           camera      :'192.168.1.119',   #--devID for this camera
-#           input       :22700,             #--where data is being received
-#           output      :22000,             #--where data is being sent
-#           active      :True               #--False if no data is being received on this port, True if receiving data
-#       },
-#   2280:{
-#           forwarding  :True,
-#           status      :'paused'
-#           type        :'hls',
-#           camera      :'192.168.1.119',
-#           input       :2270,
-#           output      :2210,
-#           active      :True
-#       }
-# }
-# 
-portIns = {}
-# used in UDP port forwarding - contains sets of ports, 
-# ports that are specified here will receive data from incoming ports (in the portFwd() function)
-# every port in a set will receive same packets
-# each set is a list with a name. e.g. 'mp4':[12345, 12346, 12347]
-portFwds = {}
-
-proxyBase  = 22000 #output port for rtsp stream (live555 takes in rtsp from the IP source and forwards it to local server on this port)
-
-dskMP4base = 22100 #ffmpeg listens on this port and writes mp4 to disk (for subsequent cameras, ports will be 22001, 22002...)
-dskHLSbase = 22200 #m3u8 segmenter listens on this port and writes segments to disk
 blueHLS    = 22300 #ffmpeg output for MPEG-TS with blue screen image
 blueMP4    = 22400 #ffmpeg output for h.264 stream with blue screen image
 camMP4base = 22500 #ffmpeg captures rtsp stream and outputs H.264 stream here
 camHLSbase = 22600 #ffmpeg captures rtsp stream and outputs MPEG-TS here
+chkPRTbase = 22700 #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
 
 sockInPort = 2232
-# blueFwds = {'mp4':[],'hls':[]} #add -1 to kill the port fwd process
+
 ###################################################
 ################## delete files ##################
 ###################################################
 rmFiles     = []
 rmDirs      = []
-bonjouring  = [True] #has to be a list to stop bonjour externally
 FNULL       = open(os.devnull,"w") #for dumping all cmd output using Popen()
-SHUTDOWN    = False #set to true when pxpservive is shutting down
 def deleteFiles():
-    # if there is a deletion in progress - let it finish
-    if (psOn("rm -f") or psOn("rm -rf") or psOn("xargs -0 rm")):
-        return    
-    # first, take care of the old session files (>1 day) should take no more than a couple of seconds
-    os.system("find "+c.wwwroot+"session -mtime +1 -type f -print0 | xargs -0 rm &")
-    # delete individual files
-    while(len(rmFiles)>0):
-        # grab the first file from the array
-        fileToRm = rmFiles[0]
-        # make sure it wasn't deleted already
-        if(os.path.exists(fileToRm)):
-            os.system("rm -f "+fileToRm)
-            #remove 1 file at a time
-            return
-        # remove deleted file from the list
-        rmFiles.pop(0)
-    #when all files are deleted, remove directories
-    while(len(rmDirs)>0):
-        # grab the first file from the array
-        dirToRm = rmDirs[0]
-        # make sure it wasn't deleted already
-        if(os.path.exists(dirToRm)):
-            os.system("rm -rf "+dirToRm)
-            #remove 1 file at a time
-            return
-        # remove deleted directory from the list
-        rmDirs.pop(0)
+    try:
+        # if there is a deletion in progress - let it finish
+        if (psOn("rm -f") or psOn("rm -rf") or psOn("xargs -0 rm")):
+            return    
+        # first, take care of the old session files (>1 day) should take no more than a couple of seconds
+        os.system("find "+c.sessdir+" -mtime +1 -type f -print0 | xargs -0 rm 2>/dev/null &")
+        # delete individual files
+        while(len(rmFiles)>0):
+            # grab the first file from the array
+            fileToRm = rmFiles[0]
+            # make sure it wasn't deleted already
+            if(os.path.exists(fileToRm)):
+                os.system("rm -f "+fileToRm)
+                #remove 1 file at a time
+                return
+            # remove deleted file from the list
+            rmFiles.pop(0)
+        #when all files are deleted, remove directories
+        while(len(rmDirs)>0):
+            # grab the first file from the array
+            dirToRm = rmDirs[0]
+            # make sure it wasn't deleted already
+            if(os.path.exists(dirToRm)):
+                os.system("rm -rf "+dirToRm)
+                #remove 1 file at a time
+                return
+            # remove deleted directory from the list
+            rmDirs.pop(0)
+    except Exception as e:
+        print e, sys.exc_traceback.tb_lineno
 #end deleteFiles
 
 # deleting old events
@@ -179,7 +123,18 @@ def removeOldEvents():
 ###################################################
 ################## util functions ################
 ###################################################
-
+class commander:
+    q = [] #queue of the commands to be executed
+    def enq(self, cmd):
+        """ adds a command to the queue. if the queue is empty, executes it """
+        self.q.append(cmd)
+        if(len(self.q)<=1):
+            self.deq()
+    def deq(self):
+        """ executes the next command in the queue and removes it form the queue """
+        cmd = self.q[0]
+        del self.q[0]
+#end commander
 class encoder:
     """
     encoder status/configuration class
@@ -228,6 +183,28 @@ class encoder:
         except Exception as e:
             print e, sys.exc_traceback.tb_lineno
     #end status
+    def statusTxt(self, statusCode):
+        """ return the text corresponding to the status code """
+        if(statusCode & self.STAT_INIT):
+            return 'initializing'
+        if(statusCode & self.STAT_CAM_LOADING):
+            return 'loading camera'
+        if(statusCode & self.STAT_READY):
+            return 'ready'
+        if(statusCode & self.STAT_LIVE):
+            return 'live'
+        if(statusCode & self.STAT_SHUTDOWN):
+            return 'shutting down'
+        if(statusCode & self.STAT_PAUSED):
+            return 'paused'
+        if(statusCode & self.STAT_STOP):
+            return 'stopping'
+        if(statusCode & self.STAT_START):
+            return 'starting'
+        if(statusCode & self.STAT_NOCAM):
+            return 'no camera'
+        return 'unknown'
+    #end statusTxt
 
     def statusUnset(self,statusBit, autoWrite = True):
         """Resets the status bit 
@@ -251,38 +228,21 @@ class encoder:
         os.system("echo '"+json.dumps({"status":self.status.replace("\"","\\\""), "code":self.code})+"' > "+c.encStatFile)
     #end statusWrite
 
-    def statusTxt(self, statusCode):
-        """ return the text corresponding to the status code """
-        if(statusCode & self.STAT_INIT):
-            return 'initializing'
-        if(statusCode & self.STAT_CAM_LOADING):
-            return 'loading camera'
-        if(statusCode & self.STAT_READY):
-            return 'ready'
-        if(statusCode & self.STAT_LIVE):
-            return 'live'
-        if(statusCode & self.STAT_SHUTDOWN):
-            return 'shutting down'
-        if(statusCode & self.STAT_PAUSED):
-            return 'paused'
-        if(statusCode & self.STAT_STOP):
-            return 'stopping'
-        if(statusCode & self.STAT_START):
-            return 'starting'
-        if(statusCode & self.STAT_NOCAM):
-            return 'no camera'
-        return 'unknown'
-    #end statusTxt
 #end encoder class
 
+def addEncoder(devID,enc={}):
+    try:
+        encoders[devID] = enc
+        encoders[devID]['on'] = False
+        encoders[devID]['port'] = {'chk':chkPRTbase,'mp4':camMP4base,'hls':camHLSbase}
+    except Exception as e:
+        print "----------------------------adding encoder failed--------------------------------"
 def pxpCleanup(signal=False, frame=False):
-    global SHUTDOWN
     try:
         dbgLog("terminating services...")
         if(enc.code & (enc.STAT_LIVE | enc.STAT_PAUSED)):
             print "stopping live event"
             encStopCap(force=True)
-        SHUTDOWN = True
         enc.statusSet(enc.STAT_SHUTDOWN)
         dbgLog("stopping timers...")
         for tm in tmr:
@@ -326,28 +286,6 @@ def kickDoge():
             addMsg(client,"doge")
 #end kickDoge
 
-#returns true if both ip addresses belong to the same subnet
-def sameSubnet(ip1,ip2):
-    return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
-
-def get_lan_ip():
-    try:
-        ipaddr = "127.0.0.1"
-        for dev in ni.interfaces():
-                adds = ni.ifaddresses(dev)
-                for addr in adds:
-                        for add in adds[addr]:
-                                if('addr' in add):
-                                        ip = add['addr']
-                                        ipp = ip.split('.')
-                                        if(len(ipp)==4 and ip!=ipaddr): #this is a standard X.X.X.X address (ipv4)
-                                            ipaddr = ip
-                                        if(not sameSubnet("127.0.0.1",ipaddr)): #first non-localhost ip found returns - should be en0 - or ethernet connection (not wifi)
-                                            return ipaddr
-    except:
-        pass
-    return ipaddr
-#end getlanip
 
 ###################################################
 ################# end util functions ##############
@@ -421,84 +359,49 @@ def bbqManage():
 ################## network management ##################
 # registers pxp as bonjour service
 def pubBonjour():
-    global SHUTDOWN
-    name    = socket.gethostname() #computer name
-    if(name[-6:]=='.local'):# hostname ends with .local, remove it
-        name = name[:-6]
-    # append mac address as hex ( [2:] to remove the preceding )
-    name += ' - '+ hex(getmac())[2:]
-    regtype = "_pxp._udp" #pxp service
-    # port is the HTTP port specified in apache:
-    p = sb.Popen("cat /etc/apache2/httpd.conf | grep ^Listen | awk '{print $2}' | head -n1", shell=True, stdout=sb.PIPE, stderr=sb.PIPE)
-    out, err= p.communicate()
-    port    = int(out.strip())
 
-    # gets called when bonjour registration is complete
-    def register_callback(sdRef, flags, errorCode, name, regtype, domain):
-        pass
-    #end register_callback
     try:
-        # register the pxp service
-        sdRef = pybonjour.DNSServiceRegister(name = name,
-                                             regtype = regtype,
-                                             port = port,
-                                             callBack = register_callback)
-        while not SHUTDOWN:#bonjouring[0]:
-            ready = select.select([sdRef], [], [],2)
-            if sdRef in ready[0]:
-                pybonjour.DNSServiceProcessResult(sdRef)
+        name    = socket.gethostname() #computer name
+        if(name[-6:]=='.local'):# hostname ends with .local, remove it
+            name = name[:-6]
+        # append mac address as hex ( [2:] to remove the preceding )
+        name += ' - '+ hex(getmac())[2:]
+        regtype = "_pxp._udp" #pxp service
+        # port is the HTTP port specified in apache:
+        # p = sb.Popen("cat /etc/apache2/httpd.conf | grep ^Listen | awk '{print $2}' | head -n1", shell=True, stdout=sb.PIPE, stderr=sb.PIPE)
+        # out, err= p.communicate()
+        # port    = int(out.strip())
+        port = 80
+
+        # gets called when bonjour registration is complete
+        def register_callback(sdRef, flags, errorCode, name, regtype, domain):
+            pass
+        #end register_callback
+        try:
+            # register the pxp service
+            sdRef = pybonjour.DNSServiceRegister(name = name,
+                                                 regtype = regtype,
+                                                 port = port,
+                                                 callBack = register_callback)
+            while not (enc.code & enc.STAT_SHUTDOWN):
+                ready = select.select([sdRef], [], [],2)
+                if sdRef in ready[0]:
+                    pybonjour.DNSServiceProcessResult(sdRef)
+        except Exception as e:
+            pass
+        finally:
+            sdRef.close()
     except Exception as e:
-        pass
-    finally:
-        sdRef.close()
+        print "pubBonjour ERR:::::::",e, sys.exc_traceback.tb_lineno
 #end pubBonjour
-#forwards a udp port to another (or several)
-#portIN - which port to read from
-#portOutSet - index of the set of ports where to forward ('hls','mp4'...)
-def portFwd(portIN,portOutSet):
-    # portIN = 2240
-    global SHUTDOWN
-    try:
-        host = '127.0.0.1'          #local ip address
-        # portIN = 2250             #where packets are coming from
-        # portOUT= 2200             #where packets are forwarded
-        sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)      #Create a socket object
-        sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #create socket for outgoing packets    
-        sIN.bind((host, portIN))    #Bind to the port
-        sIN.settimeout(1)
-        while not SHUTDOWN: #keep receiving forever
-            try:
-                if(not (portOutSet in portFwds) or len(portFwds[portOutSet])<1):
-                    time.sleep(0.1)
-                    continue #this set is not defined or is empty
-                ports = portFwds[portOutSet]
-                data, addr = sIN.recvfrom(1024)
-                if(len(data)<=0):#no data received
-                    continue
-                for port in ports:
-                    sOUT.sendto(data,(host,port))
-            except socket.error, msg:
-                dbgLog("portFwd sock err: "+str(msg))
-                pass
-            except Exception as e:
-                dbgLog("portFwd err: "+str(e)+str(sys.exc_traceback.tb_lineno))
-                pass
-        #end while True
-    except Exception as e:
-        dbgLog("portFwd global err: "+str(e)+str(sys.exc_traceback.tb_lineno))
-        pass
-#end main
-################## network management ##################
 
-################## teradek management ##################
-def camPortMon(port):
-    global SHUTDOWN
+################## network management ##################
+def camPortMon(devID):
     try:
         host = '127.0.0.1'          #local ip address
         sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)  #Create a socket object
-        sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #create socket for outgoing packets
-        portIn = port['input']
-        portOut= port['output']
+        encCopy = copy.deepcopy(encoders)
+        portIn = encCopy[devID]['port']['chk']
         sIN.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         err = True
         while (err):
@@ -512,40 +415,34 @@ def camPortMon(port):
         sIN.setblocking(0)
         sIN.settimeout(0.5)
         timeStart = time.time()
-        while portIns[port['input']]['forwarding'] and not SHUTDOWN:
-            try:
-                if(port['status']!='live'): #this camera is paused or stopped - do not forward anything
+        while enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED):
+            try:   
+                if (not devID in encoders):
+                    return #the encoder disappeared from the network - no sense in trying to check the port
+                if((enc.code & enc.STAT_PAUSED)): #the encoder is paused - do not check anything
                     time.sleep(0.1) #reduce the cpu load
                     continue
                 data, addr = sIN.recvfrom(65535)
-                if(len(data)<=0 and portIns[portIn]['active']):
+                if(len(data)<=0):
                     continue
                 #pxp status should be 'live' at this point
                 if((enc.code & enc.STAT_START) and (time.time()-timeStart)>2):
                     enc.statusSet(enc.STAT_LIVE,autoWrite=False)
-                portIns[portIn]['active']=True
-                sOUT.sendto(data,(host,portOut))
-                # send to cloud
-                # sOUT.sendto(data,("54.221.235.84",20202))
             except socket.error, msg:
                 # only gets here if the connection is refused
                 try:
                     timeStart = time.time()
-                    if(portIn in portIns):
-                        portIns[portIn]['active']=False
-                        devID = portIns[portIn]['camera']
-                        if(enc.code & enc.STAT_LIVE):
-                            encoders[devID]['on']=False #only set encoder status if there is a live event
-                    # time.sleep(0.5)
+                    if(enc.code & enc.STAT_LIVE and devID in encoders):
+                        encoders[devID]['on']=False #only set encoder status if there is a live event
                 except Exception as e:
                     pass
             except Exception as e:
-                dbgLog("camportmon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
+                dbgLog("camPortMon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
                 pass
         #end while
+
     except Exception as e:
-        dbgLog("camportmon global err: "+str(e)+str(sys.exc_traceback.tb_lineno))
-        pass
+        print "camportmon err: ", e, sys.exc_traceback.tb_lineno
 #end camPortMon
 
 def encBitrateSet(bitrate, camIdx=-1):
@@ -597,6 +494,8 @@ def encStartCap(quality):
     os.system("killall -9 "+c.ffname+" 2>/dev/null")
     cameras = camera.getOnCams()
     try:
+        # cmd = "cd /var/www/html/events/live/video && /usr/bin/mediastreamsegmenter -d 1 -p segm_st -m list.m3u8 -i udp://127.0.0.1:22200 -u ./"
+        # sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
         # ffstreamIns = []
         # part of ffmpeg command that has all the inputs (e.g. -i 127.0.0.1:2210 -i 127.0.0.1:2211)
         ffmp4Ins = c.ffbin+" -y"
@@ -615,12 +514,11 @@ def encStartCap(quality):
             #   ffstreamIn += " -codec copy -f mpegts udp://127.0.0.1:220"+str(streamid)
             #   ffstreamIns.append(ffstreamIn)
             # for saving multiple mp4 files, one ffmpeg instance can accomplish that
-            camID = str(cameras[devID]['idx'])
-            dskMP4  = str(dskMP4base+int(camID)) #ffmpeg reads from this UDP port and writes mp4 to disk
-            dskHLS  = str(dskHLSbase+int(camID)) #m3u8 segmenter reads from this UDP port and writes segments to disk
-            camMP4  = str(camMP4base+int(camID)) #ffmpeg captures rtsp from camera and outputs h.264 stream to this port
-            camHLS  = str(camHLSbase+int(camID)) #ffmpeg captures rtsp form camera and outputs MPEG-TS to this port
-            ffmp4Ins +=" -i udp://127.0.0.1:"+dskMP4
+            camID   = str(cameras[devID]['idx'])
+            camMP4  = str(cameras[devID]['port']['mp4']) #ffmpeg captures rtsp from camera and outputs h.264 stream to this port
+            camHLS  = str(cameras[devID]['port']['hls']) #ffmpeg captures rtsp form camera and outputs MPEG-TS to this port
+            chkPRT  = str(cameras[devID]['port']['chk']) #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
+            ffmp4Ins +=" -i udp://127.0.0.1:"+camMP4
             if(len(cameras)<2):
               # there is only one camera - no need to set camID for file names
               fileSuffix = ""
@@ -629,54 +527,45 @@ def encStartCap(quality):
 
             ffmp4Out +=" -map "+camID+" -codec copy "+c.wwwroot+"live/video/main"+fileSuffix+".mp4"
             # this is HLS capture (segmenter)
-            segmenters[devID] = c.segbin+" -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+dskHLS
+            if (pu.osi.name=='mac'): #mac os
+                segmenters[devID] = c.segbin+" -p -t 1s -S 1 -B segm_"+fileSuffix+"st -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+camHLS
+            elif(pu.osi.name=='linux'): #linux
+                os.chdir(c.wwwroot+"live/video")
+                segmenters[devID] = c.segbin+" -d 1 -p segm_"+fileSuffix+"st -m list"+fileSuffix+".m3u8 -i udp://127.0.0.1:"+camHLS+" -u ./"
+
             if(quality=='low' and 'preview' in cameras[devID]):
                 camURL = cameras[devID]['preview']
             else:
                 camURL = cameras[devID]['url']
             # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
-            ffcaps[devID] = c.ffbin+" -rtsp_transport udp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
+            ffcaps[devID] = c.ffbin+" -rtsp_transport udp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
             # each camera also needs its own port forwarder
-            portIns[int(camMP4)]={
-                'forwarding'  :True,
-                'status'      :'live',
-                'type'        :'mp4',
-                'camera'      :devID,
-                'input'       :int(camMP4),
-                'output'      :int(dskMP4),
-                'active'      :True
-                }
-            portIns[int(camHLS)]={
-                'forwarding'  :True,
-                'status'      :'live',
-                'type'        :'hls',
-                'camera'      :devID,
-                'input'       :int(camHLS),
-                'output'      :int(dskHLS),
-                'active'       :True
-                }
-            if(not 'portFwd' in tmr):
-                tmr['portFwd'] = {}
-            tmr['portFwd']['MP4_'+camID] = TimedThread(camPortMon,portIns[int(camMP4)])
-            tmr['portFwd']['HLS_'+camID] = TimedThread(camPortMon,portIns[int(camHLS)])
         #end for device in cameras
         # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
         ffMP4recorder = ffmp4Ins+ffmp4Out
-        # this starts an ffmpeg instance to simulate blue scren in case the camera kicks off when the event is being stopped
-        ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"/bluescreen.jpg -r 30 -vcodec libx264 -an -shortest -f h264 udp://127.0.0.1:"+str(blueMP4)+" -r 30 -vcodec libx264 -vbsf h264_mp4toannexb -f mpegts udp://127.0.0.1:"+str(blueHLS)
+
         # start the HLS segmenters and rtsp/rtmp captures
-        for devID in segmenters:
+        startSuccess = True
+        for devID in cameras:
             # segmenter
-            procMan.padd(name="segment",devID=devID,cmd=segmenters[devID],forceKill=True)
+            startSuccess = startSuccess and procMan.padd(name="segment",devID=devID,cmd=segmenters[devID],forceKill=True) 
+            print "starting seg........", startSuccess, devID
             # ffmpeg RTSP capture
-            procMan.padd(name="capture", devID=devID, cmd=ffcaps[devID], keepAlive=True, killIdle=True, forceKill=True)
+            startSuccess = startSuccess and procMan.padd(name="capture",devID=devID,cmd=ffcaps[devID], keepAlive=True, killIdle=True, forceKill=True)
+            print "starting cap........", startSuccess, devID
         #end for dev in segmenters
 
-        # start blue screen simulator
-        procMan.padd(cmd=ffBlue,       name="blue",  devID="ALL", keepAlive=True, killIdle = True, forceKill=True)        
         # start mp4 recording to file
-        procMan.padd(cmd=ffMP4recorder,name="record",devID="ALL")
+        startSuccess = startSuccess and procMan.padd(cmd=ffMP4recorder,name="record",devID="ALL")
+        print "starting rec........", startSuccess
+        # start port checkers for each camera
+        tmr['portCHK'] = {}
+        for devID in cameras:
+            tmr['portCHK'][devID]=TimedThread(camPortMon,params=(devID,))
+        if(not startSuccess): #the start didn't work, stop the encode
+            encStopCap(force=True)
     except Exception as e:
+        print "start cap errrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
         enc.statusSet(enc.STAT_READY)
         dbgLog("START CAP ERR: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
@@ -686,55 +575,48 @@ def encStopCap(force=False):
     """stops the capture, kills all ffmpeg's and segmenters
     force - (optional) force-kill all the processes - makes stopping process faster
     """
-    global SHUTDOWN
     try:
         dbgLog("stopping capture... force:"+str(force))
         if(not(enc.code & (enc.STAT_LIVE | enc.STAT_PAUSED))):
             force = True #the encode didn't finish starting or didn't start properly - force shut down everything
         enc.statusSet(enc.STAT_STOP)
-        # remove all forwaders
-        for port in portIns:
-            portIns[port]['forwarding']=False
-            portIns[port]['status']='stopped'
         # stop all captures
         cameras = camera.getOnCams()
         dbgLog("stopping segment and capture")
+        # this is used for forwarding blue screen (without it the mp4 file will be corrupt)
+        ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"bluescreen.jpg"
+        # go through each camera and stop the segmenters and ffmpeg stream capture
         for devID in cameras:
             procMan.stop(devID=devID,name="segment", force=force)
             procMan.stop(devID=devID,name="capture", force=force)
+            # build the bluescreen forwarder command
+            ffBlue += " -r 30 -vcodec libx264 -an -f h264 udp://127.0.0.1:"+str(cameras[devID]['port']['mp4'])
         #end while
         # wait for processes to stop
-        while((procMan.findProc("capture") or procMan.findProc("segment")) and not SHUTDOWN):
+        while((procMan.findProc("capture") or procMan.findProc("segment")) and not (enc.code & enc.STAT_SHUTDOWN)):
             time.sleep(1)
         dbgLog("stopped, forwarding the bluescreen")
+
         # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls and ffmpeg produces a broken MP4 file
-        # start forwarding blue screen to all the mp4 recorder ports
-        if(not 'mp4' in portFwds):
-            portFwds['mp4']=[]
-        # forward bluescreen OUT port ----> mp4 recorder IN port
-        for portNum in portIns:
-            port = portIns[portNum]
-            if(port['type']=='mp4'):
-                portFwds['mp4'].append(port['output'])
+        procMan.padd(cmd=ffBlue, name="blue", devID="ALL", keepAlive=True, killIdle = True, forceKill=True)        
+
+        # now we can stop the mp4 recording ffmpeg
         dbgLog("stopping mp4 recorder")
         procMan.stop(devID='ALL',name='record',force=force)
         # wait for the recorder to stop, then kill blue screen forward
-        while(procMan.findProc("record") and not SHUTDOWN):
+        while(procMan.findProc("record") and not (enc.code & enc.STAT_SHUTDOWN)):
             time.sleep(1)
         dbgLog("mp4 record stopped")
         # kill the blue screen ffmpeg process
         procMan.stop(devID='ALL',name='blue', force=force)
-        while(procMan.findProc("blue") and not SHUTDOWN): #wait for bluescreen ffmpeg to stop
+        while(procMan.findProc("blue") and not (enc.code & enc.STAT_SHUTDOWN)): #wait for bluescreen ffmpeg to stop
             time.sleep(1)
+        dbgLog("bluescreen stopped")
         # remove blue screen forwarders
-        portFwds['mp4'] = []
-        # delete port forwarding threads (cam OUT ---> disk IN)
-        if('portFwd' in tmr):
-            for thd in tmr['portFwd']:
-                tmr['portFwd'][thd].kill()
     except Exception as e:
         dbgLog("stopcap err: "+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
+    print "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!stop cap done!!!!!!!!!!!!!!!"
     enc.statusSet(enc.STAT_READY)
 #end encStopCap
 
@@ -753,12 +635,12 @@ def devStatus():
         print teraCopy
         print "...................."
         print "...................."
-        myip = get_lan_ip()
+        myip = pu.io.myIP()
         for td in teraCopy:
             if(not(('url_port' in teraCopy[td]) and ('url' in teraCopy[td]))):
                 #port or main URL is not specified in this teradek entry - it's faulty
                 continue #move on to the next device
-            if(not sameSubnet(td,myip)):
+            if(not pu.io.sameSubnet(td,myip)):
                 continue #skip encoders that are not on local network
             tdPort = teraCopy[td]['url_port']
             tdURL = teraCopy[td]['url']
@@ -833,30 +715,34 @@ def camMonitor():
                 ############
                 ## PAUSED ##
                 ############
-                if(camMP4 in portIns):
-                    portIns[camMP4]['status']='paused'
-                if(camHLS in portIns):
-                    portIns[camHLS]['status']='paused'
+                #
+
+
+
+                # need to figure out a way to pause the encoder without forwarders
+
+
+
+
+
+
+                #
+                # if(camMP4 in portIns):
+                #     portIns[camMP4]['status']='paused'
+                # if(camHLS in portIns):
+                #     portIns[camHLS]['status']='paused'
                 print "paused"
                 continue #this camera is paused - no need to check anything else here
             elif('state' in cams[td] and cams[td]['state']=='stopped'):
                 #############
                 ## STOPPED ##
                 #############
-                if(camMP4 in portIns):
-                    portIns[camMP4]['status']='stopped'
-                if(camHLS in portIns):
-                    portIns[camHLS]['status']='stopped'
                 print "stopped"
                 continue #this camera is stopped
             else: #by default assume camera is live
                 ############
                 ##  LIVE  ##
                 ############
-                if(camMP4 in portIns):
-                    portIns[camMP4]['status']='live'
-                if(camHLS in portIns):
-                    portIns[camHLS]['status']='live'
                 print "live"
             dbgLog("cam: "+str(td))
             if(td in tds):
@@ -867,6 +753,7 @@ def camMonitor():
         pass
 #end tdMonitor
 
+################## teradek management ##################
 # looks for teradek cube published through bonjour
 def tdFind():
     # encoders are identified by this
@@ -902,7 +789,7 @@ def tdFind():
         def query_record_callback(sdRef, flags, interfaceIndex, errorCode, fullname, rrtype, rrclass, rdata, ttl):
             if errorCode == pybonjour.kDNSServiceErr_NoError:
                 ipAddr = socket.inet_ntoa(rdata)
-                if(not sameSubnet(ipAddr,get_lan_ip())): #ignore encoders with an ip address from a different subnet
+                if(not pu.io.sameSubnet(ipAddr,pu.io.myIP())): #ignore encoders with an ip address from a different subnet
                     return
                 queried.append(True)
                 # found teradek, add it to the list
@@ -915,9 +802,8 @@ def tdFind():
                 camID = ipAddr
 
                 if(not camID in encoders):
-                    encoders[camID] = {}
-                    encoders[camID]['on']=False
-                    encoders[camID]['enctype']='td_cube'
+                    addEncoder(camID)                    
+                encoders[camID]['enctype']='td_cube'
                 # url to the stream, consists of:
                 # 'sm' - streaming method/protocol (e.g. rtsp)
                 # ipAddr - ip address of the encoder (e.g. 192.168.1.100)
@@ -979,7 +865,8 @@ def tdFind():
                 now = time.time()
         except:
             pass
-    except:
+    except Exception as e:
+        print "browse_callback ERRRRRRRRRR: ", e, sys.exc_traceback.tb_lineno
         pass
     finally:
         browse_sdRef.close()
@@ -1018,18 +905,17 @@ def tdGetParam(response,parameter):
 def tdCamMon():
     """ checks parameters of the teradek cubes """
     devCopy = copy.deepcopy(encoders)
-    # dbgLog("cam con mon ENCODERS:"+str(devCopy))
     try:
-        myip = get_lan_ip()
+        myip = pu.io.myIP()
         for dev in devCopy:
-            print "checking..............................", dev
             if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
                 print "shutting down camconmon"
                 return
+            print "checking..............................", dev
             if(devCopy[dev]['enctype']!='td_cube'):
                 print "not a cube"
                 continue
-            if(not sameSubnet(dev,myip)):
+            if(not pu.io.sameSubnet(dev,myip)):
                 print "subnet mismatch camconmon"
                 try: # if the encoder is from a different ip group - don't bother recording it
                     del encoders[dev]
@@ -1078,6 +964,7 @@ def tdCamMon():
                 enc.statusSet(enc.STAT_NOCAM,overwrite=((enc.code & enc.STAT_READY)>0))#overwrite when encoder is ready
             else:
                 if(enc.code == enc.STAT_NOCAM): #status was set to NOCAM, when camera returns it should be reset to ready
+                    print "tdcammon stat ready!!!!!!!!!!!"
                     enc.statusSet(enc.STAT_READY)
                 else:#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
                     enc.statusUnset(enc.STAT_NOCAM)
@@ -1229,16 +1116,16 @@ def tdSetFramerate(td):
 def mtCamMon():    
     """ monitors camera connected to matrox monarch, gets resolution/bitrate updates"""
     encCopy = copy.deepcopy(encoders)
-    myip = get_lan_ip()
+    myip = pu.io.myIP()
     for dev in encCopy:
-        print "checking..............................", dev
         if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
             print "shutting down mtCamMon"
             return
+        print "checking..............................", dev
         if(encCopy[dev]['enctype']!='mt_monarch'):
             print "not a monarch"
             continue
-        if(not sameSubnet(dev,myip)):
+        if(not pu.io.sameSubnet(dev,myip)):
             print "subnet mismatch mtCamMon"
             try: # if the encoder is from a different ip group - don't bother processing it
                 del encoders[dev]
@@ -1266,6 +1153,7 @@ def mtCamMon():
         else:#camera detected
             resolution = params['inputResolution']
             if(enc.code == enc.STAT_NOCAM): #status was set to NOCAM, when camera returns it should be reset to ready
+                print "mtcammon stat ready!!!!!!!!!!!!"
                 enc.statusSet(enc.STAT_READY)
             else:#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
                 enc.statusUnset(enc.STAT_NOCAM)
@@ -1420,34 +1308,33 @@ def mtGetParams(mtIP):
 
 # looks for monarch HD on the network (assumes that it's sending NOTIFY to 239.255.255.0 multicast address)
 def mtFind():
-    global SHUTDOWN
     attempts = 3 #try to find a monarch 3 times, then give up
     monarchs = []
     print "mtfind........."
-    while(attempts>0 and len(monarchs)<1 and not SHUTDOWN):
+    while(attempts>0 and len(monarchs)<1 and not (enc.code & enc.STAT_SHUTDOWN)):
         #the Search Target for monarch is:
         #to find ALL ssdp devices simply enter ssdp:all as the target
         monarchs  = pu.ssdp.discover("MonarchUpnp",timeout=5)
         attempts -= 1
-    if(SHUTDOWN or (enc.code & enc.STAT_SHUTDOWN)):
+    if(enc.code & enc.STAT_SHUTDOWN):
         return
     if(len(monarchs)>0):
         print "found ", len(monarchs)
-        myip = get_lan_ip()
+        myip = pu.io.myIP()
         # found at least one monarch 
         for devLoc in monarchs:
             try:
                 dev = monarchs[devLoc]
                 devIP, devPT = mtParseURI(dev.location)
                 print "dev: ", devIP, devPT
-                if(not sameSubnet(devIP,myip)):
+                if(not pu.io.sameSubnet(devIP,myip)):
                     print "subnet mismatch, mtfind: ", devIP, myip
                     continue #devices on different networks are ignored
                 if(devIP and devPT):
                     params = mtGetParams(devIP)
-                    if(params['rtsp_url'] and params['rtsp_port']):
+                    if(params and ('rtsp_url' in params ) and params['rtsp_url'] and params['rtsp_port']):
                         if(not devIP in encoders):
-                            encoders[devIP] = {'on':False}
+                            addEncoder(devIP)
                         encoders[devIP]['enctype']='mt_monarch'
                         encoders[devIP]['url'] = params['rtsp_url']
                         encoders[devIP]['url_port'] = params['rtsp_port']
@@ -1481,7 +1368,7 @@ def getCPU(pgid=0,pid=0):
             if(pgid==foundpgid):#this process belongs to the same group
                 try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
                     ps = psutil.Process(proc.pid)
-                    totalcpu += ps.get_cpu_percent(interval=0.1)
+                    totalcpu += ps.get_cpu_percent(interval=1)
                 except:
                     continue
             #if pgid==foundpgid
@@ -1489,7 +1376,7 @@ def getCPU(pgid=0,pid=0):
     elif(pid):#looking for cpu usage of one process by pid
         try:
             ps = psutil.Process(pid)
-            totalcpu = ps.get_cpu_percent(interval=0.1)
+            totalcpu = ps.get_cpu_percent(interval=1)
         except Exception as e:
             pass
     #get total cpu for a process
@@ -1652,7 +1539,7 @@ class procmgr():
             }
         print " added:::::::::::::::: ",idx, self.procs[idx]
         # start the process as soon as it's added
-        self._start(idx)
+        return self._start(idx)
     #end padd
 
     # remove process from the list 
@@ -1662,19 +1549,24 @@ class procmgr():
     #end premove
     # starts a process from its command and sets the pid/ref accordingly
     def _start(self,procidx):
-        if(not procidx in self.procs):
+        try:
+            if(not procidx in self.procs):
+                return False
+            cmd = self.procs[procidx]['cmd']
+            # start the process
+            ps = sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
+            # get its pid
+            self.procs[procidx]['pid']=ps.pid
+            # get the reference to the object (for communicating/killing it later)
+            self.procs[procidx]['ref']=ps
+            #set these 2 variables to make sure it doesn't get killed by the next manager run
+            self.procs[procidx]['alive']=True 
+            self.procs[procidx]['cpu']=100
+            self.procs[procidx]['resume']=False
+            return True
+        except Exception as e:
+            print "proc._start() ERR::::::::", e, sys.exc_traceback.tb_lineno
             return False
-        cmd = self.procs[procidx]['cmd']
-        # start the process
-        ps = sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
-        # get its pid
-        self.procs[procidx]['pid']=ps.pid
-        # get the reference to the object (for communicating/killing it later)
-        self.procs[procidx]['ref']=ps
-        #set these 2 variables to make sure it doesn't get killed by the next manager run
-        self.procs[procidx]['alive']=True 
-        self.procs[procidx]['cpu']=100
-        self.procs[procidx]['resume']=False
     #end start
     # sets the RUN status of the process to false, indicating this process is to be killed
     # @param int [devID] - id of the device associated with this process
@@ -1728,7 +1620,7 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
     #continue trying to kill it until it's dead or timeout reached
     while(psOnID(pid=pid,pgid=pgid) and ((timeout-time.time())>0)):
         try:
-            dbgLog("---------------PROC ALIVE "+str(pid))
+            dbgLog("psKill:::::::::::::::::::::::::::::::: "+str(pid))
             if(ref):#this is the proper way to stop a process opened with Popen
                 if(force):
                     ref.kill()
@@ -1781,7 +1673,7 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
             pass
 #checks if process is on (By name)
 def psOn(process):
-    if (platform.system()=="Windows"):    #system can be Linux, Darwin
+    if (pu.osi.name=='windows'):    #system can be Linux, Darwin
         #get all the processes for windows matching the specified one:
         cmd = "tasklist | findstr /I "+process
         #result of the cmd is 0 if it was successful (i.e. the process exists)
@@ -1836,10 +1728,9 @@ def addMsg(client,msg,c=False):
 
 # try to turn on the cameras until at least one is connected
 def turnOnCams():
-    global SHUTDOWN
     cams = 0
     enc.statusSet(enc.STAT_CAM_LOADING)
-    while(cams<1 and not SHUTDOWN):
+    while(cams<1 and not (enc.code & enc.STAT_SHUTDOWN)):
         try:
             time.sleep(1) #wait to make sure encoders get detected
             camera.camOn()
@@ -1847,6 +1738,7 @@ def turnOnCams():
         except Exception as e:
             print e, sys.exc_traceback.tb_lineno
             pass
+    print "stat ready!!!!!!"
     enc.statusSet(enc.STAT_READY)
 ####################################################################
 def DataHandler(data,addr):
@@ -1950,7 +1842,7 @@ except:
     pass
 
 # process monitor - gets various statuses
-tmr['procmon']      = TimedThread(procMan.monitor,period=0.5)
+tmr['procmon']      = TimedThread(procMan.monitor,period=1.5)
 # process manager - starts/stops processes
 tmr['procman']      = TimedThread(procMan.manager,period=5)
 # process killer  - terminates processes stopped by the manager
@@ -1984,8 +1876,6 @@ tmr['delFiles']     = TimedThread(deleteFiles,period=2)
 
 tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
 #start the threads for forwarding the blue screen to udp ports (will not forward if everything is working properly)
-tmr['fwdMP4'] = TimedThread(portFwd,(blueMP4,'mp4'))
-# tmr['fwdHLS'] = TimedThread(portFwd,(blueHLS,'hls'))
 
 #register what happens on ^C:
 signal.signal(signal.SIGINT, pxpCleanup)

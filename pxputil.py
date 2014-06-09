@@ -303,20 +303,91 @@ class c_enc:
 		return ''.join(chr(c) for c in [ord(a) ^ ord(b) for a,b in zip(s1,s2)])
 	#end sxor
 #end enc class
+
+class c_osi:
+	"""os info class"""
+	name = None
+	SN = ""
+	def __init__(self):
+		try:
+			import sys, subprocess
+			# get OS type
+			if(sys.platform.lower().find('darwin')>=0):
+				self.name = 'mac'
+			elif(sys.platform.lower().find('linux')>=0):
+				self.name = 'linux'
+			elif(sys.platform.lower().find('win32')>=0):
+				self.name = 'windows'
+			# get serial number
+			if (self.name=='mac'): 
+				try:
+					proc = subprocess.Popen('ioreg -l | grep -e \'"Serial Number" =\'',shell=True,stdout=subprocess.PIPE)
+					serialNum = ""
+					# the output will be similar to:
+					#     |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
+					for line in iter(proc.stdout.readline,""):
+						if(line.find("\"")):
+							lineParts = line.split("\"")
+							if(len(lineParts)>3):
+								serialNum +=lineParts[3]
+				except Exception as e:
+					serialNum = "n/a"
+			elif(self.name=='linux'): #linux
+				try: #NB!! make sure dmidecode utility is installed!!! 
+				     #NB!! on some systems you might need to do 
+				     #     'dmidecode -s system-serial-number' instead of '... system-uuid'
+					proc = subprocess.Popen('dmidecode -s system-uuid',shell=True,stdout=subprocess.PIPE)
+					serialNum = ""
+					for line in iter(proc.stdout.readline,""):
+						serialNum = line
+				except Exception as e:
+					serialNum = "n/a"
+			self.SN = serialNum.strip()
+		except Exception as e:
+			print "osi init error: ", e, sys.exc_traceback.tb_lineno
 #web input/output class
 class c_io:
 	frm = None
 	def __init__(self):
 		# import cgitb; cgitb.enable()
-		import cgi
-		if not self.frm:
-			self.frm = cgi.FieldStorage()
+		if (osi.name=='linux'):
+			pass #on linux using flask field storage is managed externally
+		elif (osi.name == 'mac'):
+			import cgi
+			if not self.frm:
+				self.frm = cgi.FieldStorage()
 	def get(self, fieldName):
 		try:
-			return self.frm.getvalue(fieldName)
+			if(osi.name=='linux'):
+				return self.frm[fieldName]
+			elif(osi.name=='mac'):
+				return self.frm.getvalue(fieldName)
 		except:
 			return False
 	#end get
+	def myIP(self):
+		try:
+			import sys, netifaces as ni
+			ipaddr = "127.0.0.1"
+			for dev in ni.interfaces():
+				adds = ni.ifaddresses(dev)
+				for addr in adds:
+					for add in adds[addr]:
+						if('addr' in add):
+							ip = add['addr']
+							ipp = ip.split('.')
+							if(len(ipp)==4 and ip!=ipaddr): #this is a standard X.X.X.X address (ipv4)
+								ipaddr = ip
+							if(not self.sameSubnet("127.0.0.1",ipaddr)): #first non-localhost ip found returns - should be en0 - or ethernet connection (not wifi)
+								return ipaddr
+		except Exception as e:
+			print "error in myIP: ", e, sys.exc_traceback.tb_lineno
+		return ipaddr
+	
+	def sameSubnet(self, ip1,ip2):
+		"""returns true if both ip addresses belong to the same subnet"""
+		return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
+	#end sameSubnet
 	# creates a url call (i.e. a 'get' request)
 	def url(self,url,params=False,timeout=60):
 		try:
@@ -595,6 +666,7 @@ class c_tt(Thread):
 #url utilities class
 class c_uri:
 	uriString = ""
+	host = ""
 	uriList = []
 	uriQuery = ""
 	def __init__(self):
@@ -609,18 +681,20 @@ class c_uri:
 			os.environ['SCRIPT_NAME'] = ""
 		self.uriList[0]=os.path.basename(os.environ['SCRIPT_NAME'])
 		self.uriList = filter(None,self.uriList)
+		if ('HTTP_HOST' in os.environ):
+			self.host = os.environ['HTTP_HOST']
 		if "QUERY_STRING" in os.environ:
 			self.uriQuery = os.environ["QUERY_STRING"]
 	#end __init__
-	#returns total number of segments minus the script name
 	def numsegs(self):
+		""" returns total number of segments minus the script name """
 		return len(self.uriList)-1
-	#end numsegs
-	#returns array of segments
+	#end numsegs	
 	def segarr(self):
+		""" returns array of segments """
 		return self.uriList[1:]
-	#returns a specified segment (segment 0 is the script name)
 	def segment(self,segnum,ifempty=False):
+		""" returns a specified segment (segment 0 is the script name) """
 		if len(self.uriList)<(segnum+1):
 			#element doesn't exist, return the ifempty string (if it was specified)
 			return ifempty
@@ -634,6 +708,7 @@ class c_uri:
 	#end query
 #end uri class
 
+osi = c_osi() #os info
 db = c_sqdb
 disk = c_disk()
 enc = c_enc()

@@ -1,5 +1,5 @@
 # app version
-ver 					= "1.0.63"
+ver 					= "1.0.7a"
 # where application executables are
 approot 				= "/var/www/html/min/"
 # where events and config files are stores
@@ -20,3 +20,4 @@ segbin 					= "/usr/bin/"+segname
 #path to the list of all teradek cameras
 tdCamList 				= wwwroot+"_db/.tdlist"
 encStatFile				= wwwroot+"_db/.encstat"
+sessdir 				= wwwroot+"session/"

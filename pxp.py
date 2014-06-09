@@ -601,8 +601,7 @@ def encstart():
 		# make sure not overwriting an old event
 		if(os.path.exists(c.wwwroot+"live/evt.txt")): #there was a live event before that wasn't stopped proplery - end it
 			encstop()
-		# else:#there was no live event - just kill all ffmpeg's and HLS segmenters before starting them again
-		# 	camera.camStop()
+			sleep(15)
 		#make sure the 'live' directory was initialized
 		_initLive()
 		io = pu.io
@@ -1560,16 +1559,15 @@ def tagmod():
 def tagset( tagStr=False, sendSock=True):
 	import math
 	import json, os, sys
-	config = settingsGet()
-
-	if (not tagStr):
-		tagStr = pu.uri.segment(3)
-	#just making sure the tag was supplied
-	if(not tagStr):
-		return _err("Tag string not specified")
-	sql = ""
-	db = pu.db()
 	try:
+		config = settingsGet()
+		if (not tagStr):
+			tagStr = pu.uri.segment(3)
+		#just making sure the tag was supplied
+		if(not tagStr):
+			return _err("Tag string not specified")
+		sql = ""
+		db = pu.db()
 		# pre-roll - how long before the tag time to start playing back a clip
 		tagVidBegin = int(config['tags']['preroll'])
 		# duration is preroll+postroll
@@ -1590,6 +1588,8 @@ def tagset( tagStr=False, sendSock=True):
 		# make sure event is not being stopped
 		if(_stopping(eventName)):
 			return _stopping(msg=True)
+		if(not os.path.exists(c.wwwroot+eventName+'/video/')):
+			return _err("Event does not exist")
 		if (not os.path.exists(c.wwwroot+eventName+'/pxp.db')):
 			# this is the first tag in the event 
 			pu.disk.mkdir(c.wwwroot+eventName)
@@ -1611,7 +1611,6 @@ def tagset( tagStr=False, sendSock=True):
 		if(math.isnan(float(t['time']))):
 			t['time'] = 0
 		#a new tag was received - add it
-		
 		if(tagType==99):
 			# type 99 is a duration tag - these ones auto-close only if from the same tablet, otherwise just create a new one
 			# get device id
@@ -1756,7 +1755,9 @@ def tagset( tagStr=False, sendSock=True):
 		#create a tag image if it doesn't exist already
 		pathToEvent = c.wwwroot+eventName+'/'
 		imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
-		while(not os.path.exists(imgFile) and tagOut['type']!=40):
+		thumbAttempt = 0
+		while(not os.path.exists(imgFile) and tagOut['type']!=40 and thumbAttempt<30):
+			thumbAttempt += 1
 			if(eventName=='live'):
 				# for live events the thumbnail must be extracted from a .TS file
 				# get the name of the .ts segment containing the right time				
@@ -1929,7 +1930,7 @@ def teleshot():
 				except:
 					pass
 		#end while no image
-		imgurl = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/'+imgName
+		imgurl = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+imgName
 		return {"imgurl":imgurl}
 	except Exception as e:
 		import sys
@@ -2177,34 +2178,6 @@ def _hash( password):
 	s = hashlib.sha256(password+"azucar")
 	return s.hexdigest()
 #end hash
-def _getSN():
-	""" returns serial number of the computer"""
-	import sys, subprocess
-	if (sys.platform.lower().find('darwin')>=0): #mac os
-		try:
-			proc = subprocess.Popen('ioreg -l | grep -e \'"Serial Number" =\'',shell=True,stdout=subprocess.PIPE)
-			serialNum = ""
-			# the output will be similar to:
-			#     |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
-			for line in iter(proc.stdout.readline,""):
-				if(line.find("\"")):
-					lineParts = line.split("\"")
-					if(len(lineParts)>3):
-						serialNum +=lineParts[3]
-		except Exception as e:
-			print e
-			serialNum = "n/a"
-	elif(sys.platform.lower().find('linux')>=0): #linux
-		try:
-			proc = subprocess.Popen('dmidecode -s system-uuid',shell=True,stdout=subprocess.PIPE)
-			serialNum = ""
-			for line in iter(proc.stdout.readline,""):
-				serialNum = line
-		except Exception as e:
-			print e
-			serialNum = "n/a"
-		pass
-	return serialNum.strip()
 
 #######################################################
 #initializes the encoder
@@ -2216,7 +2189,7 @@ def _init( email, password):
 	# make sure the credentials were supplied
 	url = "http://www.myplayxplay.net/max/activate/ajax"
 	# this only works on a mac!
-	serialNum = _getSN()
+	serialNum = pu.osi.SN
 	params = {
 		'v0':pu.enc.sha('encoder'),
 		'v1':pu.enc.sha(email),
@@ -2325,14 +2298,14 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 			evtDir = c.wwwroot+evtName
 			result[i]['name']=evtName
 			# check if there is a streaming file (playlist) exists
-			if(os.path.exists(evtDir+'/video/list.m3u8') and ('HTTP_HOST' in os.environ)):
-				result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/list.m3u8'
+			if(os.path.exists(evtDir+'/video/list.m3u8') and (pu.uri.host)):
+				result[i]['vid']='http://'+pu.uri.host+'/events/'+evtName+'/video/list.m3u8'
 			# check if the mp4 file exists
 			if(os.path.exists(evtDir+'/video/main.mp4') and (evtName != live)):
 				# it is - provide a path to it
-				if ('HTTP_HOST' in os.environ):
-					# result[i]['vid']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
-					result[i]['mp4']='http://'+os.environ['HTTP_HOST']+'/events/'+evtName+'/video/main.mp4'
+				if (pu.uri.host):
+					# result[i]['vid']='http://'+pu.uri.host+'/events/'+evtName+'/video/main.mp4'
+					result[i]['mp4']='http://'+pu.uri.host+'/events/'+evtName+'/video/main.mp4'
 				if(os.path.exists(evtDir+'/video/list.m3u8')):
 					# video size is actually double (1 for streaming + 1 for mp4 file) - times by 2 (shift left by 1 is the same as multiplying by 2)
 					shiftBy=1
@@ -2341,8 +2314,8 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 					shiftBy=0
 				result[i]['vid_size']=_sizeFmt((os.stat(evtDir+"/video/main.mp4").st_size)<<shiftBy)
 			# check if this is a live event
-			if((evtName==live) and ('HTTP_HOST' in os.environ)):
-				result[i]['live']='http://'+os.environ['HTTP_HOST']+'/events/live/video/list.m3u8'
+			if((evtName==live) and (pu.uri.host)):
+				result[i]['live']='http://'+pu.uri.host+'/events/live/video/list.m3u8'
 			i+=1
 		db.close()
 		return result
@@ -2461,10 +2434,13 @@ def _mkThumbPrep(event,seconds):
 	#select .ts files that should be merged
 	for i in range(int(strFile),int(endFile)):
 		filePath = c.wwwroot+event+"/video/segm_st"+str(i)+".ts"
+		filePath2 = c.wwwroot+event+"/video/segm_st-"+str(i)+".ts"
 		if(os.path.exists(filePath)):
 			vidFiles += filePath + " "
+		elif(os.path.exists(filePath2)):
+			vidFiles += filePath2 + " "
 	# concatenate the video segments
-	cmd = "/bin/cat "+vidFiles+">"+bigTsFile
+	cmd = "cat "+vidFiles+">"+bigTsFile
 	os.system(cmd)
 	# the required frame will be 4 seconds into the file
 	return {"file":bigTsFile,"time":seconds-trueStartTime}
@@ -2896,7 +2872,7 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		#time to show on the thumbnail
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
 		# thumbnail image url
-		tag['url'] = 'http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
+		tag['url'] = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
 		# path to the image file (to check if it exists)
 		imgFile = c.wwwroot+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
 		# check we need to check whether the thumbnail image exists
@@ -2938,12 +2914,12 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 
 		tag['success'] = True #if got here, the tag info was retreived successfully
 		if(int(tag['type'])==4): #add telestration url for telestration tags only
-			tag['teleurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
-			tag['telefull']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tf'+str(tag['id'])+'.jpg'
+			tag['teleurl']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
+			tag['telefull']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tf'+str(tag['id'])+'.jpg'
 		if(int(tag['type'])==40):
-			tag['televid']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/thumbs/tv'+str(tag['id'])+'.mp4'
+			tag['televid']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tv'+str(tag['id'])+'.mp4'
 		if(os.path.exists(c.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
-			tag['vidurl']='http://'+os.environ['HTTP_HOST']+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
+			tag['vidurl']='http://'+pu.uri.host+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
 		if('hid' in tag):
 			del(tag['hid'])
 		# extract metadata as individual fields

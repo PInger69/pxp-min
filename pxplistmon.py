@@ -25,37 +25,46 @@ prevTime = -1
 # with open(listPath) as file_:
 file_ = False;
 lastTime = time.time()
+lastPos = 0 #last position in the playlist file
 while True:
-	if(not os.path.exists(listPath)): 
-		time.sleep(1)#wait until the file shows up
-		if(file_):
-			try:
-				file_.close()
-			except:
-				pass
-			file_ = False
-		continue
-	if(not file_): #file showed up - open it
-		file_ = open(listPath)
-		# Go to the end of file
-		file_.seek(0,2)
-
-	curr_position = file_.tell()
-	line = file_.readline()
-	if (not line):
-		file_.seek(curr_position)
-	else:
-		lastTime = time.time()
-		print line
-		if(line[:7]=='#EXTINF'):
-			print "TIMELINE: ", line
-			# this line contains time
-			try:
-				lineTime=float(re.search('[0-9\.]+', line).group())
-			except:
-				lineTime=-1 #happens when can't extract a number - WHY???
-			if(timeIsDiff(prevTime,lineTime)):#time is different between this line and the time 2 lines above
-				print "DISCONT!"
-				os.system("echo '#EXT-X-DISCONTINUITY' >> "+listPath)
-			prevTime = lineTime #set 'previous' line as current - for the next run
-	time.sleep(0.01)
+	try:
+		if(not os.path.exists(listPath)): 
+			print "file doesn't exist"
+			time.sleep(1)#wait until the file shows up
+			if(file_):
+				try:
+					file_.close()
+				except:
+					pass
+				file_ = False
+			continue
+		# if(not file_): #file showed up - open it
+		file_ = open(listPath,"r")
+		file_.seek(lastPos)
+		line = file_.readline()
+		lastPos = file_.tell()
+		# print "pos:", lastPos
+		if (not line):
+			pass
+			# print "didn't get a line"
+			# file_.seek(curr_position)
+		else:
+			# print "got a line", line
+			lastTime = time.time()
+			# print line
+			if(line[:7]=='#EXTINF'):
+				print "TIMELINE: ", line
+				# this line contains time
+				try:
+					lineTime=float(re.search('[0-9\.]+', line).group())
+				except:
+					lineTime=-1 #happens when can't extract a number - WHY???
+				if(timeIsDiff(prevTime,lineTime)):#time is different between this line and the time 2 lines above
+					print "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!DISCONT!"
+					os.system("echo '#EXT-X-DISCONTINUITY' >> "+listPath)
+				prevTime = lineTime #set 'previous' line as current - for the next run
+		file_.close()
+		time.sleep(0.01)
+	except Exception as e:
+		print "errrrrrr: ", e, sys.exc_traceback.tb_lineno
+		time.sleep(0.01)

@@ -74,6 +74,15 @@ def camOn(camID = False):
 		cameras[camID] = camlist[camID]
 		cameras[camID]['idx']=camIndex
 		cameras[camID]['state']='stopped'
+		# initialize ports (if any)
+		if('port' in cameras[camID]):
+			for portName in cameras[camID]['port']:
+				port = int(cameras[camID]['port'][portName])
+				if(port % 100):
+					continue
+				# if port ends in 00 (not initialized) set it to the index of the camera
+				cameras[camID]['port'][portName] = port+camIndex
+		#end if port
 	#end if camID
 	else:
 		# camID was not specified - enable all cameras
@@ -84,6 +93,15 @@ def camOn(camID = False):
 			cameras[camID] = camlist[camID]
 			cameras[camID]['idx']=camIndex
 			cameras[camID]['state']='stopped'
+			# initialize ports (if any)
+			if('port' in cameras[camID]):
+				for portName in cameras[camID]['port']:
+					port = int(cameras[camID]['port'][portName])
+					if(port % 100):
+						continue
+					# if port ends in 00 (not initialized) set it to the index of the camera
+					cameras[camID]['port'][portName] = port+camIndex
+			#end if port
 			camIndex += 1
 	#end else
 	# save changes to the settings file
@@ -136,87 +154,29 @@ def camParamSet(param,value,camIndex=0,camID=False):
 # start an encode from all cameras
 def camStart(quality='high'):
 	import os
-	# make sure encode is not already running
-	current_status = camStatus()
-	if(current_status=='live' or current_status=='paused'):
+	try:
+		# make sure encode is not already running
+		current_status = camStatus()
+		if(current_status=='live' or current_status=='paused'):
+			return False
+		# reset all cameras - in case some encoders changed their ip address
+		camOff()
+		sleep(1)
+		camOn()
+		# get active cameras
+		cameras = getOnCams()
+		if(len(cameras)<1): #no cameras active
+			return False
+
+		for devID in cameras:
+			cameras[devID]['state'] = 'live'
+		pdisk.sockSend('STR|'+quality,addnewline=False)
+		# update camera statuses on the disk
+		pdisk.cfgSet(section="cameras",value=cameras)
+		sleep(3) #wait for 3 seconds before returning result - to make sure streams start up properly
+		return True
+	except:
 		return False
-	# reset all cameras - in case some encoders changed their ip address
-	camOff()
-	sleep(1)
-	camOn()
-	# get active cameras
-	cameras = getOnCams()
-	if(len(cameras)<1): #no cameras active
-		return False
-
-
-	# to acquire multiple streams, just add them with -i to ffmpeg and output with -map 0, -map 1, etc... e.g.:
-	# ffmpeg -y -i rtsp://192.168.1.107/stream1 -i rtsp://192.168.1.107/quickview \
-	# -map 0 -vcodec copy -acodec copy out.mp4 \
-	# -map 1 -vcodec copy -an low.mp4
-
-	# hls (media segmenter) parameters
-	# & at the end puts it in the background mode - so that the execution won't halt because of it
-	# -p 		: create VOD
-	# -t 1s 	: segment duration (1 second)
-	# -S 1 		: start first segment file at ______1.ts
-	# -B segm 	: name segment files as segm*.ts
-	# -i list  	: the list file will be named as list.m3u8
-	# -f ... 	: directory to output the segments
-	# -127.0.0.1:2222 	: listen on port 2222 of local host to incoming UDP packets
-	#>/dev/null &		: throw all output to null, & at the end puts it in background process (so python doesn't stop)
-
-	# ffmpeg parameters:
-	# -f mpegts: format of the video
-	# -i 'udp....':  input file/stream (the udp port is the one to which this app sends packets)
-	# -re : maintain the frame rate
-	# -y : overrite output file without asking
-	# -strict experimental: needed to have proper mp4 output
-	# -vcodec copy: do not reincode video
-	# -f mp4: MP4 format
-	# /var/www/.....mp4: output file
-	# 2>/dev/null: redirect output to null, 2 since ffmpeg outputs to stderr not stdout
-	# &: put the execution in background mode - do not stop python execution
-
-	# first ffmpeg acquires rtsp stream from all teradeks 
-	# and re-streams it to local udp ports for HLS segmenter (2200, 2201, 2202..., etc)
-	# and to the second ffmpeg for mp4 recording (2210, 2211, 2212..., etc)
-	# info on ports:
-	# 220X - HLS segmenters listening here (MPEG-TS)
-	# 221X - ffmpeg mp4 recording listening here (H.264)
-	# 223X - socket communication pxpservice listens here
-	# 224X - blue screen for mp4 when a camera drops off (ffmpeg sends blue screen video here in H.264 format)
-	# 225X - blue screen for segmenter (ffmpeg sends blue screen video here in MPEG-TS format)
-	# 227X - rtsp/rtmp stream is sent here for mp4 (H.264)
-	# 228X - rtsp/rtmp stream is sent here for hls (MPEG-TS)
-	# 229X - where BM streams its packets (pxpStream.app sends packets here in MPEG-TS format)
-	# ffstreamIns = []
-	# ffmp4Ins = c.ffbin+" -y "
-	# ffmp4Out = ""
-	# segmenters = []
-	# streamid = 0
-	for devID in cameras:
-		cameras[devID]['state'] = 'live'
-	pdisk.sockSend('STR|'+quality,addnewline=False)
-	# update camera statuses on the disk
-	pdisk.cfgSet(section="cameras",value=cameras)
-	sleep(3) #wait for 3 seconds before returning result - to make sure streams start up properly
-	return True
-	#for device in camras
-	# success = True
-	# # start the HLS segmenters
-	# for cmd in segmenters:
-	# 	success = success and not os.system(cmd)
-	# for cmd in ffstreamIns:
-	# 	success = success and not os.system(cmd)
-	# # start the mp4 recording ffmpeg
-	# success = success and not os.system(ffmp4Ins+ffmp4Out+" 2>/dev/null >/dev/null &")
-	# # start an ffmpeg that outputs blue screen (as a fallback for losing encoder/camera)
-	# # only needs 1 port for mp4 and segmenter since the individual camera ports will be forwarded in pxpservice
-	# ffBlue = c.ffbin+" -loop 1 -y -re -i "+c.approot+"/bluescreen.jpg -r 30 -vcodec libx264 -an -shortest -f h264 udp://127.0.0.1:2240 -r 30 -vcodec libx264 -vbsf h264_mp4toannexb -f mpegts udp://127.0.0.1:2250"
-	# success = success and not os.system(ffBlue+" 2>/dev/null >/dev/null &")
-
-	# return success
 #end camStart
 # pause cameras
 def camPause(camID = False):
