@@ -121,8 +121,7 @@ class c_sqdb:
 			self.c.execute(sql,data)#run the query
 			if autocommit:
 				self.con.commit()#commit it - without this no changes will be made to the db
-		except ValueError, e:
-
+		except:
 			error = True
 		#success when there was at least 1 row affected
 		return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
@@ -386,7 +385,10 @@ class c_io:
 	
 	def sameSubnet(self, ip1,ip2):
 		"""returns true if both ip addresses belong to the same subnet"""
-		return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
+		try:
+			return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
+		except:
+			return False
 	#end sameSubnet
 	# creates a url call (i.e. a 'get' request)
 	def url(self,url,params=False,timeout=60):

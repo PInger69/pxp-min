@@ -601,7 +601,6 @@ def encstart():
 		# make sure not overwriting an old event
 		if(os.path.exists(c.wwwroot+"live/evt.txt")): #there was a live event before that wasn't stopped proplery - end it
 			encstop()
-			sleep(15)
 		#make sure the 'live' directory was initialized
 		_initLive()
 		io = pu.io
@@ -1608,6 +1607,10 @@ def tagset( tagStr=False, sendSock=True):
 		success = 1
 		db.open(c.wwwroot+eventName+'/pxp.db')
 		db.transBegin() #in case we need to roll it back later
+
+		if(not 'time' in t and eventName=='live'):#time was not specified - set it to live
+			t['time'] = _thumbName(0,totalTime=True)
+
 		if(math.isnan(float(t['time']))):
 			t['time'] = 0
 		#a new tag was received - add it
@@ -1783,6 +1786,8 @@ def tagset( tagStr=False, sendSock=True):
 					os.remove(vidFile)
 				except:
 					pass
+			if(not os.path.exists(imgFile)):
+				sleep(2) #wait for a couple seconds before trying to create the thumbnail again
 		#end while(no imgFile)
 		#log that a tag was created
 		success = success and _logSql(ltype="mod_tags",lid=lastID,uid=userhid,db=db)
@@ -2105,7 +2110,7 @@ def _extractclip( tagid, event):
 			vidFiles = "" #small .ts files to concatenate
 			#select .ts files that should be merged
 			for i in range(int(strFile),int(endFile)):
-				vidFiles = vidFiles+c.wwwroot+event+"/video/segm_st"+str(i)+".ts "
+				vidFiles = vidFiles+c.wwwroot+event+"/video/segm_"+str(i)+".ts "
 			# concatenate the videos
 			cmd = "/bin/cat "+vidFiles+">"+bigTsFile
 			os.system(cmd)
@@ -2433,8 +2438,8 @@ def _mkThumbPrep(event,seconds):
 	vidFiles = "" #small .ts files to concatenate
 	#select .ts files that should be merged
 	for i in range(int(strFile),int(endFile)):
-		filePath = c.wwwroot+event+"/video/segm_st"+str(i)+".ts"
-		filePath2 = c.wwwroot+event+"/video/segm_st-"+str(i)+".ts"
+		filePath = c.wwwroot+event+"/video/segm_"+str(i)+".ts"
+		filePath2 = c.wwwroot+event+"/video/segm_-"+str(i)+".ts"
 		if(os.path.exists(filePath)):
 			vidFiles += filePath + " "
 		elif(os.path.exists(filePath2)):
@@ -2911,7 +2916,6 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 			tag['event'] = event
 		#set deleted attribute for a tag
 		tag['deleted'] = tag['type']==3
-
 		tag['success'] = True #if got here, the tag info was retreived successfully
 		if(int(tag['type'])==4): #add telestration url for telestration tags only
 			tag['teleurl']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
