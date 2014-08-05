@@ -9,7 +9,9 @@ import socket
 import struct
 import httplib
 import StringIO
-
+import pybonjour
+import select
+import psutil
 #sqlite database management class
 class c_sqdb:
 	con = None
@@ -38,11 +40,11 @@ class c_sqdb:
 	#returns all rows of a query as a dictionary (associative array)
 	def getasc(self):
 		try:
+			rows = []
+			cols = []
 			if not self.c:
 				return []
-			rows = []
 			#get column names
-			cols = []
 			for colname in self.c.description:
 				cols.append(colname[0])
 			#get all rows
@@ -228,18 +230,65 @@ class c_disk:
 			return False
 	#end mkdir
 	#returns true if there is a specified process running
-	def psOn(self, process):
-		import platform, os
-		if (platform.system()=="Windows"):
-			#get all the processes for windows matching the specified one:
-			cmd = "tasklist | findstr /I "+process
-		else:
-			#system can be Linux, Darwin
-			#get all the processess matching the specified one:
-			cmd = "ps -ef | grep \""+process+"\" | grep -v grep > /dev/null" #"ps -A | pgrep "+process+" > /dev/null"
-		#result of the cmd is 0 if it was successful (i.e. the process exists)
-		return os.system(cmd)==0
-	#end psOn
+	#checks if process is on (By name)
+	def psOn(self,process):
+	    if (osi.name=='windows'):    #system can be Linux, Darwin
+	        #get all the processes for windows matching the specified one:
+	        cmd = "tasklist | findstr /I "+process
+	        #result of the cmd is 0 if it was successful (i.e. the process exists)
+	        return os.system(cmd)==0
+
+	    procs = psutil.get_process_list() #get all processes in the system
+	    for proc in procs:
+	        try:#try to get command line for each process
+	            ps  = psutil.Process(proc.pid)
+	            cmd = ' '.join(ps.cmdline)
+	            # see if this command line matches
+	            if(cmd.find(process)>=0):
+	                return True
+	        except:
+	            continue #skip processes that do not exist/zombie/invalid/etc.
+	    return False
+	# def psOn(self, process):
+	# 	import platform, os
+	# 	if (platform.system()=="Windows"):
+	# 		#get all the processes for windows matching the specified one:
+	# 		cmd = "tasklist | findstr /I "+process
+	# 	else:
+	# 		#system can be Linux, Darwin
+	# 		#get all the processess matching the specified one:
+	# 		cmd = "ps -ef | grep \""+process+"\" | grep -v grep > /dev/null" #"ps -A | pgrep "+process+" > /dev/null"
+	# 	#result of the cmd is 0 if it was successful (i.e. the process exists)
+	# 	return os.system(cmd)==0
+	# #end psOn
+	# finds cpu usage by all processes with the same pgid
+	def getCPU(self,pgid=0,pid=0):
+	    totalcpu = 0
+	    if(pgid):
+	        #list of all processes in the system
+	        proclist = psutil.get_process_list().copy()
+	        for proc in proclist:
+	            try:#try to get pgid of the process
+	                foundpgid = os.getpgid(proc.pid)
+	            except:
+	                continue #skip processes that do not exist/zombie/invalid/etc.
+	            if(pgid==foundpgid):#this process belongs to the same group
+	                try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
+	                    ps = psutil.Process(proc.pid)
+	                    totalcpu += ps.get_cpu_percent(interval=1)
+	                except:
+	                    continue
+	            #if pgid==foundpgid
+	        #for proc in proclist
+	    elif(pid):#looking for cpu usage of one process by pid
+	        try:
+	            ps = psutil.Process(pid)
+	            totalcpu = ps.get_cpu_percent(interval=1)
+	        except Exception as e:
+	            pass
+	    #get total cpu for a process
+	    return totalcpu
+	#end getCPU
 	# reads sizeToRead from a specified udp port
 	def sockRead(self, udpAddr="127.0.0.1", udpPort=2224, timeout=0.5, sizeToRead=1):
 		import socket
@@ -323,7 +372,7 @@ class c_osi:
 					proc = subprocess.Popen('ioreg -l | grep -e \'"Serial Number" =\'',shell=True,stdout=subprocess.PIPE)
 					serialNum = ""
 					# the output will be similar to:
-					#     |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
+					#	 |   "IOPlatformSerialNumber" = "C07JKA31DWYL"
 					for line in iter(proc.stdout.readline,""):
 						if(line.find("\"")):
 							lineParts = line.split("\"")
@@ -333,8 +382,8 @@ class c_osi:
 					serialNum = "n/a"
 			elif(self.name=='linux'): #linux
 				try: #NB!! make sure dmidecode utility is installed!!! 
-				     #NB!! on some systems you might need to do 
-				     #     'dmidecode -s system-serial-number' instead of '... system-uuid'
+					 #NB!! on some systems you might need to do 
+					 #	 'dmidecode -s system-serial-number' instead of '... system-uuid'
 					proc = subprocess.Popen('dmidecode -s system-uuid',shell=True,stdout=subprocess.PIPE)
 					serialNum = ""
 					for line in iter(proc.stdout.readline,""):
@@ -382,7 +431,17 @@ class c_io:
 		except Exception as e:
 			print "error in myIP: ", e, sys.exc_traceback.tb_lineno
 		return ipaddr
-	
+	def myName(self):
+		try:
+			name	= socket.gethostname() #computer name
+			if(name[-6:]=='.local'):# hostname ends with .local, remove it
+				name = name[:-6]
+			# append mac address as hex ( [2:] to remove the preceding )
+			# name += ' - '+ hex(getmac())[2:]
+			return name
+		except Exception as e:
+			print "[---]io.myName: ", e, sys.exc_traceback.tb_lineno
+		return ""	
 	def sameSubnet(self, ip1,ip2):
 		"""returns true if both ip addresses belong to the same subnet"""
 		try:
@@ -557,15 +616,15 @@ class c_ssdp:
 		sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 		sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		mreq = struct.pack('=4sl', socket.inet_aton(multicast_group), socket.INADDR_ANY) # pack multicast_group correctly
-		sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)         # Request multicast_group
+		sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)		 # Request multicast_group
 
-		sock.bind((multicast_group, multicast_port))                           # bind on all interfaces
+		sock.bind((multicast_group, multicast_port))						   # bind on all interfaces
 		devices = {}
 		sock.settimeout(timeout)
 		tm_start = time.time()
 		while (time.time()-tm_start)<=timeout:
 			try:
-				data, srv_sock = sock.recvfrom(buffer_size)              # Receive data (blocking)
+				data, srv_sock = sock.recvfrom(buffer_size)			  # Receive data (blocking)
 				srv_addr, srv_srcport = srv_sock[0], srv_sock[1]
 				device = self.ssdpObject(data)
 				if((service in data or service=="ssdp:all") and not device.location in devices):
@@ -587,27 +646,26 @@ class c_str():
 		print(text)
 #end string class
 
-
 ##################################################################
-#                       timed thread class                       #
-#                                                                #
-#  parameters:                                                   #
-#    callback - function to be called when the timeout expires   #
-#    params - parameters to the callback function                #
-#    period - how often to call the callback function            #
-#             if period is zero, the function will only          #
-#             execute once                                       #
-#                                                                #
-#                                                                #
-#  example usage:                                                #
-#  given a function:                                             #
-#                                                                #
-#  def tst(param1,param2)                                        #
-#                                                                #
-#  a = TimedThread(tst,("a",5),3)                                #
-#                                                                #
-#  this will call tst("a",5) every 3 seconds                     #
-#                                                                #
+#					   timed thread class					     #
+#																 #
+#  parameters:												     #
+#	callback - function to be called when the timeout expires    #
+#	params - parameters to the callback function				 #
+#	period - how often to call the callback function			 #
+#			 if period is zero, the function will only		     #
+#			 execute once									     #
+#																 #
+#																 #
+#  example usage:												 #
+#  given a function:											 #
+#																 #
+#  def tst(param1,param2)										 #
+#																 #
+#  a = TimedThread(tst,("a",5),3)								 #
+#																 #
+#  this will call tst("a",5) every 3 seconds					 #
+#																 #
 ##################################################################
 # timed thread class. 
 class c_tt(Thread):
@@ -660,8 +718,11 @@ class c_tt(Thread):
 		#end while
 	#end run
 	def kill(self):
-		self.stop()
-		self.join()
+		try:
+			self.stop()
+			self.join()
+		except:
+			pass
 
 
 
@@ -710,6 +771,128 @@ class c_uri:
 	#end query
 #end uri class
 
+class c_bonjour:
+	def discover(self, regtype, callback):
+		# list of devices that are queried on the network, in case there are other matches besides the specified one (internal only)
+		queried  = []
+		# don't bother if a device is unreachable
+		timeout  = 5
+		# list of devices for which was able to get the info (internal only)
+		resolved = []	
+
+		# gets called when device is resolved
+		def resolve_callback(sdRef, flags, interfaceIndex, errorCode, fullname, hosttarget, port, txtRecord):
+			def query_record_callback(sdRef, flags, interfaceIndex, errorCode, fullname, rrtype, rrclass, rdata, ttl):
+				if errorCode == pybonjour.kDNSServiceErr_NoError:
+					ipAddr = socket.inet_ntoa(rdata)
+					queried.append(True)
+					#return the results to the caller
+					results = {
+						'ip':ipAddr,
+						'txtRecord':txtRecord,
+						'port':port
+					}
+					callback(results)
+			#end query_record_callback
+
+			if errorCode != pybonjour.kDNSServiceErr_NoError:
+				return
+			query_sdRef = pybonjour.DNSServiceQueryRecord(interfaceIndex = interfaceIndex,  fullname = hosttarget, rrtype = pybonjour.kDNSServiceType_A, callBack = query_record_callback)
+			try:
+				while not queried:
+					ready = select.select([query_sdRef], [], [], timeout)
+					if query_sdRef not in ready[0]:
+						break
+					pybonjour.DNSServiceProcessResult(query_sdRef)
+				else:
+					queried.pop()
+				query_sdRef.close()
+			except Exception as e:
+				print "[---]bonjour.publish.query_callback:",e, sys.exc_traceback.tb_lineno
+			resolved.append(True)
+		#end resolve_callback
+
+		def browse_callback(sdRef, flags, interfaceIndex, errorCode, serviceName, regtype, replyDomain):
+			if (errorCode != pybonjour.kDNSServiceErr_NoError) or not (flags & pybonjour.kDNSServiceFlagsAdd): 
+				# error or the service was removed
+				return
+			try:
+				resolve_sdRef = pybonjour.DNSServiceResolve(0, interfaceIndex, serviceName, regtype, replyDomain, resolve_callback)
+				while not resolved:
+					ready = select.select([resolve_sdRef], [], [], timeout)
+					if resolve_sdRef not in ready[0]:
+						break
+					pybonjour.DNSServiceProcessResult(resolve_sdRef)
+				else:
+					resolved.pop()
+				resolve_sdRef.close()
+			except Exception as e:
+				print "[---]bonjour.publish.browse_callback:",e, sys.exc_traceback.tb_lineno
+		#end browse_callback
+
+		try:
+			browse_sdRef = pybonjour.DNSServiceBrowse(regtype = regtype, callBack = browse_callback)
+			start_time = time.time()
+			now = start_time
+			while ((now-start_time)<2):#look for encoders for 3 seconds, then exit
+				ready = select.select([browse_sdRef], [], [], 0.1)
+				if browse_sdRef in ready[0]:
+					pybonjour.DNSServiceProcessResult(browse_sdRef)
+				now = time.time()
+		except Exception as e:
+			print "[---]bonjour.discover",e
+		finally:
+			browse_sdRef.close()
+	#end discover
+	# parses txtRecord in VAR=VALUE format into a dictionary
+	def parseRecord(self,txtRecord):
+		if(not txtRecord):
+			return {}
+		length = len(txtRecord)
+		parts = []
+		line = ""
+		for i in xrange(length):
+			if(ord(txtRecord[i])<27):
+				# line ended
+				parts.append(line)
+				line = ""
+			else:
+				line += txtRecord[i]
+		records = {}
+		for line in parts:
+			linepart = line.split('=')
+			if(len(linepart)>1):
+				records[str(linepart[0])] = str(linepart[1])
+		return records
+	#end extractStream
+	def publish(self, regtype, name, port, txtRecord=""):
+		try:
+			# gets called when bonjour registration is complete
+			def register_callback(sdRef, flags, errorCode, name, regtype, domain):
+				pass
+			#end register_callback
+			try:
+				# register the pxp service
+				sdRef = pybonjour.DNSServiceRegister(name = name,
+													 regtype = regtype,
+													 port = port,
+													 callBack = register_callback,
+													 txtRecord = txtRecord) #can put extra info in txtRecord
+				start_time = time.time()
+				while ((time.time()-start_time)<5):#try to publish for 5 seconds, then exit
+					ready = select.select([sdRef], [], [],2)
+					if sdRef in ready[0]:
+						pybonjour.DNSServiceProcessResult(sdRef)
+			except Exception as e:
+				print "[---]bonjour.publish",e, sys.exc_traceback.tb_lineno
+				pass
+			finally:
+				sdRef.close()
+		except Exception as e:
+			print "[---]bonjour.publish",e
+			pass
+
+#end bonjour class
 osi = c_osi() #os info
 db = c_sqdb
 disk = c_disk()
@@ -720,3 +903,4 @@ ssdp = c_ssdp()
 sstr = c_str()
 TimedThread = c_tt
 uri = c_uri()
+bonjour = c_bonjour()

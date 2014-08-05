@@ -24,21 +24,6 @@ def iff(cond,if_true,if_false=""):
 			</div>
 		</section>
 @end #if settings['video']
-		<!--
-		<section name="clips"> 
-			<div class="col_2">
-				MyClip Quality
-			</div> 
-			<div class="col_10">
-				<select name="quality">
-@for q in settings['clips']['quality_options']:
-					<option value="@str(q)" @iff(str(q)==str(settings['clips']['quality']),'selected','')>@str(settings['clips']['quality_options'][q])</option>
-@end
-				</select>
-				<ajaxSpin></ajaxSpin>
-			</div>
-		</section>
-	-->
 		<section name="tags"> 
 			<div class="col_2">
 				Tag pre-roll time

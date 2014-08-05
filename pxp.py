@@ -1,7 +1,7 @@
 from time import sleep
 import pxputil as pu
 import constants as c
-import os, json, re
+import os, json, re, shutil, sys
 #######################################################
 #######################################################
 ################debug section goes here################
@@ -13,7 +13,7 @@ def alll():
 	# tags = ["MID.3RD", "OFF.3RD", "DEF.3RD"]
 	tags = ["purple","teal","cyan","white","yellow","black","blue","red","pink"]
 	colours = ["FF0000","00FF00","0000FF","FF00FF","00FFFF","FFFF00","333366","FFFFFF"]
-	pu.str.pout("")
+	pu.sstr.pout("")
 	vidlen = len(os.listdir(c.wwwroot+"live/video/"))-2
 	for i in range(0,1000):
 		col = colours[i % len(colours)]
@@ -277,8 +277,8 @@ def egg():
 		</div>
 		<div class="row">
 			<div class="col_6 bold">UI/UX response speed</div>
-			<div class="col_3">fast</div>
-			<div class="col_3">slow</div>
+			<div class="col_3"><1s</div>
+			<div class="col_3">3-5s</div>
 		</div>
 		<div class="row">
 			<div class="col_6 bold">App updates</div>
@@ -288,7 +288,7 @@ def egg():
 		<div class="row">
 			<div class="col_6 bold">UI design</div>
 			<div class="col_3">clean</div>
-			<div class="col_3">poor</div>
+			<div class="col_3">OMGWTHBBQ</div>
 		</div>
 		<div class="row">
 			<div class="col_6 bold">Encoder installation time</div>
@@ -297,8 +297,8 @@ def egg():
 		</div>
 		<div class="row">
 			<div class="col_6 bold">Video bitrate (quality)</div>
-			<div class="col_3">2 - 2.5 mbps</div>
-			<div class="col_3">1 mbps</div>
+			<div class="col_3">1 - 5 mbps (customizable)</div>
+			<div class="col_3">1 mbps (fixed)</div>
 		</div>
 		<div class="row">
 			<div class="col_6 bold">Encode start time</div>
@@ -391,8 +391,18 @@ def egg():
 			<div class="col_3">12 seconds</div>
 		</div>
 		<div class="row">
+			<div class="col_6 bold">Encoder Compatibility</div>
+			<div class="col_3">BM, Teradek, Matrox</div>
+			<div class="col_3">BM</div>
+		</div>
+		<div class="row">
+			<div class="col_6 bold">CPU cost</div>
+			<div class="col_3">$600</div>
+			<div class="col_3">$2000</div>
+		</div>
+		<div class="row">
 			<div class="col_6 bold">OS Compatibility</div>
-			<div class="col_3">OSX, Windows</div>
+			<div class="col_3">OSX, Windows, Linux</div>
 			<div class="col_3">Windows</div>
 		</div>
 		<div class="row">
@@ -440,6 +450,81 @@ def evtdelete():
 	success = True
 	return {"success":success}
 #end evtdelete
+#######################################################
+# exports the event (all metadata and video)
+# @param (str) evtHID  - hashed ID of the event
+# @param (str) outputPath - where to put the folder with the data
+# @param (bool) fullExport - export videos and tags also
+#######################################################
+def evtexport(evtHID=False, outputPath=False, fullExport = False):
+	try:
+		if(not evtHID):
+			# get the event HID
+			evtHID = io.get('event')
+		if(not outputPath):
+			outputPath = c.wwwroot+"backup/"+evtHID
+		# get the event details from the database
+		db = pu.db(c.wwwroot+"_db/pxp_main.db")
+		sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+		db.query(sql,(evtHID,))
+		eventData = db.getasc()
+		db.close()
+		# make sure the destination folder exists
+		if(not os.path.exists(outputPath)):
+			pu.disk.mkdir(outputPath)
+		if(len(eventData)>0):#there is some data
+			# save the data in a text file
+			eventString = json.dumps(eventData[0])
+			pu.disk.file_set_contents(outputPath+"/event.json",eventString)
+			if(fullExport):
+				# copy the video and tags
+				originPath = c.wwwroot+eventData[0]['datapath']
+				shutil.copytree(originPath,outputPath+"/"+eventData[0]['datapath'])
+		return {"success":True}
+	except Exception as e:
+		return _err("export error:"+str(e)+str(sys.exc_traceback.tb_lineno))
+#end evtexport
+
+#######################################################
+# imports all events from a specified path
+#######################################################
+def evtimport(inputPath = False):
+	if(not inputPath):
+		inputPath = c.wwwroot+"backup/"
+	if(not os.path.exists(inputPath)):
+		return _err("path does not exist"+str(inputPath))
+	for item in os.listdir(inputPath):
+		try:
+			evtfolder = inputPath+item
+			if(not os.path.isdir(evtfolder)):
+				continue
+			if(not os.path.exists(evtfolder+"/event.json")):
+				continue #invalid format of the event
+			# try to get the event information
+			eventString = pu.disk.file_get_contents(evtfolder+"/event.json")
+			eventData = json.loads(eventString)
+			# make sure this event doesn't already exist in the database
+			db = pu.db(c.wwwroot+"_db/pxp_main.db")
+			sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+			db.query(sql,(eventData['hid'],))
+			numrows = db.numrows()
+			if(numrows>0):
+				db.close()
+				continue #this event already exists
+			# add the event to the database
+			sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`,`datapath`,`extra`) VALUES(?,?,?,?,?,?,?)"
+			db.query(sql,(eventData['hid'],eventData['date'],eventData['homeTeam'],eventData['visitTeam'],eventData['league'],eventData['datapath'],eventData['extra']))
+			db.close()
+			# copy the folder to the events folder
+			if(not os.path.exists(c.wwwroot+eventData['datapath'])): #video files and tags weren't copied yet
+				if(not os.path.exists(evtfolder+eventData['datapath'])):
+					continue #the video file not found
+				shutil.copytree(evtfolder+eventData['datapath'])
+			return {"success":True}
+		except Exception as e:
+			print "[---]evtimport",e, sys.exc_traceback
+#end evtimport
+
 #######################################################
 # returns encoder status as a string, 
 # either json or plain text (depending on textOnly)
@@ -660,13 +745,8 @@ def encstart():
 		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
 		if(not(quality=='low' or quality=='high')):
 			quality='high'
-		# _portSet() #set ports for blackmagic 
-		# # start hls segmenter
-		# success = success and not os.system("mediastreamsegmenter -p -t 1s -S 1 -B segm -i list.m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:2222 >/dev/null &")
-		# # start mp4 capture
-		# success = success and not os.system("ffmpeg -f mpegts -i 'udp://127.0.0.1:2223?fifo_size=1000000&overrun_nonfatal=1' -re -y -strict experimental -codec copy -f mp4 "+c.wwwroot+"live/video/main.mp4 2>/dev/null >/dev/null &")
+		# start encoder (run ffmpeg, segmenter, etc)
 		success = success and camera.camStart(quality)
-		# return _err(minEvtHid)
 		if success:
 			evtHid = minEvtHid
 			# save the event ID
@@ -749,6 +829,7 @@ def encstop():
 		msg=str(e)
 	return {"success":not rez,"msg":msg,"bookmarking":bookmarking}
 #end encstop
+
 #######################################################
 # returns the input video settings
 #######################################################
@@ -925,9 +1006,11 @@ def prepdown():
 			#make sure appid only contains alphanumerics, dot, and dash
 			if(re.search("[^A-z0-9\-\.]",appid)):
 				appid="" #user probably tried to 'hack' the system, submitted a separate command
+			else:
+				appid=" "+appid
 		else:
 			appid=""
-		os.system(c.wwwroot+"_db/idevcopy "+eventFolder+" "+c.wwwroot+eventFolder+" "+appid+" >/dev/null &")
+		os.system(c.wwwroot+"_db/idevcopy "+eventFolder+" "+c.wwwroot+eventFolder+appid+" >/dev/null &")
 		return {"success":True}
 	except Exception as e:
 		import sys 
@@ -1161,16 +1244,16 @@ def settingsGet():
 		# video settings
 		# get current bitrate (if its available from the encoder)
 		bitrate = camera.camParam('bitrate')
+		canChangeBitrate = camera.camParam('ccBitrate')
 		#default bitrate
 		settings['video']={'bitrate':5000}
 		try:
-			if(bitrate):
-				# check that bitrate is a valid number
+			if(ccBitrate): #this camera allows changing the bitrate
+				# verify bitrate is a valid number
 				val = int(bitrate)
 				if(val>=1000 and val<=5000):
 					settings['video']['bitrate']=bitrate
-			else:
-				#cannot set bitrate on this camera
+			else:#cannot set bitrate on this camera
 				settings['video']['bitrate'] = False
 		except:
 			pass
@@ -1550,12 +1633,15 @@ def tagmod():
 #quarter start 		= 21- football
 #quarter stop 		= 22- football
 
+#group start 		= 23- football training
+#group stop 		= 24- football training
+
 #event can be a folder name of an event or 'live' for live event
 
 #tagStr - json string with tag info
 #sendSock - send the tag to socket
 #######################################################
-def tagset( tagStr=False, sendSock=True):
+def tagset(tagStr=False, sendSock=True):
 	import math
 	import json, os, sys
 	try:
@@ -1699,7 +1785,6 @@ def tagset( tagStr=False, sendSock=True):
 					pass
 			# regardless of preroll time, 'start' tags must start when the tag is laid
 			t['starttime'] = t['time']
-			# make sure there is no old tag within 2 seconds of the current one
 		#end if type is odd
 		else: #for normal (event tags) the startTime will be tag time minus the pre-roll
 			t['starttime'] = float(t['time'])-tagVidBegin
@@ -2604,117 +2689,121 @@ def _syncAddTags( path,tagrow,del_arr,add_arr):
 #syncs encoder to cloud
 #######################################################
 def _syncEnc( encEmail="",encPassw=""):
-	db = pu.db()
-	#open the main database (where everything except tags is stored)
-	if(not db.open(c.wwwroot+"_db/pxp_main.db")):
-		return _err("no database")
-	url = 'http://www.myplayxplay.net/max/sync/ajax'
-	# name them v1 and v2 to make sure it's not obvious what is being sent
-	# v3 is a dummy variable
-	# v0 is the authorization code (it will determine if this is encoder or another device)
-	cfg = _cfgGet(c.wwwroot+"_db/")
-	if(not cfg): 
-		return _err("not initialized")
-	authorization = cfg[1]
-	customerID = cfg[2]
-	params ={   'v0':authorization,
-				'v1':encEmail,
-				'v2':encPassw,
-				'v3':encEmail.encode("rot13"),
-				'v4':customerID
-			}
-	resp = pu.io.send(url,params, jsn=True)
-	if(not resp):
-		return _err("connection error")
-	if ('success' in resp and not resp['success']):
-		return _err(resp['msg'])
-	tables = ['users','leagues','teams','events', 'teamsetup']
-	for table in tables:
-		if (resp and (not (table in resp)) or (len(resp[table])<1)):
-			continue
-		sql_del = "DELETE FROM `"+table+"` WHERE"
-		del_arr = [] #what will be deleted
-		add_arr = [] #contains sql rows that will be inserted
-		# add all data rows in a single query
-		for row in resp[table]:
-			delFields = row['primary'].split(",")#contains names of the fields that are the key - used to delete entries from old tables
-			# e.g. may have "player, team" as the key
-			delQuery = []
-			for delField in delFields:
-				#contains query conditions for deletion
-				delQuery.append(' `'+delField+'` LIKE "'+_cln(row[delField])+'" ')
-			del_arr.append(" AND ".join(delQuery))
-			#if the entry was deleted, move on to the next one (do not add it to the insert array)
-			if('deleted' in row and row['deleted']=='1'):
+	try:
+		db = pu.db()
+		#open the main database (where everything except tags is stored)
+		if(not db.open(c.wwwroot+"_db/pxp_main.db")):
+			return _err("no database")
+		url = 'http://www.myplayxplay.net/max/sync/ajax'
+		# name them v1 and v2 to make sure it's not obvious what is being sent
+		# v3 is a dummy variable
+		# v0 is the authorization code (it will determine if this is encoder or another device)
+		cfg = _cfgGet(c.wwwroot+"_db/")
+		if(not cfg): 
+			return _err("not initialized")
+		authorization = cfg[1]
+		customerID = cfg[2]
+		params ={   'v0':authorization,
+					'v1':encEmail,
+					'v2':encPassw,
+					'v3':encEmail.encode("rot13"),
+					'v4':customerID
+				}
+		resp = pu.io.send(url,params, jsn=True)
+		if(not resp):
+			return _err("connection error")
+		if ('success' in resp and not resp['success']):
+			return _err(resp['msg'])
+		tables = ['users','leagues','teams','events', 'teamsetup']
+		for table in tables:
+			if (resp and (not (table in resp)) or (len(resp[table])<1)):
 				continue
-			# sql_ins = "INSERT INTO `"+table+"`("
-			# sql_vals = "VALUES("
-			sql_cols = [] #column names
-			sql_vals = [] #values to insert
-			#go throuch each field in a row and add it to the query array
-
-			for name in row:
-				if(name=='primary' or name=='deleted'):
-					continue #this is only a name of a row - not actual data
-				sql_cols.append(name)
-				sql_vals.append("'"+str(row[name]).replace("'","''")+"'")
-			#end for name in row
-			add_arr.append("INSERT INTO `"+table+"`("+','.join(sql_cols)+") VALUES ("+','.join(sql_vals)+")")
-		#end for row in table
-		sql_ins="BEGIN TRANSACTION; \n"+("; \n".join(add_arr))+"; \nCOMMIT;"
-		# delete query is fairly standard: DELETE FROM `table` WHERE `field` LIKE 'value' OR `field` LIKE 'another value'
-		sql_del += "OR".join(del_arr)
-
-		if(table=='events'): #only delete events that were deleted in the cloud
-			db.qstr(sql_del)
-		else:#delete all the data from the table (except for events)
-			db.qstr("DELETE FROM `"+table+"`")
-		db.qstr(sql_ins,multiple=True)
-	#foreach table
-	db.qstr("INSERT OR IGNORE INTO `teams`(`hid`,`name`,`txt_name`) VALUES('00000','Unspecified','Unspecified')")
-	db.close()
-	#now sync tags - go to each event folder and add tags to those databases
-
-	eventDir = "../events/"
-	event = ""
-	if not 'tags' in resp:
-		resp['tags']={}
-	lastTagRow = {}
-	for tagrow in resp['tags']:
-		#check if still adding tags to the same event or a new one
-		if(event!=tagrow['event']):
-			#new event: submit the sql query for the previous event
-
-			# first time the loop runs event will be empty
-			# run sql query only after it's been created
-			if(len(event)>0):
-				_syncAddTags(eventDir+event,tagrow,del_arr,add_arr)
-			#if len(event)>0
+			sql_del = "DELETE FROM `"+table+"` WHERE"
 			del_arr = [] #what will be deleted
-			add_arr = [] #values will be added here
-		#end if event != tagrow[event]
+			add_arr = [] #contains sql rows that will be inserted
+			# add all data rows in a single query
+			for row in resp[table]:
+				delFields = row['primary'].split(",")#contains names of the fields that are the key - used to delete entries from old tables
+				# e.g. may have "player, team" as the key
+				delQuery = []
+				for delField in delFields:
+					#contains query conditions for deletion
+					delQuery.append(' `'+delField+'` LIKE "'+_cln(row[delField])+'" ')
+				del_arr.append(" AND ".join(delQuery))
+				#if the entry was deleted, move on to the next one (do not add it to the insert array)
+				if('deleted' in row and row['deleted']=='1'):
+					continue
+				# sql_ins = "INSERT INTO `"+table+"`("
+				# sql_vals = "VALUES("
+				sql_cols = [] #column names
+				sql_vals = [] #values to insert
+				#go throuch each field in a row and add it to the query array
 
-		#get the event name (used as path to the database)
-		event = tagrow['event']
-		#remove it from the dictionary (don't need it for the query)
-		del tagrow['event']
-		del_arr.append(" (`name` LIKE '"+tagrow['name']+"' AND `user` LIKE '"+tagrow['user']+"' AND `time`="+str(tagrow['time'])+") ")
-		if ('deleted' in tagrow and tagrow['deleted']=='1'):
-			#skip deleted tags
-			continue
-		fields = []
-		for field in tagrow:
-			fields.append('"'+_cln(tagrow[field])+'" AS `'+field+'`')
-		#end for field in tagrow
-		add_arr.append(", ".join(fields))
-		lastTagRow = tagrow
-	#end for tagrow in resp[tags]
-		# sql = "INSERT INTO `tags`(`hid`, `name`, `user`, `time`, `period`, `duration`, `coachpick`, `bookmark`, `playerpick`, `colour`,`starttime`,`type`)";
-	#end for tagrow in tags
-	if (len(lastTagRow)>0):
-		#last add/delete query will be run after all the tags were parsed:
-		_syncAddTags(eventDir+event,lastTagRow,del_arr,add_arr)
-	return {"success":True}
+				for name in row:
+					if(name=='primary' or name=='deleted'):
+						continue #this is only a name of a row - not actual data
+					sql_cols.append(name)
+					sql_vals.append("'"+str(row[name]).replace("'","''")+"'")
+				#end for name in row
+				add_arr.append("INSERT INTO `"+table+"`("+','.join(sql_cols)+") VALUES ("+','.join(sql_vals)+")")
+			#end for row in table
+			sql_ins="BEGIN TRANSACTION; \n"+("; \n".join(add_arr))+"; \nCOMMIT;"
+			# delete query is fairly standard: DELETE FROM `table` WHERE `field` LIKE 'value' OR `field` LIKE 'another value'
+			sql_del += "OR".join(del_arr)
+
+			if(table=='events'): #only delete events that were deleted in the cloud
+				db.qstr(sql_del)
+			else:#delete all the data from the table (except for events)
+				db.qstr("DELETE FROM `"+table+"`")
+			db.qstr(sql_ins,multiple=True)
+		#foreach table
+		db.qstr("INSERT OR IGNORE INTO `teams`(`hid`,`name`,`txt_name`) VALUES('00000','Unspecified','Unspecified')")
+		db.close()
+		#now sync tags - go to each event folder and add tags to those databases
+
+		eventDir = "../events/"
+		event = ""
+		if not 'tags' in resp:
+			resp['tags']={}
+		lastTagRow = {}
+		for tagrow in resp['tags']:
+			#check if still adding tags to the same event or a new one
+			if(event!=tagrow['event']):
+				#new event: submit the sql query for the previous event
+
+				# first time the loop runs event will be empty
+				# run sql query only after it's been created
+				if(len(event)>0):
+					_syncAddTags(eventDir+event,tagrow,del_arr,add_arr)
+				#if len(event)>0
+				del_arr = [] #what will be deleted
+				add_arr = [] #values will be added here
+			#end if event != tagrow[event]
+
+			#get the event name (used as path to the database)
+			event = tagrow['event']
+			#remove it from the dictionary (don't need it for the query)
+			del tagrow['event']
+			del_arr.append(" (`name` LIKE '"+tagrow['name']+"' AND `user` LIKE '"+tagrow['user']+"' AND `time`="+str(tagrow['time'])+") ")
+			if ('deleted' in tagrow and tagrow['deleted']=='1'):
+				#skip deleted tags
+				continue
+			fields = []
+			for field in tagrow:
+				fields.append('"'+_cln(tagrow[field])+'" AS `'+field+'`')
+			#end for field in tagrow
+			add_arr.append(", ".join(fields))
+			lastTagRow = tagrow
+		#end for tagrow in resp[tags]
+			# sql = "INSERT INTO `tags`(`hid`, `name`, `user`, `time`, `period`, `duration`, `coachpick`, `bookmark`, `playerpick`, `colour`,`starttime`,`type`)";
+		#end for tagrow in tags
+		if (len(lastTagRow)>0):
+			#last add/delete query will be run after all the tags were parsed:
+			_syncAddTags(eventDir+event,lastTagRow,del_arr,add_arr)
+		return {"success":True}
+	except Exception as e:
+		import sys
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end syncEnc
 #######################################################
 # syncs
