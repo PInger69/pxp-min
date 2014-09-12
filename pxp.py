@@ -1244,7 +1244,8 @@ def settingsGet():
 		# video settings
 		# get current bitrate (if its available from the encoder)
 		bitrate = camera.camParam('bitrate')
-		canChangeBitrate = camera.camParam('ccBitrate')
+		ccBitrate = camera.camParam('ccBitrate') #can change bitrate
+
 		#default bitrate
 		settings['video']={'bitrate':5000}
 		try:
@@ -1510,6 +1511,8 @@ def tagmod():
 		meta = {}
 		# check if manually closing a duration tag:
 		if(('type' in jp) and (int(jp['type'])&1)==0 and int(jp['type'])>0):
+			if(not 'time' in jp):
+				return _err("Specify time when closing duration tag")
 			# closing a duration tag
 			sqlInsert.append("`duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END")
 			params += (jp['time'],jp['time'])

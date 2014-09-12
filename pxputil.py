@@ -229,26 +229,52 @@ class c_disk:
 		except Exception as e:
 			return False
 	#end mkdir
+	def psGet(self,procSearch):
+		""" returns a list of PIDs of all processes matching the procSearch string
+		@param (str) procSearch - string to search for in a list of processes
+		"""
+		found = []
+		try:		
+			procs = psutil.get_process_list() #get all processes in the system
+			for proc in procs:
+				try:#try to get command line for each process
+					ps  = psutil.Process(proc.pid)
+					if(type(ps.cmdline) is str):
+						cmd = ' '.join(ps.cmdline)
+					else:
+						cmd = ' '.join(ps.cmdline())
+					# see if this command line matches
+					if(cmd.find(procSearch)>=0):
+						found.append(proc.pid)
+				except:
+					continue #skip processes that do not exist/zombie/invalid/etc.
+		except Exception as e:
+			print "[---]psGet:",e,sys.exc_traceback.tb_lineno
+		return found
+
 	#returns true if there is a specified process running
 	#checks if process is on (By name)
 	def psOn(self,process):
-	    if (osi.name=='windows'):    #system can be Linux, Darwin
-	        #get all the processes for windows matching the specified one:
-	        cmd = "tasklist | findstr /I "+process
-	        #result of the cmd is 0 if it was successful (i.e. the process exists)
-	        return os.system(cmd)==0
+		if (osi.name=='windows'):	#system can be Linux, Darwin
+			#get all the processes for windows matching the specified one:
+			cmd = "tasklist | findstr /I "+process
+			#result of the cmd is 0 if it was successful (i.e. the process exists)
+			return os.system(cmd)==0
 
-	    procs = psutil.get_process_list() #get all processes in the system
-	    for proc in procs:
-	        try:#try to get command line for each process
-	            ps  = psutil.Process(proc.pid)
-	            cmd = ' '.join(ps.cmdline)
-	            # see if this command line matches
-	            if(cmd.find(process)>=0):
-	                return True
-	        except:
-	            continue #skip processes that do not exist/zombie/invalid/etc.
-	    return False
+		procs = psutil.get_process_list() #get all processes in the system
+		for proc in procs:
+			try:#try to get command line for each process
+				ps  = psutil.Process(proc.pid)
+				if(type(ps.cmdline) is str):
+					cmd = ' '.join(ps.cmdline)
+				else:
+					cmd = ' '.join(ps.cmdline())
+				# see if this command line matches
+				if(cmd.find(process)>=0):
+					return True
+			except:
+				continue #skip processes that do not exist/zombie/invalid/etc.
+		return False
 	# def psOn(self, process):
 	# 	import platform, os
 	# 	if (platform.system()=="Windows"):
@@ -263,31 +289,31 @@ class c_disk:
 	# #end psOn
 	# finds cpu usage by all processes with the same pgid
 	def getCPU(self,pgid=0,pid=0):
-	    totalcpu = 0
-	    if(pgid):
-	        #list of all processes in the system
-	        proclist = psutil.get_process_list().copy()
-	        for proc in proclist:
-	            try:#try to get pgid of the process
-	                foundpgid = os.getpgid(proc.pid)
-	            except:
-	                continue #skip processes that do not exist/zombie/invalid/etc.
-	            if(pgid==foundpgid):#this process belongs to the same group
-	                try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
-	                    ps = psutil.Process(proc.pid)
-	                    totalcpu += ps.get_cpu_percent(interval=1)
-	                except:
-	                    continue
-	            #if pgid==foundpgid
-	        #for proc in proclist
-	    elif(pid):#looking for cpu usage of one process by pid
-	        try:
-	            ps = psutil.Process(pid)
-	            totalcpu = ps.get_cpu_percent(interval=1)
-	        except Exception as e:
-	            pass
-	    #get total cpu for a process
-	    return totalcpu
+		totalcpu = 0
+		if(pgid):
+			#list of all processes in the system
+			proclist = psutil.get_process_list().copy()
+			for proc in proclist:
+				try:#try to get pgid of the process
+					foundpgid = os.getpgid(proc.pid)
+				except:
+					continue #skip processes that do not exist/zombie/invalid/etc.
+				if(pgid==foundpgid):#this process belongs to the same group
+					try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
+						ps = psutil.Process(proc.pid)
+						totalcpu += ps.get_cpu_percent(interval=1)
+					except:
+						continue
+				#if pgid==foundpgid
+			#for proc in proclist
+		elif(pid):#looking for cpu usage of one process by pid
+			try:
+				ps = psutil.Process(pid)
+				totalcpu = ps.get_cpu_percent(interval=1)
+			except Exception as e:
+				pass
+		#get total cpu for a process
+		return totalcpu
 	#end getCPU
 	# reads sizeToRead from a specified udp port
 	def sockRead(self, udpAddr="127.0.0.1", udpPort=2224, timeout=0.5, sizeToRead=1):
@@ -647,14 +673,14 @@ class c_str():
 #end string class
 
 ##################################################################
-#					   timed thread class					     #
+#					   timed thread class						 #
 #																 #
-#  parameters:												     #
-#	callback - function to be called when the timeout expires    #
+#  parameters:													 #
+#	callback - function to be called when the timeout expires	#
 #	params - parameters to the callback function				 #
 #	period - how often to call the callback function			 #
-#			 if period is zero, the function will only		     #
-#			 execute once									     #
+#			 if period is zero, the function will only			 #
+#			 execute once										 #
 #																 #
 #																 #
 #  example usage:												 #
@@ -851,6 +877,7 @@ class c_bonjour:
 		length = len(txtRecord)
 		parts = []
 		line = ""
+		# split the txtRecord into lines
 		for i in xrange(length):
 			if(ord(txtRecord[i])<27):
 				# line ended
@@ -858,6 +885,8 @@ class c_bonjour:
 				line = ""
 			else:
 				line += txtRecord[i]
+		if(len(line)>0):
+			parts.append(line)
 		records = {}
 		for line in parts:
 			linepart = line.split('=')

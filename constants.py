@@ -1,5 +1,5 @@
 # app version
-ver 					= "1.0.8e"
+ver 					= "1.0.10a"
 # where application executables are
 approot 				= "/var/www/html/min/"
 # where events and config files are stores
@@ -21,3 +21,5 @@ segbin 					= "/usr/bin/"+segname
 devCamList 				= wwwroot+"_db/.tdlist"
 encStatFile				= wwwroot+"_db/.encstat"
 sessdir 				= wwwroot+"session/"
+logFile					= wwwroot+"_db/pxpservicelog.txt"
+maxLogSize 				= 50 * 1024 * 1024 #50 Mb

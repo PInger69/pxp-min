@@ -1,13 +1,3 @@
-#to do :
-# set status to ready when at least one encoder has a camera attached
-# set status to loading camera when first loading
-# set it to no camera when there's an encoder but no cameras attached
-
-
-
-
-
-
 #!/usr/bin/python
 from tendo import singleton
 from datetime import datetime as dt
@@ -15,6 +5,12 @@ from uuid import getnode as getmac
 from pxputil import TimedThread
 import camera, constants as c, copy, json, os, psutil, pxp, pxputil as pu, signal, socket, subprocess as sb, time
 import sys
+
+
+
+
+
+
 # big broadcast queue - queue containing all of the sent messages for every client that it was sent to
 # in this format:
 # bbq = {
@@ -73,6 +69,10 @@ def deleteFiles():
         # if there is a deletion in progress - let it finish
         if (pu.disk.psOn("rm -f") or pu.disk.psOn("rm -rf") or pu.disk.psOn("xargs -0 rm")):
             return
+        # check how big is the log file
+        if(os.stat(c.logFile).st_size>c.maxLogSize):
+            #the file is too big - leave only last 500k lines in there (should be about 40-50mb)
+            os.system("cat -n 500000 "+c.logFile+" > "+c.logFile)
         # first, take care of the old session files (>1 day) should take no more than a couple of seconds
         os.system("find "+c.sessdir+" -mtime +1 -type f -print0 | xargs -0 rm 2>/dev/null &")
         # delete individual files
@@ -148,7 +148,7 @@ class commander:
             # add to the tmr[] dictionary so that when the script is stopping, it can be done faster
             if(not 'commander' in tmr):
                 tmr['commander']=[]
-            tmr['commander'].append(TimedThread(self._mgr,period=0.1))
+            tmr['commander'].append(TimedThread(self._mgr,period=0.3))
         except Exception as e:
             print "[---]commander init fail??????? ", e
     def enq(self, cmd, sync=True, bypass=False):
@@ -173,7 +173,6 @@ class commander:
             cmd = self.q[0] #get the command
             del self.q[0] #remove it from the queue
             # do whatever it's supposed to do:
-            print "executing: ", cmd
             self._exc(cmd=cmd)
             # last bit of the command is the autoset status
             self.status = int(cmd.split('|')[-1]) #set the status to 0 (ready) if it's a synchronous command
@@ -181,6 +180,7 @@ class commander:
     def _exc(self,cmd):
         """ executes a given command """
         try:
+            print "executing: ", cmd
             dataParts = cmd.split('|')
             if(dataParts[0]=='STR'): #start encode
                 srcMgr.encCapStart()
@@ -216,7 +216,7 @@ class encoderStatus:
     """
     code = 0 #encoder status code
     status = 'unknown'
-
+    lastWritten = 0  #last status code that was written to file (to make sure we don't write same thing over and over)
     #pre-defined status codes
     STAT_UNKNOWN        = 0
     STAT_INIT           = 1<<0 #encoder is initializing (pxpservice just started)
@@ -230,6 +230,8 @@ class encoderStatus:
     STAT_NOCAM          = 1<<8 #no camera found
 
     def __init__(self):
+        import inspect
+        print "init hierarchy:",inspect.stack()[1][3]
         self.statusSet(self.STAT_INIT)
     def busy(self):
         """ returns true when encoder is busy (i.e. live, starting a live event or still stopping a live event) """
@@ -247,6 +249,9 @@ class encoderStatus:
         overwrite - (optional) overwrite the current status with the new one, if False, status will be added (all statuses are bit-shifted)
         """
         try:
+            import inspect
+            print "set hierarchy:",inspect.stack()[1][3]
+            print "status before:"
             if(overwrite):
                 self.code = statusBit
                 self.status = self.statusTxt(statusBit)
@@ -256,28 +261,28 @@ class encoderStatus:
             if(autoWrite):
                 self.statusWrite()
         except Exception as e:
-            pass
+            print "[---]enc.statusSet",e, sys.exc_traceback.tb_lineno
     #end status
     def statusTxt(self, statusCode):
         """ return the text corresponding to the status code """
+        if(statusCode & self.STAT_SHUTDOWN):
+            return 'shutting down'
         if(statusCode & self.STAT_INIT):
             return 'initializing'
         if(statusCode & self.STAT_CAM_LOADING):
             return 'loading camera'
-        if(statusCode & self.STAT_READY):
-            return 'ready'
-        if(statusCode & self.STAT_LIVE):
-            return 'live'
-        if(statusCode & self.STAT_SHUTDOWN):
-            return 'shutting down'
+        if(statusCode & self.STAT_NOCAM):
+            return 'no camera'
         if(statusCode & self.STAT_PAUSED):
             return 'paused'
         if(statusCode & self.STAT_STOP):
             return 'stopping'
         if(statusCode & self.STAT_START):
             return 'starting'
-        if(statusCode & self.STAT_NOCAM):
-            return 'no camera'
+        if(statusCode & self.STAT_READY):
+            return 'ready'
+        if(statusCode & self.STAT_LIVE):
+            return 'live'
         return 'unknown'
     #end statusTxt
 
@@ -287,20 +292,29 @@ class encoderStatus:
         autoWrite - (optional) write the status to disk right away (default=True)
         """
         try:
+            print "status before..:"
             self.code = self.code & ~statusBit
             self.status = self.statusTxt(self.code)
             dbgLog("status: "+self.status+' '+str(bin(self.code)))
             if(autoWrite):
                 self.statusWrite()
         except Exception as e:
-            pass
+            print "[---]enc.statusUnset",e, sys.exc_traceback.tb_lineno
     #end statusUnset
     def statusWrite(self):
         """ writes out current status to disk """
         # this function is executed automatically (initialized at the bottom of this file), simply records current pxp status in a file
         # the text status is saved simply as 'status' and the numeric status code is saved as 'statuscode'
         # replace() is to make sure that if status has \ or ', it won't break the command and give invalid status
-        os.system("echo '"+json.dumps({"status":self.status.replace("\"","\\\""), "code":self.code})+"' > "+c.encStatFile)
+        # os.system("echo '"+json.dumps({"status":self.status.replace("\"","\\\""), "code":self.code})+"' > "+c.encStatFile)
+        if(self.lastWritten==self.code):
+            return #this status was already written - do nothing
+        try:
+            with open(c.encStatFile,"wb") as f:
+                f.write(json.dumps({"status":self.status.replace("\"","\\\""), "code":self.code}))
+            self.lastWritten = self.code
+        except:
+            pass
     #end statusWrite
 #end encoderStatus class
 
@@ -321,6 +335,7 @@ class encDevice(object):
         self.ip             = ip
         self.isCamera       = False # the camera is attached
         self.isOn           = False # RTSP stream is accessible
+        self.liveStart      = 0     # time of last live555 start attempt
         self.initialized    = False # will be set to true when all parameters of the device are retrieved
         self.initStarted    = int(time.time()*1000) # for timing out the initialization procedure if it stalls for too long
         self.rtspURL        = False # url of the RTP/RTSP stream on the encoder device
@@ -423,7 +438,8 @@ class encTeradek(encDevice):
             #end if not tdSession
             print "logged in: ", self.tdSession
             url +="?session="+self.tdSession
-
+            # bitrate should be in bps not in kbps:
+            bitrate = bitrate * 1000
             print "NEW BITRATE:.....................................", bitrate
             setcmd = "&VideoEncoder.Settings.1.bitrate="+str(bitrate)
             savecmd = "&q=VideoEncoder.Settings.1.bitrate"
@@ -524,7 +540,7 @@ class encTeradek(encDevice):
             url2= "&command=get&q=VideoInput.Info.1.resolution&q=VideoEncoder.Settings.1.framerate&q=VideoEncoder.Settings.1.bitrate&q=VideoEncoder.Settings.1.use_native_framerate&q=VideoInput.Capabilities.1.framerates"
             response = pu.io.url(url+url2, timeout=15)
             if(not response): #didn't get a response - timeout?
-                dbgLog("no response from: "+url+url2)
+                dbgLog("no response from: "+url+url2,level=1)
                 self.tdSession = None
                 return False
             self.resolution = self.getParam(response,'resolution')
@@ -544,7 +560,7 @@ class encTeradek(encDevice):
             # set bitrate for the settings page
             self.bitrate = intBitrate
         except Exception as e:
-            dbgLog("[---]td.update: "+str(e)+" "+str(sys.exc_traceback.tb_lineno))
+            dbgLog("[---]td.update: "+str(e)+" "+str(sys.exc_traceback.tb_lineno),level=2)
     #end update
 #end encTeradek class
 
@@ -724,6 +740,7 @@ class encMatrox(encDevice):
         print params, "mt.update"
         if(params):
             self.resolution = params['inputResolution']
+            self.isCamera = self.resolution!=False
             self.bitrate = params['streamBitrate']
             self.framerate = params['streamFramerate']
             self.rtspURL = params['rtsp_url']
@@ -746,7 +763,6 @@ class encPivothead(encDevice):
     def discover(self, callback):
         """ find any new devices. callback is called when a device is found """
         def discovered(results):
-            print "found: ", results
             recs = pu.bonjour.parseRecord(results['txtRecord'])
             output = {}
             # url to the stream, consists of:
@@ -758,10 +774,12 @@ class encPivothead(encDevice):
             output['url']=streamURL
             output['port'] = results['port']
             output['ip'] = results['ip']
-            output['type'] = "td_cube"
+            output['type'] = "ph_glass"
             callback(output)
         #end discovered
         pu.bonjour.discover(regtype="_pxpglass._udp",callback=discovered)
+    def update(self):
+        self.isCamera = True #when the device is found, assume glasses are present - need to make a more robust verification (change pxpinit.py on the glasses pi)
 #end encPivothead
 
 class source:
@@ -831,32 +849,29 @@ class source:
             while ((enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED)) and self.isEncoding):
                 try:   
                     if((enc.code & enc.STAT_PAUSED)): #the encoder is paused - do not check anything
-                        time.sleep(0.1) #reduce the cpu load
+                        time.sleep(0.2) #reduce the cpu load
                         continue
                     data, addr = sIN.recvfrom(65535)
                     if(len(data)<=0):
-                        print "got zero data??????"
                         continue
                     #pxp status should be 'live' at this point
                     if((enc.code & enc.STAT_START) and (time.time()-timeStart)>2):
                         enc.statusSet(enc.STAT_LIVE,autoWrite=False)
                 except socket.error, msg:
-                    # only gets here if the connection is refused
-                    print "no data?", msg
+                    # only gets here if the connection is refused or interrupted
+                    sys.stdout.write('.')
                     try:
-                        # print "[---]camPortMon -- ",msg
                         timeStart = time.time()
                         if(enc.code & enc.STAT_LIVE):
                             # only set encoder status if there is a live event 
                             # to make sure the monitor runs an RTSP check on the stream
                             self.device.isOn=False
+                        time.sleep(1) #wait for a second before trying to receive data again
                     except Exception as e:
                         pass
                 except Exception as e:
-                    dbgLog("[---]camPortMon err: "+str(e)+str(sys.exc_traceback.tb_lineno))
-                    pass
+                    dbgLog("[---]camPortMon err: "+str(e)+str(sys.exc_traceback.tb_lineno),level=2)
             #end while
-
         except Exception as e:
             print "[---]camportmon err: ", e, sys.exc_traceback.tb_lineno
     def monitor(self):
@@ -867,23 +882,28 @@ class source:
                 return False
             # make sure live555 is running
             urlFilePath = "/tmp/pxp-url-"+str(self.device.ip)
-            if(not procMan.pexists(name='live555',devID=self.id)):
-                print "adding live555 for ", self.id, self.type
-                procMan.padd(name="live555",devID=self.id,cmd="live555ProxyServer -o "+urlFilePath+" "+self.device.rtspURL,keepAlive=True,killIdle=True, forceKill=True)
+            if(not procMan.pexists(name="live555",devID=self.device.ip)):
+                print "adding live555 for ", self.device.ip, self.type
+                procMan.padd(name="live555",devID=self.device.ip,cmd="live555ProxyServer -o "+urlFilePath+" "+self.device.rtspURL,keepAlive=True,killIdle=True, forceKill=True)
+                self.device.liveStart = time.time()  # record the time of the live555 server start
+            live555timeout = time.time()-10 #wait for 10 seconds to restart live555 server
+            if(not self.device.isOn and self.device.liveStart<live555timeout):
+                print "stopping live555"
+                procMan.pstop(name="live555",devID=self.device.ip)
             #make sure live555 is up and running and no changes were made to the ip address
             if(os.path.exists(urlFilePath)): #should always exist!!!!
                 streamURL = pu.disk.file_get_contents(urlFilePath).strip()
                 if(enc.busy() and not (enc.code & enc.STAT_STOP) and self.rtspURL != streamURL):
-                    print "something wrong?????????????????", self.rtspURL, streamURL
+                    print "url changed", self.rtspURL, streamURL
                     #the streaming url changed - update it in the capturing ffmpeg command if the encoder was live already
-                    while(procMan.pexists(name='capture', devID = self.id)):
+                    while(procMan.pexists(name='capture', devID = self.device.ip)):
                         print "trying to stoppppppppppppppppp"
-                        procMan.pstop(name='capture',devID=self.id)
+                        procMan.pstop(name='capture',devID=self.device.ip)
                     camMP4  = str(self.ports['mp4'])
                     camHLS  = str(self.ports['hls'])
                     chkPRT  = str(self.ports['chk'])
                     capCMD  = encBuildCapCmd(streamURL, chkPRT, camMP4, camHLS)
-                    procMan.padd(name="capture",devID=self.id,cmd=capCMD, keepAlive=True, killIdle=True, forceKill=True)
+                    procMan.padd(name="capture",devID=self.device.ip,cmd=capCMD, keepAlive=True, killIdle=True, forceKill=True)
                 self.rtspURL = streamURL
                 #end if enc.busy and not stop
                 #end if stream url changed mid-stream
@@ -908,7 +928,7 @@ class source:
                     data = s.recv(65535)
                 except Exception as e:
                     data = str(e)
-                    dbgLog("[---]source.monitor err: "+str(e)+" "+str(sys.exc_traceback.tb_lineno))
+                    dbgLog("[---]source.monitor err: "+str(e)+" "+str(self.ipcheck)+" "+str(self.ports["rtp"]),level=2)
                 #close the socket
                 try:
                     s.close()
@@ -927,10 +947,13 @@ class source:
                 self.device.isOn = (data.find('RTSP/1.0 200 OK')>=0)
 
             # this is only relevant for medical
-            # if(self.device.initialized and self.device.ccFramerate and self.device.framerate>=50):
-            #     self.device.setFramerate(self.device.framerate/2) #set resolution to half if it's too high (for iPad rtsp streaming)
-            if(self.device.isOn):
-                self.device.initialized = True
+            if(self.device.initialized and self.device.ccFramerate and self.device.framerate>=50):
+                self.device.setFramerate(self.device.framerate/2) #set resolution to half if it's too high (for iPad rtsp streaming)
+            # if(self.device.isOn):
+                # self.device.initialized = True
+            if(self.device.initialized):
+                self.device.initStarted    = int(time.time()*1000) #when device is initialized already, reset the timer
+            self.device.initialized = self.device.isOn #if the stream is unreachable, try to re-initialize the device or remove it form the system
         except Exception as e:
             print "[---]source.monitor", e, sys.exc_traceback.tb_lineno
             return False
@@ -939,13 +962,18 @@ class source:
     def stopMonitor(self):
         try:
             # stop the monitor
+            print "stop monitor thread"
             self.isEncoding = False
             if('src' in tmr and self.id in tmr['src']):
                 tmr['src'][self.id].kill()
+            print "stopping camportmon thread"
             if('portCHK' in tmr and self.id in tmr['portCHK']):
+                print "encoding: ", self.isEncoding
                 tmr['portCHK'][self.id].kill()
+            print "stopping live555"
             # stop the processes associated with this device
             procMan.pstop(name="live555",devID=self.id)
+            print "done stopping"
         except Exception as e:
             print "[---]source.stopMonitor", e, sys.exc_traceback.tb_lineno
 #end source class
@@ -968,19 +996,27 @@ class sourceManager:
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return False
+            ######################################## 
+            dbgLog("add device:"+str(inputs))
+            ######################################## 
             sources = copy.deepcopy(self.sources)
             if(not((('url' in inputs) or ('preview' in inputs)) and ('ip' in inputs))):
                 #neither url nor preview was specified or ip wasn't specified - can't do anything with this encoder
                 return False
             ip = inputs['ip']
             idx = self.exists(ip)
+            ######################################## 
+            dbgLog("exists?"+str(idx))
+            ######################################## 
             if(idx>=0): #device already exists in the list, must've re-discovered it, or discovered another streaming server on it (e.g. preview)
-                if('url' in inputs): #url is different, update it
+                if('url' in inputs): #update url (in case it's changed)
                     self.sources[idx].device.rtspURL = inputs['url']
                     # self.sources[idx].device.ports['rtp'] = int(inputs['port'])
                 elif('preview' in inputs):
                     self.sources[idx].previewURL = inputs['preview']
                     self.sources[idx].ports['preview'] = int(inputs['preview-port'])
+                if('port' in inputs):#update the ports as well (may have changed)
+                    self.sources[idx].ports['rtp'] = inputs['port']
                 return True
             #device does not exist yet (just found it)
             #assign ports accordingly
@@ -1025,7 +1061,7 @@ class sourceManager:
             procMan.pstart(name='capture')
             enc.statusSet(enc.STAT_LIVE)
     def encCapStart(self):
-        """ start encode capture   """
+        """ start encode capture """
         print "cap start"
         try:
             if(not (enc.code & enc.STAT_READY)): #tried to start a stream that's already started or when there are no cameras
@@ -1071,17 +1107,17 @@ class sourceManager:
                 ffmp4Out +=" -map "+camIdx+" -codec copy "+c.wwwroot+"live/video/main"+fileSuffix+".mp4"
                 # this is HLS capture (segmenter)
                 if (pu.osi.name=='mac'): #mac os
-                    segmenters[src.id] = c.segbin+" -p -t 1s -S 1 -B "+fileSuffix+"segm_ -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+camHLS
+                    segmenters[src.device.ip] = c.segbin+" -p -t 1s -S 1 -B "+fileSuffix+"segm_ -i list"+fileSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+camHLS
                 elif(pu.osi.name=='linux'): #linux
                     os.chdir(c.wwwroot+"live/video")
-                    segmenters[src.id] = c.segbin+" -d 1 -p "+fileSuffix+"segm_ -m list"+fileSuffix+".m3u8 -i udp://127.0.0.1:"+camHLS+" -u ./"
+                    segmenters[src.device.ip] = c.segbin+" -d 1 -p "+fileSuffix+"segm_ -m list"+fileSuffix+".m3u8 -i udp://127.0.0.1:"+camHLS+" -u ./"
 
-                # if(quality=='low' and 'preview' in cameras[src.id]):
-                #     camURL = cameras[src.id]['preview']
+                # if(quality=='low' and 'preview' in cameras[src.device.ip]):
+                #     camURL = cameras[src.device.ip]['preview']
                 # else:
                 # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
                 print "capcmd:",src.rtspURL, chkPRT, camMP4, camHLS
-                ffcaps[src.id] = encBuildCapCmd(src.rtspURL, chkPRT, camMP4, camHLS)
+                ffcaps[src.device.ip] = encBuildCapCmd(src.rtspURL, chkPRT, camMP4, camHLS)
                 # each camera also needs its own port forwarder
             #end for device in cameras
             # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
@@ -1096,11 +1132,11 @@ class sourceManager:
                 src = self.sources[idx]
                 self.sources[idx].isEncoding = True
                 # segmenter
-                startSuccess = startSuccess and procMan.padd(name="segment",devID=src.id,cmd=segmenters[src.id],forceKill=True)
+                startSuccess = startSuccess and procMan.padd(name="segment",devID=src.device.ip,cmd=segmenters[src.device.ip],forceKill=True)
                 # ffmpeg RTSP capture
-                startSuccess = startSuccess and procMan.padd(name="capture",devID=src.id,cmd=ffcaps[src.id], keepAlive=True, killIdle=True, forceKill=True)
+                startSuccess = startSuccess and procMan.padd(name="capture",devID=src.device.ip,cmd=ffcaps[src.device.ip], keepAlive=True, killIdle=True, forceKill=True)
                 # start port checkers for each camera
-                tmr['portCHK'][src.id]=TimedThread(self.sources[idx].camPortMon)
+                tmr['portCHK'][src.device.ip]=TimedThread(self.sources[idx].camPortMon)
             #end for dev in segmenters
 
             # start mp4 recording to file
@@ -1108,7 +1144,7 @@ class sourceManager:
             if(not startSuccess): #the start didn't work, stop the encode
                 self.encCapStop() #it will be force-stopped automatically in the stopcap function
         except Exception as e:
-            dbgLog("[---]encCapStop: "+str(e)+str(sys.exc_traceback.tb_lineno))
+            dbgLog("[---]encCapStop: "+str(e)+str(sys.exc_traceback.tb_lineno),level=2)
             self.encCapStop() #it will be force-stopped automatically in the stopcap function
             enc.statusSet(enc.STAT_READY)
     #end encCapStart
@@ -1139,31 +1175,46 @@ class sourceManager:
                 self.sources[idx].isEncoding = False
                 ffBlue += " -r 30 -vcodec libx264 -an -f h264 udp://127.0.0.1:"+str(src.ports['mp4'])
             #end while
+            timeout = 20 #how many seconds to wait for process before force-stopping it
+            timeStart = time.time() #start the timeout timer to make sure the process doesn't hang here
             # wait for ffmpeg and hls processes to stop
-            while((procMan.palive("capture") or procMan.palive("segment")) and not (enc.code & enc.STAT_SHUTDOWN)):
+            while((procMan.palive("capture") or procMan.palive("segment")) and (not (enc.code & enc.STAT_SHUTDOWN)) and (time.time()-timeStart)<timeout):
                 time.sleep(1)
+            if((time.time()-timeStart)>=timeout):#timeout reached
+                if(procMan.palive("capture")): #force-stop the capture ffmpeg
+                    procMan.pstop(name="capture",force=True)
+                if(procMan.palive("segment")): #force-stop the segmenter
+                    procMan.pstop(name="segment",force=True)
             dbgLog("stopped, forwarding the bluescreen")
 
             # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls and ffmpeg produces a broken MP4 file
             procMan.padd(cmd=ffBlue, name="blue", devID="ALL", keepAlive=True, killIdle = True, forceKill=True)
             time.sleep(5)
-            while(not procMan.palive(name="blue")):
+            timeStart = time.time()
+            while(((time.time()-timeStart)<timeout) and not procMan.palive(name="blue")):
                 time.sleep(1)
             # now we can stop the mp4 recording ffmpeg
             dbgLog("stopping mp4 recorder")
             procMan.pstop(name='record',force=force)
+            timeStart = time.time()
             # wait for the recorder to stop, then kill blue screen forward
-            while(procMan.pexists("record") and not (enc.code & enc.STAT_SHUTDOWN)):
+            while(procMan.pexists("record") and not (enc.code & enc.STAT_SHUTDOWN) and (time.time()-timeStart)<timeout):
                 time.sleep(1)
+            if((time.time()-timeStart)>=timeout):#timeout reached
+                procMan.pstop(name='record', force=True)
             dbgLog("mp4 record stopped--")
             # kill the blue screen ffmpeg process
             procMan.pstop(name='blue')
-            while(procMan.palive("blue") and not (enc.code & enc.STAT_SHUTDOWN)): #wait for bluescreen ffmpeg to stop
+            timeStart = time.time()
+            while(procMan.palive("blue") and not (enc.code & enc.STAT_SHUTDOWN) and (time.time()-timeStart)<timeout): #wait for bluescreen ffmpeg to stop
                 time.sleep(1)
+            if((time.time()-timeStart)>=timeout):#timeout reached
+                procMan.pstop(name='blue', force=True)
             dbgLog("bluescreen stopped")
-            # remove blue screen forwarders
+            # stop the live555 (for good measure)
+            os.system("killall -9 live555ProxyServer >/dev/null 2>/dev/null")
         except Exception as e:
-            dbgLog("[---]encCapStop: "+str(e)+str(sys.exc_traceback.tb_lineno))
+            dbgLog("[---]encCapStop: "+str(e)+str(sys.exc_traceback.tb_lineno),level=2)
             pass
         if(enc.code & enc.STAT_STOP):
             enc.statusSet(enc.STAT_READY)
@@ -1182,46 +1233,58 @@ class sourceManager:
                 idx +=1
         except Exception as e:
             print "[---]sources.exists:",e,sys.exc_traceback.tb_lineno
-            pass
         return -1
     #end exists
     def monitor(self):
-        if(enc.code & enc.STAT_SHUTDOWN):
-            return False
-        # check if all the devices are on
-        sources = copy.deepcopy(self.sources)
-        idx = 0
-        isCamera = False
-        for src in sources:
-            now = int(time.time()*1000)
-            if ((not src.device.initialized) and (now-src.device.initStarted)>60000): #could not initialize the device after a minute
-                src.stopMonitor()
-                del self.sources[idx]
+        try:
+            if(enc.code & enc.STAT_SHUTDOWN):
+                return False
+            # check if all the devices are on
+            sources = copy.deepcopy(self.sources)
+            idx = 0
+            isCamera = False
+            # print "mon.................."
+            # print sources
+            # print "..................mon"
+            for src in sources:
+                now = int(time.time()*1000)
+                if ((not src.device.initialized) and (now-src.device.initStarted)>60000): #could not initialize the device after a minute
+                    print "could not init device - stop monitor"
+                    # src.stopMonitor()
+                    self.sources[idx].stopMonitor()
+                    print "deleting...", self.sources
+                    del self.sources[idx]
+                    print "deleted ", self.sources
+                else:
+                    idx+=1
+                    isCamera = isCamera or src.device.isCamera
+            #end for
+            if(not isCamera):# no cameras on any encoders
+                # set status bit to NO CAMERA - this will need to be done on per-camera basis (not for the entire encoder)
+                enc.statusSet(enc.STAT_NOCAM,overwrite=(enc.code & enc.STAT_READY)>0)
             else:
-                idx+=1
-                isCamera = isCamera or src.device.isCamera
-        #end for
-        if(not isCamera):# no cameras on any encoders
-            # set status bit to NO CAMERA - this will need to be done on per-camera basis (not for the entire encoder)
-            enc.statusSet(enc.STAT_NOCAM,overwrite=((enc.code & enc.STAT_READY)>0))#overwrite when encoder is ready
-        else:
-            if((enc.code == enc.STAT_NOCAM) or (enc.code==enc.STAT_INIT) or (enc.code==enc.STAT_CAM_LOADING)):
-                #status was set to NOCAM (or it was the initialization procedure), when camera returns it should be reset to ready
-                enc.statusSet(enc.STAT_READY)
-            elif(enc.code & enc.STAT_NOCAM):#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
-                enc.statusUnset(enc.STAT_NOCAM)
-        self.toJSON()
+                if((enc.code==enc.STAT_NOCAM) or enc.code & (enc.STAT_INIT | enc.STAT_CAM_LOADING)):
+                    #status was set to NOCAM (or it was the initialization procedure), when camera returns it should be reset to ready
+                    enc.statusSet(enc.STAT_READY)
+                elif(enc.code & enc.STAT_NOCAM):#encoder status was something else (e.g. live + nocam) now simply remove the nocam flag
+                    enc.statusUnset(enc.STAT_NOCAM)
+            self.toJSON()
+        except Exception as e:
+            print "[---]srcmgr.monitor:",e, sys.exc_traceback.tb_lineno
     #end monitor
     def setBitrate(self, bitrate, camID=-1):
         """ change camera/encoder bitrate
         @param (int) bitrate - new bitrate to set
         @param (int) camID - (optional) id of the encoder/camera. if not specified, the bitrate will be set for all cameras
         """
-        sources = copy.deepcopy(self.sources)
-        #go through all sources looking for the specific source id
-        for src in sources:
-            if(src.device.ccBitrate and (src.id==camID or camID<0)): #this device allows changing bitrate, found the right camera or setting bitrate for all the cameras
-                src.device.setBitrate(bitrate)
+        try:
+            sources = copy.deepcopy(self.sources)
+            #go through all sources looking for the specific source id
+            for src in sources:
+                if(src.device.ccBitrate and (src.id==camID or int(camID)<0)): #this device allows changing bitrate, found the right camera or setting bitrate for all the cameras
+                    src.device.setBitrate(int(bitrate))
+        except Exception as e:
+            print "[---]mgr.setBitrate",e,sys.exc_traceback.tb_lineno
     #end setBitrate
     def toJSON(self, autosave = True):
         """ creates a dictionary of all the sources 
@@ -1236,16 +1299,18 @@ class sourceManager:
                 "bitrate"       :   src.device.bitrate,
                 "ccBitrate"     :   src.device.ccBitrate,
                 "framerate"     :   src.device.framerate,
-                "deviceURL"     :   src.device.rtspURL
+                "deviceURL"     :   src.device.rtspURL,
+                "type"          :   src.type,
+                "cameraPresent" :   src.device.isCamera,
+                "on"            :   src.device.isOn
             }
         with open(c.devCamList,"w") as f:
             f.write(json.dumps(validDevs))
-
 #end sourceManager class
 
 #recursively kills threads in the ttObj
 def pxpTTKiller(ttObj={},name=False):
-    dbgLog(str(name)+"...")
+    dbgLog("pxpkill: "+str(name)+"...")
     if(type(ttObj) is dict): #the object is a dictionary - go through each element (thread) and kill it
         if(len(ttObj)<1):
             return
@@ -1271,7 +1336,7 @@ def pxpCleanup(signal=False, frame=False):
         dbgLog("terminating services...")
         if(enc.code & (enc.STAT_LIVE | enc.STAT_PAUSED)):
             print "stopping live event"
-            encStopCap(force=True)
+            srcMgr.encCapStop(force=True)
         enc.statusSet(enc.STAT_SHUTDOWN)
         dbgLog("stopping timers...")
         pxpTTKiller(tmr,"tmr")
@@ -1290,10 +1355,21 @@ def pxpCleanup(signal=False, frame=False):
         pass
 #end pxpCleanup
 
-def dbgLog(msg, timestamp=True):
+def dbgLog(msg, timestamp=True, level=0):
+    """ print debug info 
+        @param (str) msg - message to display
+        @param (bool) timestamp - display timestamp before the message
+        @param (int) level - debug level:
+                                    0 - info
+                                    1 - warning
+                                    2 - error
+    """
     try:
+        debugLevel = 0 #the highest level to print
+        if(level<debugLevel):
+            return
         # if the file size is over 1gb, delete it
-        logFile = c.wwwroot+"_db/pxpservicelog.txt"
+        logFile = c.logFile
         if(os.path.exists(logFile) and os.stat(logFile).st_size>=(1<<30)):
             os.remove(logFile)
         print dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"), msg
@@ -1412,13 +1488,13 @@ class proc:
             if(self.off): #the process is stopping, it should not restart
                 return False
             # start the process
-            if(self.name=='capturezz'):#display output in the terminal
+            if(self.name=='capturez'):#display output in the terminal
                 ps = sb.Popen(self.cmd.split(' '))
             else:#hide output for all other ffmpeg's/processes
                 ps = sb.Popen(self.cmd.split(' '),stderr=FNULL,stdout=FNULL)
             # get its pid
             self.pid=ps.pid
-            print "starting: ", self.name, self.pid, "force:", self.forcekill
+            # print "starting: ", self.name, self.pid, "force:", self.forcekill
             # get the reference to the object (for communicating/killing it later)
             self.ref=ps
             #set these 2 variables to make sure it doesn't get killed by the next manager run
@@ -1428,7 +1504,7 @@ class proc:
             self.run = True
             return True
         except Exception as e:
-            dbgLog("[---]proc.start: "+str(e))
+            dbgLog("[---]proc.start: "+str(e)+str(sys.exc_traceback.tb_lineno))
         return False
     def stop(self,async=True,force=False,end=False):
         """ stops the process 
@@ -1436,7 +1512,7 @@ class proc:
             @param (bool) force - force-stop the process if true
             @param (bool) end   - permanently end the process (no possibility of restart)
         """
-        print "stopping: ", self.name, self.pid, "force:", (force or self.forcekill)
+        # print "stopping: ", self.name, self.pid, "force:", (force or self.forcekill)
         self.off = end
         self.run = False
         try:
@@ -1458,7 +1534,7 @@ class proc:
         print "proc", self.name, "cleanup"
         for thread in self.threads:
             try:#remove any running threads
-                print thread
+                print "clean ",thread
                 self.threads[thread].kill()
             except Exception as e:
                 print "[---]proc._cleanup",self.name, thread, "---fail:",e
@@ -1473,12 +1549,12 @@ class proc:
     def _manager(self):
         if(enc.code & enc.STAT_SHUTDOWN):
             self._cleanup()
-        if(self.run and not self.alive): 
-            #this process should be alive but isn't - start it
+        elif(self.run and not self.alive): 
+            #this process is not alive, but should be - start it
+            self._killer() #stop all the threads (to make sure there's nothing left over when the process re-starts)
             self.start()
         elif(self.run and self.alive and self.cpu<0.1 and self.killidle and self.keepalive):
             #this process is alive but idle and has to be restarted when idle
-            print "kill idle!!!!!!!!!!!!!!"
             self.restart()
         elif(self.run and self.alive and self.cpu<0.1 and self.killidle):
             #this process is idle and has to be stopped (but not restarted)
@@ -1500,12 +1576,13 @@ class proc:
             self.alive = False
             self.cpu = 0
             self.killcount = 0
+            return True
         except Exception as e:
             if(sys and sys.exc_traceback and sys.exc_traceback.tb_lineno):
                 errline = sys.exc_traceback.tb_lineno
             else:
                 errline = ""
-            dbgLog("[---]proc._killer: "+str(e)+" "+str(errline))
+            dbgLog("[---]proc._killer: "+str(e)+" "+str(errline), level=2)
 #end class proc
 
 class procmgr:
@@ -1517,7 +1594,7 @@ class procmgr:
         if(len(procs)>0):
             print "----------------------------------"
             for idx in procs:
-                print procs[idx].name, procs[idx].alive, procs[idx].cpu, procs[idx].pid, procs[idx].keepalive, procs[idx].run
+                dbgLog("%s %s %s %s %s %s"%(procs[idx].name, procs[idx].alive, procs[idx].cpu, procs[idx].pid, procs[idx].keepalive, procs[idx].run))
             print "----------------------------------"
     def palive(self,name,devID=False):
         """ determine whether a process is alive 
@@ -1551,7 +1628,7 @@ class procmgr:
         except Exception as e:
             print "[---]padd:",e
             return False
-    #end padd    
+    #end padd
     def pexists(self,name,devID=False):
         """ determine whether a process exists (stopped, idle, but present in the list)
         @param (str) name - name of the process
@@ -1594,11 +1671,6 @@ class procmgr:
                                 tmr['killers'] = []
                             tmr['killers'].append(TimedThread(self._stopwait,(idx,)))
                     #end if stop
-    def _stopwait(self,idx):
-        """ waits until the process is stopped, then removes it"""
-        while(psOnID(self.procs[idx].pid)):
-            time.sleep(1)
-        del self.procs[idx]
     # start a specified process (usually used for resuming an existing process)
     def pstart(self,name,devID=False):
         procs = self.procs.copy()
@@ -1607,14 +1679,22 @@ class procmgr:
             if(proc.name==name):
                 if(not devID or proc.dev==devID): #either devID matches or devID wasn't specified - just start all processes matching the name
                     proc.start()
+    def _stopwait(self,idx):
+        """ waits until the process is stopped, then removes it"""
+        while(psOnID(self.procs[idx].pid)):
+            time.sleep(1)
+        del self.procs[idx]
     def __del__(self):
-        print "procman del!!!!!!!!!!!"
-        for idx in self.procs:
-            self.procs[idx].stop()
-            del self.procs[idx]
+        try:
+            for idx in self.procs:
+                self.procs[idx].stop()
+                del self.procs[idx]
+        except:
+            pass
 #end procmgr CLASS
 
 #finds a gap in the sorted list of integers
+# this algorithm is slower than sequential search for arrays of size < 8
 # def gap(arr,first,last):
 #     if(len(arr)<1)
 #         return 0
@@ -1651,13 +1731,14 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
     #continue trying to kill it until it's dead or timeout reached
     # while(psOnID(pid=pid,pgid=pgid) and ((timeout-time.time())>0)):
     try:
-        dbgLog("psKill:::::::::::::::::::::::::::::::: "+str(pid))
         if(ref):#this is the proper way to stop a process opened with Popen
             if(force):
                 ref.kill()
             else:
                 os.system("kill -15 "+str(pid))
-            t = TimedThread(comm,(ref,)) #same as ref.communicate(), but it won't cause a problem if communicate() stalls
+            if(not 'comm' in tmr):
+                tmr['comm'] = {}
+            tmr['comm'][pid] = TimedThread(comm,(ref,)) #same as ref.communicate(), but it won't cause a problem if communicate() stalls
             # if(not force):
                 # time.sleep(2)
         else:#no reference was specified - just send the signal to the pid
@@ -1673,35 +1754,6 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
     except Exception as e:
         dbgLog("kill err::::::::::::::::::"+str(e)+str(sys.exc_traceback.tb_lineno))
         pass
-    # #end while psOnID
-    # if(psOnID(pid=pid,pgid=pgid)):
-    #     dbgLog("????????????did not kill?????? try again!!!!!")
-    #     # exited loop on timeout - process is still alive, try to kill the process again with a SIGKILL this time
-    #     try:
-    #         if(ref):
-    #             ref.kill()
-    #             time.sleep(0.5)
-    #             t = TimedThread(comm,(ref,)) #same as ref.communicate()
-    #         elif(pid):
-    #             os.kill(pid, signal.SIGKILL)
-    #         elif(pgid):
-    #             os.killpg(pgid, signal.SIGKILL)
-    #     except:
-    #         pass
-    # time.sleep(1) #wait for a bit
-    # if(psOnID(pid=pid,pgid=pgid)):
-    #     # nothing has worked, last resort - kill this monkey!!!
-    #     try:
-    #         if(ref):
-    #             ref.send_signal(signal.SIGHUP)
-    #             time.sleep(0.5)
-    #             t = TimedThread(comm,(ref,)) #same as ref.communicate
-    #         elif(pgid):
-    #             os.killpg(pgid, signal.SIGHUP)
-    #         elif(pid):
-    #             os.kill(pid,signal.SIGHUP)
-    #     except:
-    #         pass
 
 # checks if a process is active based on pid
 def psOnID(pid=0,pgid=0):
@@ -1804,13 +1856,20 @@ def SockHandler(sock,addr):
 
 # set encoder status
 
+#make sure there is only 1 instance of this script running
+# me = singleton.SingleInstance()
+procs = pu.disk.psGet("pxpservice.py")
+if(len(procs)>0 and not (os.getpid() in procs)):
+    print "ps on!!"
+    exit()
+else:
+    print procs
+    print "ps off!!"
 tmr = {}
 enc = encoderStatus()
 encControl = commander() #encoder control commands go through here (start/stop/pause/resume)
 
-dbgLog("starting...")
-#make sure there is only 1 instance of this script running
-me = singleton.SingleInstance()
+dbgLog("---APP START--")
 procMan = procmgr()
 try:
     # remove old encoders from the list, the file will be re-created when the service finds encoders
@@ -1836,7 +1895,7 @@ srcMgr = sourceManager()
 srcMgr.discover()
 
 # start deleter timer (deletes files that are not needed/old/etc.)
-tmr['delFiles']     = TimedThread(deleteFiles,period=2)
+tmr['delFiles']     = TimedThread(deleteFiles,period=5)
 
 tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
 #start the threads for forwarding the blue screen to udp ports (will not forward if everything is working properly)
@@ -1844,10 +1903,8 @@ tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
 #register what happens on ^C:
 signal.signal(signal.SIGINT, pxpCleanup)
 tmr['dbgprint']     = TimedThread(procMan.dbgprint,period=5)
-# after everything was started, wait for cameras to appear and set them as active
-# tmr['startcam']     = TimedThread(turnOnCams)
 # writes out the pxp encoder status to file (for others to use)
-tmr['pxpStatusSet'] = TimedThread(enc.statusWrite,period=1)
+tmr['pxpStatusSet'] = TimedThread(enc.statusWrite,period=0.5)
 # when clients connect, their threads will sit here:
 tmr['clients']      = {}
 
@@ -1885,3 +1942,4 @@ if __name__=='__main__':
         pxpCleanup()
         appRunning = False
         print "MAIN ERRRRR????????? ",e
+dbgLog('---APP STOP---')
