@@ -1,0 +1,182 @@
+<div class="col_12">
+	<div class="row bold">
+		<div class="col_2">Date</div>
+		<div class="col_2">Home team</div>
+		<div class="col_2">Visitor team</div>
+		<div class="col_3">League</div>
+		<div class="col_1">Size</div>
+		<div class="col_2">
+			<div class="cw_6 right"> 
+				<button class="btn-restore green small cw_12" type="reset" title="restore selected">
+					<i class="icon-download-alt"></i>
+				</button>
+			</div>
+			<div class="cw_4 right"> 
+				<input type="checkbox" control="chkAll" class="chkAll">
+			</div>
+		</div>
+	</div>
+	<div class="main-data">
+		
+	</div>
+</div>
+<div class="hide template">
+	<div class="row border-top">
+		<div class="col_2 date">
+		</div>
+		<div class="col_2 word-break hmteam">
+		</div>
+		<div class="col_2 word-break vsteam">
+		</div>
+		<div class="col_3 word-break league">
+		</div>
+		<div class="col_2 size">
+		</div>
+		<div class="col_1 center">
+			<input type="checkbox" />
+		</div>
+	</div>
+</div>
+<script type="text/javascript">
+function Restorer(params) {
+	this.hid = params.hid;
+	this.holder = params.holder;
+    // this.STAT_INIT = 0    //event initialized
+    // this.STAT_START= 1<<0 //backup started
+    // this.STAT_DONE = 1<<1 //backup done (success)
+    // this.STAT_FAIL = 1<<2 //backup done (fail)
+    // this.STAT_NOEVT= 1<<3 //event doesn't exist
+
+	this.status = 0;
+	return this;
+}
+
+Restorer.prototype.start = function() {
+	var self = this;
+	//display loading animation until copy starts
+	this.holder.html('<img src="css/img/ajax-loader.gif"/>');
+	// start the download
+	ajaxCall("evtrestore/?event="+this.hid,"",
+		function(){
+			self.progress(); //start getting progress for the backup when server sends a response
+		});
+};
+
+Restorer.prototype.progress = function() {
+	var self = this;
+	url = 'ajax/evtbackupstatus/?event='+self.hid+'&r='+Math.random(); //random number added to prevent cached responses
+
+	$.ajax({
+		url: url,
+		dataType: 'json'
+		// data: {event: self.hid}
+	})
+	.done(function(data) {
+		self.status = data[0];
+		if((data[0]^16) && (data[0]&(2|4))){
+			self.done();
+		}
+		else{//still backing up
+			if(data[0]&1){ //backup started
+				if(self.holder.find('.restore-meter').length<=0){ //just started backing up - display progress bar
+					self.holder.html('<div class="meter animate restore-meter"><span style="width: 0%"><span></span></span></div>');
+				}
+				else{
+					// update progress bar to the new progress
+					pbarWidth(self.holder.find('.restore-meter > span'),data[1]);
+				}
+			}
+			setTimeout(function(){
+				self.progress();
+			},1000); 
+		}
+	})
+	.fail(function(jqxhr) {
+		this.status = -1;
+	})
+	.always(function() {
+	});
+};
+
+Restorer.prototype.done = function() {
+	if(this.status==2){
+	    // finished copying
+		this.holder.html('<i class="icon-ok green large"></i>');
+	}
+	else{
+		if(this.status & (1<<6)){
+			this.holder.html('not enough space');
+		}
+		else if(this.status & (1<<5)){
+			this.holder.html('no drives found');
+		}
+		else{
+			this.holder.html('error '+this.status);
+		}
+	}
+	this.holder.find(':checked').removeProp('checked');
+};
+
+function pbarWidth(obj,width) {
+	obj.animate({
+			width: width+'%'
+		}, 500);
+}
+
+function loadEvents() {
+	$('.main-data').html('<img src="css/img/ajax-loader.gif"/>')
+	$.ajax({
+		url: 'ajax/evtbackuplist',
+		dataType: 'json'
+	})
+	.done(function(data) {
+		$('.main-data').html('');
+		if(!data.hasOwnProperty('events')){
+			return; // there are no events to display
+		}
+		for(i in data.events){
+			var evt = data.events[i];
+			// add each event to the list of backed up events
+			var tmp = $('.template .row').clone();
+			tmp.data('event',evt.hid);
+			tmp.find('.date').text(evt.date);
+			tmp.find('.hmteam').text(evt.homeTeam);
+			tmp.find('.vsteam').text(evt.visitTeam);
+			tmp.find('.league').text(evt.league);
+			tmp.find('.size').addClass(evt.exists?'green':'').text(evt.size); //skip for now
+			// console.log(data.events[i]);
+			$('.main-data').append(tmp);
+		}
+	})
+	.always(function(a) {
+		console.log(a);
+	});
+}
+
+function fOnLoad (argument) {
+
+	loadEvents();
+    $('.btn-restore').click(function(event) {
+    	$(':checked').each(function() {
+    		var r = $(this).parents('.row');
+			var hid = r.data('event');
+			var holder = r.find('.size');
+			var restore = new Restorer({
+				hid:hid,
+				holder:holder
+			});
+			restore.start();
+    	});
+
+    });
+    $('.chkAll:checkbox').change(function () {
+    	if($(this).is(":checked")){
+    		$(":checkbox").attr("checked","checked");
+    	}
+    	else{
+    		$(":checkbox").removeAttr("checked");
+    	}
+    	return false;
+    });
+}//fOnLoad
+</script>
