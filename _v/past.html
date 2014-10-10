@@ -5,18 +5,20 @@
 		<div class="col_2">Home team</div>
 		<div class="col_2">Visitor team</div>
 		<div class="col_2">League</div>
-		<div class="col_2">Video</div>
-		<div class="col_2">
-			<!-- <div class="cw_3"> &nbsp; </div> -->
-			<div class="cw_2 right"> 
-				<input type="checkbox" control="chkAll" class="chkAll">
+		<div class="col_1">Video</div>
+		<div class="col_3">
+			<div class="cw_4 right"> 
+				&nbsp;
 			</div>
-			<div class="cw_5 right"> 
+			<div class="cw_4 right"> 
 				<button id="download" class="green small cw_12" type="reset">
 					<i class="icon-download-alt"></i>
 				</button>
 			</div>
-			<div class="cw_5" style="float:right;">
+			<div class="cw_1 right"> 
+				<input type="checkbox" control="chkAll" class="chkAll">
+			</div>
+			<div class="cw_3" style="float:right;">
 				<button class="removeSel small red cw_12">
 					<i class="icon-remove"></i>
 				</button>
@@ -47,7 +49,10 @@
 			@end
 		</div>
 		<div class="col_2">
-			<div class="cw_11 center">
+			<div class="cw_1 right backup-holder">
+				<a href="#" class="backupEvt large" eventID="@ev['hid']"><i class="icon-save"></i></a>
+			</div>
+			<div class="cw_10 center">
 				@if 'mp4' in ev:
 					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']" download>
 				@elif not 'live' in ev:
@@ -83,6 +88,90 @@ var dlQueue = []; //queue used for processing multiple downloads
 var rmQueue = []; //queue used for processing multiple deletions
 var rmBtnHtml = "";
 var dnRetries = 0; //number of download retries
+function Backuper (params) {
+	this.hid = params.hid;
+	this.holder = params.holder;
+    // this.STAT_INIT = 0    //event initialized
+    // this.STAT_START= 1<<0 //backup started
+    // this.STAT_DONE = 1<<1 //backup done (success)
+    // this.STAT_FAIL = 1<<2 //backup done (fail)
+    // this.STAT_NOEVT= 1<<3 //event doesn't exist
+
+	this.status = 0;
+	return this;
+	// var holder = obj.parents('.backup-holder');
+	// 
+	// ajaxCall("evtbackup/?event="+$(obj).attr('eventID'),null,function() {
+	// 	holder.html('<i class="icon-ok green large"></i>')
+	// });
+}
+
+Backuper.prototype.start = function() {
+	var self = this;
+	//display loading animation until copy starts
+	this.holder.html('<img src="css/img/ajax-loader.gif"/>');
+	// start the download
+	ajaxCall("evtbackup/?event="+this.hid,"",
+		function(){
+			self.progress(); //start getting progress for the backup when server sends a response
+		});
+};
+
+Backuper.prototype.progress = function() {
+	var self = this;
+	url = 'ajax/evtbackupstatus/?event='+self.hid+'&r='+Math.random();
+	console.log(url);
+	$.ajax({
+		url: url,
+		dataType: 'json'
+		// data: {event: self.hid}
+	})
+	.done(function(data) {
+		self.status = data[0];
+		if((data[0]^16) && (data[0]&(2|4))){
+			self.done();
+		}
+		else{//still backing up
+			if(data[0]&1){ //backup started
+				if(self.holder.find('.backup-meter').length<=0){ //just started backing up - display progress bar
+					self.holder.html('<div class="meter animate backup-meter"><span style="width: 0%"><span></span></span></div>');
+				}
+				else{
+					// update progress bar to the new progress
+					pbarWidth(self.holder.find('.backup-meter > span'),data[1]);
+				}
+			}
+			setTimeout(function(){
+				self.progress();
+			},1000); 
+		}
+	})
+	.fail(function(jqxhr) {
+		this.status = -1;
+	})
+	.always(function() {
+	});
+};
+
+Backuper.prototype.done = function() {
+	console.log(this.status);
+	if(this.status==2){
+	    // finished copying
+		this.holder.html('<i class="icon-ok green large"></i>');
+	}
+	else{
+		if(this.status & (1<<6)){
+			this.holder.html('not enough space');
+		}
+		else if(this.status & (1<<5)){
+			this.holder.html('no drives found');
+		}
+		else{
+			this.holder.html('error '+this.status);
+		}
+	}
+};
+
 function getProgress() {
 	// get download progress
 	$.ajax({
@@ -286,6 +375,16 @@ function fOnLoad (argument) {
     	}
     	return false;
     });//removeEvt.click
+    $('.backupEvt').click(function(event) {
+    	var hid = $(this).attr('eventID');
+    	var holder = $(this).parents('.row').find('.vidColumn');
+    	var backup = new Backuper({
+    		hid:hid,
+    		holder:holder
+    	});
+    	backup.start();
+
+    });
     $('.chkAll:checkbox').change(function () {
     	if($(this).is(":checked")){
     		$(":checkbox").attr("checked","checked");

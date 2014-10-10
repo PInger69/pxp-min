@@ -1,5 +1,5 @@
 # app version
-ver 					= "1.0.10a"
+ver 					= "1.0.11"
 # where application executables are
 approot 				= "/var/www/html/min/"
 # where events and config files are stores
@@ -23,3 +23,6 @@ encStatFile				= wwwroot+"_db/.encstat"
 sessdir 				= wwwroot+"session/"
 logFile					= wwwroot+"_db/pxpservicelog.txt"
 maxLogSize 				= 50 * 1024 * 1024 #50 Mb
+
+#1.0.11
+# -backup functionality

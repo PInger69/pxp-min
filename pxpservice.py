@@ -4,12 +4,7 @@ from datetime import datetime as dt
 from uuid import getnode as getmac
 from pxputil import TimedThread
 import camera, constants as c, copy, json, os, psutil, pxp, pxputil as pu, signal, socket, subprocess as sb, time
-import sys
-
-
-
-
-
+import sys, shutil, hashlib
 
 # big broadcast queue - queue containing all of the sent messages for every client that it was sent to
 # in this format:
@@ -23,6 +18,7 @@ import sys
 #       '<request2>':{'ACK':0/1, 'timesSent':<times_sent>, 'lastSent':<last_time_sent>, 'data':<data>}
 #   }, <client ref>, <send_next>] 
 # }
+
 globalBBQ = {}
 
 lastStatus = 0
@@ -58,8 +54,443 @@ chkPRTbase = 22700 #port where a monitor is sitting and checking if packets are 
 
 sockInPort = 2232
 
+class backupEvent(object):
+    """event to be backed up"""
+    STAT_INIT = 0    #event initialized
+    STAT_START= 1<<0 #backup started
+    STAT_DONE = 1<<1 #backup done (success)
+    STAT_FAIL = 1<<2 #backup done (fail)
+    STAT_NOEVT= 1<<3 #event doesn't exist
+    STAT_NOBKP= 1<<4 #event was never added to the backup list
+    STAT_NODRV= 1<<5 #no drive available for backup
+    STAT_NOSPC= 1<<6 #no space on any drives
+    autoDir = "/pxp-autobackup/"
+    manualDir = "/pxp-backup/"
+    def __init__(self, hid, priority, dataOnly=False, auto=False, restore=False, backupPath = False):
+        super(backupEvent, self).__init__()
+        self.hid = hid
+        self.priority = priority
+        self.size = 0
+        self.copied = 0
+        self.total = 1 #in case the status gets requested before copy starts, don't want division by zero
+        self.status = self.STAT_INIT
+        self.kill = False # flag will force-stop a copy
+        self.auto = auto #this is an autobackup
+        self.dataOnly = dataOnly #whether to backup data and video or just data
+        self.currentFile = False
+        self.restore = restore #whether this event is to be restored or backed up
+        self.backupPath = backupPath #the path to the event on the backup drive
+    def cancel(self):
+        # event is still copying - send a kill signal to it
+        try:
+            if(self.status & (self.STAT_START)): #the event didn't finish copying
+                self.kill = True
+            #end if bkp in tmr
+        except Exception as e:
+            print "[---]bkp.start:",e,sys.exc_traceback.tb_lineno
+        #end ifself.done
+    #end cancel
+    def monitor(self):
+        lastSize = self.copied
+        lastBigSize = 0 #bytes copied of the current file at last check
+        currentBigSize = 0
+        lastFile = self.currentFile
+        self.lastBigSize = 0
+        try:
+            while((self.status==self.STAT_START) and (not self.kill) and (not (enc.code & enc.STAT_SHUTDOWN))):
+                time.sleep(5)
+                print "copied: ", self.copied
+                # print self.currentFile, self.copied, lastSize, self.currentFile, lastFile, currentBigSize, lastBigSize,
+                if(self.currentFile and self.copied==lastSize and self.currentFile==lastFile): #probably copying a large file
+                    currentBigSize = os.path.getsize(self.currentFile)
+                    self.copied += currentBigSize - lastBigSize
+                    lastBigSize = currentBigSize
+                    self.lastBigSize = lastBigSize
+                else:
+                    lastSize = self.copied
+                    lastFile = self.currentFile
+                    lastBigSize = 0
+                lastSize = self.copied
+        except Exception as e:
+            print "[---]bkp.monitor:",e,sys.exc_traceback.tb_lineno
+    #end monitor
+    def onComplete(self):
+        self.currentFile = False
+        if(self.copied>=self.total):
+            self.status = self.STAT_DONE
+        else:
+            self.status = self.STAT_FAIL
+        try:
+            # remove the timer processes
+            if(('bkp' in tmr) and (self.hid in tmr['bkp'])):
+                tmr['bkp'][self.hid].kill()
+                del tmr['bkp'][self.hid]
+            if(('bkp' in tmr) and ((self.hid+'-mon') in tmr['bkp'])):
+                tmr['bkp'][self.hid+'-mon'].kill()
+                del tmr['bkp'][self.hid+'-mon']
+            if(('bkp' in tmr) and ((self.hid+'-rst') in tmr['bkp'])):
+                tmr['bkp'][self.hid+'-rst'].kill()
+                del tmr['bkp'][self.hid+'-rst']
+            if(('bkp' in tmr) and ((self.hid+'-rstmon') in tmr['bkp'])):
+                tmr['bkp'][self.hid+'-rstmon'].kill()
+                del tmr['bkp'][self.hid+'-rstmon']
+        except Exception as e:
+            print "[---]bkp.onComplete",e,sys.exc_traceback.tb_lineno
+        print "------------done backup-------------"
+    #end onComplete
+    def start(self):
+        if(self.restore):
+            self.startRestore()
+        else:
+            self.startBackup()
+    def startBackup(self):
+        # get info about the event
+        try:
+            self.status = self.STAT_START
+            db = pu.db(c.wwwroot+"_db/pxp_main.db")
+            sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+            db.query(sql,(self.hid,))
+            eventData = db.getasc()
+            db.close()
+            if(len(eventData)<1): #the event doesn't exist - return
+                self.status = self.STAT_FAIL | self.STAT_NOEVT
+                return False
+            dbgLog("event details: "+str(eventData))
+            # path to the event
+            originPath = c.wwwroot+eventData[0]['datapath']
+            # size of the event
+            evtSize = pu.disk.dirSize(originPath)
+            self.total = evtSize
+            dbgLog("event size: "+str(evtSize))
+            # get a list of all attached devices
+            drives = pu.disk.list()
+            print "found drives:", drives
+            if(len(drives)<1): #no drives
+                self.status = self.STAT_NODRV | self.STAT_FAIL
+                return
+            if(self.auto):
+                backupDir = self.autoDir
+            else:
+                backupDir = self.manualDir
+            # look for which one to back up to
+            # first check all drives for the backupDir, if it exists, just back up to it (if it has enough space and write permissions)
+            backupDrive = False
+            for drive in drives:
+                if(os.path.exists(drive+backupDir) and os.access(drive,os.W_OK)): #found a drive that has previous backups and write permissions
+                    # check space
+                    try:
+                        driveInfo = pu.disk.stat(humanReadable=False,path=drive)
+                        if(driveInfo['free']>evtSize):
+                            # there is enough space for backup - use this drive
+                            backupDrive = drive
+                            break
+                    except:
+                        pass
+                #end if path.exists
+            #end for drive in drives
+            if(not backupDrive): #no drive found with backup folder, look for any available drive
+                # NB: automatic backups are only done to a drive that has pxp-autobackup folder
+                # NB: manual backups cannot be done to a drive that has pxp-autobackup folder
+                for drive in drives:
+                    driveInfo = pu.disk.stat(humanReadable=False,path=drive)
+                    if(driveInfo['free']>evtSize and os.access(drive,os.W_OK) and (os.path.exists(drive+self.autoDir) == self.auto)):
+                        backupDrive = drive
+                        break
+                #end for drive in drives
+            #end if not backupDrive
+            if(backupDrive): #found a backup drive
+                dbgLog("free on "+str(drive)+":"+str(driveInfo['free']))
+                outputPath = backupDrive.decode('UTF-8')+backupDir+eventData[0]['datapath']
+                pu.disk.mkdir(outputPath) # create the output directory
+                # save the event info
+                eventString = json.dumps(eventData[0])
+                pu.disk.file_set_contents(outputPath+"/event.json",eventString)
+                if(not('bkp' in tmr)):
+                    tmr['bkp']={ }
+                if(not self.dataOnly):
+                    # start copying files
+                    tmr['bkp'][self.hid]=TimedThread(self.treeCopy,params=(originPath,outputPath))
+                    tmr['bkp'][self.hid+'-mon']=TimedThread(self.monitor)
+                else:
+                    # backup the database
+                    shutil.copy(originPath+'/pxp.db',outputPath+'/pxp.db')
+                    # backup the thumbnails
+                    tmr['bkp'][self.hid]=TimedThread(self.treeCopy,params=(originPath+'/thumbs',outputPath+'/thumbs'))
+            else:
+                self.status = self.STAT_NODRV | self.STAT_FAIL
+        except Exception as e:
+            print "[---]bkp.startBackup:",e,sys.exc_traceback.tb_lineno
+            self.status = self.STAT_FAIL
+    #end startBackup
+    def startRestore(self):
+        try:
+            self.status = self.STAT_START
+            # find event on the backup drive
+            if(not (self.backupPath and os.path.exists(self.backupPath+"/event.json"))): #without this file, can't get any details about the event
+                self.status = self.STAT_FAIL | self.STAT_NOEVT
+                print "no event: ", self.backupPath
+                return
+            # get event size
+            evtSize = pu.disk.dirSize(self.backupPath)
+            self.total = evtSize
+            # get hdd free space
+            hdd = pu.disk.stat(humanReadable=False,path="/")
+            if(hdd['free']<evtSize): #not enough free space to restore the event
+                self.status = self.STAT_FAIL | self.STAT_NOSPC
+                return
+            # get event details
+            eventString = pu.disk.file_get_contents(self.backupPath+"/event.json")
+            eventData = json.loads(eventString)
+            # make sure this event doesn't already exist in the database - simply delete it (if it exists)
+            db = pu.db(c.wwwroot+"_db/pxp_main.db")
+            sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
+            db.query(sql,(eventData['hid'],))
+            # add event to the main database
+            sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`,`datapath`,`extra`) VALUES(?,?,?,?,?,?,?)"
+            db.query(sql,(eventData['hid'],eventData['date'],eventData['homeTeam'],eventData['visitTeam'],eventData['league'],eventData['datapath'],eventData['extra']))
+            db.close()
+            # start copying the data
+            outputPath = c.wwwroot+eventData['datapath']
+            # pu.disk.mkdir(outputPath) # create the output directory
+            # save the event info
+            if(not('bkp' in tmr)):
+                tmr['bkp']={ }
+            # start copying files
+            tmr['bkp'][self.hid+'-rst']=TimedThread(self.treeCopy,params=(self.backupPath,outputPath))
+            tmr['bkp'][self.hid+'-rstmon']=TimedThread(self.monitor)            
+        except Exception as e:
+            print "[---]bkp.startRestore:",e,sys.exc_traceback.tb_lineno
+            self.onComplete()
+            self.status = self.STAT_FAIL
+    #end startRestore
+    def statusFull(self):
+        return [self.status, self.copied*100/self.total]
+    #end statusFull
+    def treeCopy(self,src,dst,topLevel = True):
+        """ recursively copies a directory tree from src to dst 
+            @param (str) src - full path to the source directory
+            @param (str) dst - full path to the destination directory
+        """
+        try:
+            if(self.kill or (enc.code & enc.STAT_SHUTDOWN)):
+                self.onComplete()
+                return
+            if(os.path.isfile(src)): #this is a file
+                self.currentFile = dst
+                shutil.copy(src,dst) #copy file
+                if(hasattr(self,'lastBigSize') and self.lastBigSize>0):
+                    self.copied -= self.lastBigSize
+                    self.lastBigSize = 0
+                self.copied += os.path.getsize(src)
+            elif(os.path.isdir(src)): #this is a directory
+                if(not os.path.exists(dst)):
+                    pu.disk.mkdir(dst)
+                # get the directory list and go through each item, copying it
+                files = os.listdir(src)
+                for item in files:
+                    if(self.kill or (enc.code & enc.STAT_SHUTDOWN)): #immediately return if force-stop requested
+                        return
+                    if(item=='.' or item=='..'):
+                        continue #skip the nonsensical files
+                    self.treeCopy(src+'/'+item, dst+'/'+item, topLevel = False)
+        except Exception as e:
+            print "[---]bkpmgr.treecopy", e, sys.exc_traceback.tb_lineno
+        if(topLevel):
+            self.onComplete()
+    # end treeCopy
+class backupManager(object):
+    """ backup events manager backupManager """
+    def __init__(self):
+        super(backupManager, self).__init__()
+        self.lastActive = int(time.time())
+        self.events = { }  # dictionary of event instances (to be backed up)
+        self.completed = { } #dictionary of events that have been backed up
+        self.priorities = { } #dictionary of lists of events (i.e. all events are grouped by their priority here)
+        self.current = False #hid of the currently executing backup
+        self.archivedEvents = False
+        # start backup manager process
+        tmr['backupmgr'] = TimedThread(self.process,period=3)
+        tmr['autobackp'] = TimedThread(self.autobackup,period=10)
+    def add(self, hid, priority=0, dataOnly=False,auto = False, restore=False):
+        """ add an event to the list of events to be backed up """
+        try:
+            print "adding: ", hid, " restore:",restore
+            if((hid in self.events) and not(self.events[hid].status & backupEvent.STAT_FAIL)):
+                return #skip an event that was already added
+            path = False
+            if(restore):
+                # restoring event, get its path on the backup drive
+                if(not self.archivedEvents): #list of archived events wasn't created yet, create a new one
+                    self.archivedEvents = self.archiveList()
+                if(hid in self.archivedEvents): #check if the event that's being restored is in the list
+                    path = self.archivedEvents[hid]['archivePath']
+            self.events[hid] = backupEvent(hid, priority, dataOnly, auto, restore, path)
+            if(not (priority in self.priorities)): #there are no events with this priority yet - add the priority
+                self.priorities[priority] = [ ]
+            self.priorities[priority].append(hid) #add event to the list of events with the same priority
+        except Exception as e:
+            print "[---]bkpmgr.add:",e,sys.exc_traceback.tb_lineno
+    def archiveList(self):
+        """ get a list of all archived events with their paths """
+        try:
+            drives = pu.disk.list()
+            if(len(drives)<1): #no drives available
+                print "no drives????"
+                return {"entries":[]}# there are no events in the list
+            self.archivedEvents = { } #clean the list of archived events for whomever needs to access it later
+            events = []
+            eventDirs = []
+            print "starting list..."
+            for drive in drives:
+                if(not(os.path.exists(drive+backupEvent.autoDir) or os.path.exists(drive+backupEvent.manualDir))): #this drive does not have any pxp backups
+                    continue
+                # this drive contains a backup
+                backupDrive = drive.decode('UTF-8')
+                autoDirs = []
+                manualDirs = []
+                autoPath = backupDrive+backupEvent.autoDir
+                manuPath = backupDrive+backupEvent.manualDir
+                if(os.path.exists(autoPath)):# this drive contains automatic backups
+                    autoDirs = os.listdir(autoPath) #get a list of directories (events) here
+                if(os.path.exists(manuPath)):# this drive contains manually backed up events
+                    manualDirs = os.listdir(manuPath) #get a list of those events
+                allDirs = list(autoPath+x for x in autoDirs)
+                allDirs.extend(manuPath+x for x in manualDirs if autoPath+x not in allDirs)
+                eventDirs += allDirs
+            #end for drive in drives
+            for eventDir in eventDirs:
+                # get info about the events in each directory
+                if(not os.path.exists(eventDir+'/event.json')):
+                    continue
+                try:
+                    event = json.loads(pu.disk.file_get_contents(eventDir.encode('UTF-8')+'/event.json'))
+                    event['archivePath']=eventDir.encode('UTF-8')
+                    evtSize = pu.disk.dirSize(eventDir)
+                    event['size']=pu.disk.sizeFmt(evtSize)
+                    # check if this event is in the existing events on the hdd
+                    event['exists']=os.path.exists(c.wwwroot+event['datapath'])
+                    self.archivedEvents[event['hid']]=copy.copy(event) #save for later in case user wants to restore an event
+                    events.append(event)
+                except Exception as e:
+                    print "errrrrrrrrrrrrrrr:",e,sys.exc_traceback.tb_lineno
+                    pass
+            return events
+        except Exception as e:
+            print "[---]bkpmgr.archlist", e, sys.exc_traceback.tb_lineno
+    def autobackup(self):
+        """ automatically backs up all events to the usb drive (or sd card) """
+        try:
+            if((int(time.time()) - self.lastActive)<10): #has been idle for less than 10 seconds, wait some more
+                # the machine is busy (there's most likely a live game going on) make sure there are no events being backed up right now
+                if(self.current): 
+                    self.stop(stopAll = True)
+                return
+            # check if there is a live event
+            if(os.path.exists(c.wwwroot+'live')): #there is a live event - wait until it's done to back up
+                self.lastActive = int(time.time())
+                return
+            if(len(self.events)>0): #events are being backed up - wait until that's done to check for new events
+                return
+            # system is idle
+            # get the device that has autobackup folder:
+            drives = pu.disk.list()
+            if(len(drives)<1): #no drives available
+                self.status = self.STAT_NODRV | self.STAT_FAIL
+                return
+            backupDrive = False
+            # look for which one to back up to
+            for drive in drives:
+                if(not os.path.exists(drive+backupEvent.autoDir)): #this is not the auto-backup for pxp
+                    continue
+                backupDrive = drive.decode('UTF-8')
+            if(not backupDrive):
+                return #did not find an auto-backup device
+            # get all events in the system
+            elist = pxp._listEvents(showDeleted=False)
+            # go through all events that exist and verify that they're identical on the backup device
+            for event in elist:
+                if(not('datapath' in event)):
+                    continue #this event does not have a folder
+                # see if this event exists on the backup device
+                if(os.path.exists(backupDrive+backupEvent.autoDir+event['datapath'])):
+                    # the event was already backed up
+                    # check for differences in video (simple size check - less io operations)
+                    vidSize = pu.disk.dirSize(c.wwwroot+event['datapath']+'/video')
+                    bkpSize = pu.disk.dirSize(backupDrive+backupEvent.autoDir+event['datapath']+'/video')
+                    if(bkpSize!=vidSize): #there's a mismatch in the video - backup the whole event again
+                        self.add(hid=event['hid'],auto=True)
+                    else:
+                        # the video is identical, check data file
+                        oldDb = backupDrive+backupEvent.autoDir+event['datapath']+'/pxp.db'
+                        newDb = c.wwwroot+event['datapath']+'/pxp.db'
+                        md5old = hashlib.md5(open(oldDb, 'rb').read()).hexdigest()
+                        md5new = hashlib.md5(open(newDb, 'rb').read()).hexdigest()
+                        if(md5old!=md5new): #the database is different - back up the new database
+                            self.add(hid=event['hid'],dataOnly=True,auto=True)
+                else: #this event doesn't exist on the backup drive - back it up
+                    print "event doesn't exist", event
+                    self.add(event['hid'],auto=True)
+        except Exception as e:
+            print "[---]bkpmgr.autobackup",e,sys.exc_traceback.tb_lineno
+    def process(self):
+        try:
+            if(len(self.priorities)<=0 or (enc.code & enc.STAT_SHUTDOWN)): 
+                #there are no events to backup or shutting down the server
+                return
+            # find event with highest priority
+            priorities = copy.deepcopy(self.priorities)
+            maxPriority = 0
+            for priority in priorities:
+                maxPriority = max(priority,maxPriority)
+            if (not self.current): #there is no event being backed up right now, but there are events in the queue
+                # get the next available event and start backing it up
+                self.current = self.priorities[maxPriority][0]
+                self.events[self.current].start()
+
+            # if got here, means there are events to back up (or being backed up)
+            # check to see if the event is done copying
+            if (self.current and self.events[self.current].status & (backupEvent.STAT_DONE | backupEvent.STAT_FAIL)): #event is done (or failed)
+                self.completed[self.current] = copy.deepcopy(self.events[self.current]) #add object to the completed dictionary
+                self.stop()
+            # got highest priority
+            if (self.current and (self.events[self.current].priority<maxPriority)):
+                print "force stop??????"
+                # the event that was being copied was of lower priority - stop it
+                self.stop()
+        except Exception as e:
+            print "[---]bkpmgr.process",e,sys.exc_traceback.tb_lineno
+    def status(self,hid):
+        try:
+            if(hid and hid in self.events):
+                return self.events[hid].statusFull()
+            if(hid and hid in self.completed):
+                return self.completed[hid].statusFull()
+        except Exception as e:
+            print "[---]bkp.status:",e,sys.exc_traceback.tb_lineno
+        # this event was never backed up
+        print "no status for ", hid
+        return [backupEvent.STAT_FAIL|backupEvent.STAT_NOBKP,0]
+    def stop(self, stopAll = False):
+        """ stop copying current event 
+            @param bool stopAll - stop copying current event and clear the queue (no other events will be copied)
+        """
+        try:
+            hid = self.current
+            if (hid and (hid in self.events)):#there is an event being copied right now - stop it
+                priority = self.events[hid].priority #get its priority (to remove later)
+                self.events[hid].cancel() #stop the copy, if it's still running
+                del self.events[hid] #remove event from the events dictionary
+                self.priorities[priority].remove(hid) #remove the event from priorities list
+                if(len(self.priorities[priority])<=0): #this priority doesn't have any events - remove it from the dictionary
+                    del self.priorities[priority]
+                self.current = False #no current events at the moment
+            if(stopAll): #user requested to stop all events
+                self.events = { }
+                self.priorities = { }
+        except Exception as e:
+            print "[---]bkpmgr.stop",e,sys.exc_traceback.tb_lineno
 ###################################################
-################## delete files ##################
+################## delete files ###################
 ###################################################
 rmFiles     = []
 rmDirs      = []
@@ -197,6 +628,10 @@ class commander:
             if(dataParts[0]=='BTR' and len(dataParts)>3): #change bitrate
                 # data is in format BTR|<bitrate>|<camID>
                 srcMgr.setBitrate(dataParts[1],dataParts[2])
+            if(dataParts[0]=='BKP'): #backup event
+                backuper.add(hid=dataParts[1],priority=1)
+            if(dataParts[0]=='RRE'): #restore event 
+                backuper.add(hid=dataParts[1],priority=2,restore=True) #restoring events have higher priority over backups (to prevent restore-backup of the same event)
         except Exception as e:
             print "[---]cmd._exc", e, sys.exc_traceback.tb_lineno
             return False
@@ -250,8 +685,6 @@ class encoderStatus:
         """
         try:
             import inspect
-            print "set hierarchy:",inspect.stack()[1][3]
-            print "status before:"
             if(overwrite):
                 self.code = statusBit
                 self.status = self.statusTxt(statusBit)
@@ -939,13 +1372,15 @@ class source:
                 strdata = data[:2048].lower().strip()
                 if(strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
                     # found a "ghost": this device recently disconnected
+                    dbgLog("RTSP ghost found - device is disconnected")
                     pass
                 if(strdata.find('timed out')>-1): #the connection is down (maybe temporarily?), the isOn is already set to false
+                    dbgLog("RTSP timeout - temporarily unreachable?")
                     pass
                 #a device is not available (either just connected or it's removed from the system)
                 #when connection can't be established or a response does not contain RTSP/1.0 200 OK
                 self.device.isOn = (data.find('RTSP/1.0 200 OK')>=0)
-
+                dbgLog(data)
             # this is only relevant for medical
             if(self.device.initialized and self.device.ccFramerate and self.device.framerate>=50):
                 self.device.setFramerate(self.device.framerate/2) #set resolution to half if it's too high (for iPad rtsp streaming)
@@ -1308,6 +1743,13 @@ class sourceManager:
             f.write(json.dumps(validDevs))
 #end sourceManager class
 
+class SyncManager(object):
+    """ manages networked servers: finds pxp servers, checks their options, syncs the events between them """
+    def __init__(self, arg):
+        super(SyncManager, self).__init__()
+        self.arg = arg
+        
+
 #recursively kills threads in the ttObj
 def pxpTTKiller(ttObj={},name=False):
     dbgLog("pxpkill: "+str(name)+"...")
@@ -1385,6 +1827,8 @@ def kickDoge():
     # simply add the message to the queue of each ipad
     BBQcopy = copy.deepcopy(globalBBQ)
     for client in BBQcopy:
+        if(client[:10]=='127.0.0.1_'):
+            return #no doge-kicking on local host
         # client entry in the BBQ list
         clnInfo = BBQcopy[client]
         # commands sent to this client that were not ACK'ed
@@ -1806,12 +2250,21 @@ def DataHandler(data,addr):
             if(senderIP=="127.0.0.1"):
                 nobroadcast = False #local server allows broadcasting
                 # these actions can only be sent from the local server - do not broadcast these
-                if(dataParts[0]=='RMF' or dataParts[0]=='RMD' or dataParts[0]=='BTR'):
+                if(dataParts[0]=='RMF' or dataParts[0]=='RMD' or dataParts[0]=='BTR' or dataParts[0]=='BKP' or dataParts[0]=='RRE'):
+                    # remove file, remove directory, set bitrate or backup event - these don't need to go to the commander queue - they're non-blocking and independent of one another
+                    nobroadcast = True
                     encControl.enq(data,bypass=True)
-                    nobroadcast = True
                 if(dataParts[0]=='STR' or dataParts[0]=='STP' or dataParts[0]=='PSE' or dataParts[0]=='RSM'):
-                    encControl.enq(data)
+                    #start encode, stop encode, pause encode, resume encode
                     nobroadcast = True
+                    encControl.enq(data)
+                if(dataParts[0]=='CPS'):
+                    # copy status request
+                    nobroadcast = True
+                    return backuper.status(dataParts[1])
+                if(dataParts[0]=='LBE'): 
+                    #list backed up events
+                    return backuper.archiveList()
             #end if sender=127.0.0.1
             if(dataParts[0]=='ACK'): # acknowledgement of message receipt
                 nobroadcast = True
@@ -1822,13 +2275,13 @@ def DataHandler(data,addr):
                     globalBBQ[senderIP+"_"+senderPT][0][int(cmdID)]['ACK']=1
                 except Exception as e:
                     pass
-                return            
+                return False          
         #if len(dataParts)>0
         ###########################################
         #             broadcasting                #
         ###########################################
         if(nobroadcast or senderIP!="127.0.0.1"): #only local host can broadcast messages
-            return
+            return False
         BBQcopy = copy.deepcopy(globalBBQ)
         for clientID in BBQcopy:
             try:
@@ -1836,8 +2289,10 @@ def DataHandler(data,addr):
                 addMsg(clientID,data)
             except Exception as e:
                 pass
+        return False
     except:
         pass
+    return False
 
 def SockHandler(sock,addr):
     while 1:
@@ -1845,11 +2300,20 @@ def SockHandler(sock,addr):
         if not data:#exit when client disconnects
             break
         # got some data
-        DataHandler(data,addr)
+        result = DataHandler(data,addr)
+        if(result):
+            try:
+                rspString = json.dumps(result)
+            except:
+                rspString = result
+            sock.send(rspString)
         # clientsock.send(msg)
     #client disconnected
     clientID = str(addr[0])+"_"+str(addr[1])
-    del globalBBQ[clientID]
+    try:
+        del globalBBQ[clientID]
+    except:
+        pass
     dbgLog("disconnected: "+clientID)
     sock.close()
 
@@ -1908,6 +2372,7 @@ tmr['pxpStatusSet'] = TimedThread(enc.statusWrite,period=0.5)
 # when clients connect, their threads will sit here:
 tmr['clients']      = {}
 
+backuper = backupManager()
 dbgLog("main...")
 if __name__=='__main__':
     try:

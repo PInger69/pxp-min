@@ -1,7 +1,7 @@
 from time import sleep
-import pxputil as pu
-import constants as c
-import os, json, re, shutil, sys
+from datetime import datetime as dt
+import pxputil as pu, constants as c, os, json, re, shutil, sys, subprocess, time
+
 #######################################################
 #######################################################
 ################debug section goes here################
@@ -80,6 +80,7 @@ def coachpick(sess):
 	# create tag
 	tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","time":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
 	return dict(tagset(tagStr),**{"action":"reload"})
+
 #######################################################
 # updates database to the latest format (from ios6 to ios7)
 #######################################################
@@ -418,6 +419,59 @@ def egg():
 	"""
 	return r
 #end egg
+def evtbackup():
+	try:
+		# get id of the event to back up
+		evtHID = pu.io.get('event')
+		_dbgLog("backup event:"+str(evtHID))
+		if(re.search("[^A-z0-9]",str(evtHID))): #found non-alphanumeric characters
+			_dbgLog("invalid characters in event HID")
+			return _err("invalid event")
+		_sockData(data="BKP|"+evtHID+"|")
+		#end for drive in drives
+		return {"success":True}
+	except Exception as e:
+		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
+def evtbackuplist():
+	"""request backup events from the service"""
+	try:
+		# get id of the event to back up
+		resp = pu.disk.sockSendWait(msg="LBE|",addnewline=False)
+		_dbgLog("answer:"+resp)
+		return {"events":json.loads(resp)}
+	except Exception as e:
+		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
+def evtbackupstatus():
+	try:
+		# get id of the event to back up
+		evtHID = pu.io.get('event')
+		_dbgLog("backup status:"+str(evtHID))
+		if(re.search("[^A-z0-9]",str(evtHID))): #found non-alphanumeric characters
+			_dbgLog("invalid characters in event HID")
+			return _err("invalid event")
+		resp = pu.disk.sockSendWait(msg="CPS|"+evtHID+"|",addnewline=False)
+		_dbgLog("answer:"+str(resp))
+		return json.loads(resp)
+	except Exception as e:
+		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
+def evtrestore():
+	try:
+		# get id of the event to back up
+		evtHID = pu.io.get('event')
+		_dbgLog("restore event:"+str(evtHID))
+		if(re.search("[^A-z0-9]",str(evtHID))): #found non-alphanumeric characters
+			_dbgLog("invalid characters in event HID")
+			return _err("invalid event")
+		_sockData(data="RRE|"+evtHID+"|")
+		#end for drive in drives
+		return {"success":True}
+	except Exception as e:
+		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
+#end evtrestore	
 #######################################################
 # removes an event (sets deleted = 1)
 # delets all content associated with it
@@ -860,6 +914,7 @@ def getcameras():
 def getpastevents():
 	return {"events":_listEvents()} #send it in dictionary format to match the sync2cloud format
 #end getpastevents
+
 #######################################################
 #returns all the game tags for a specified event
 #######################################################
@@ -1026,7 +1081,7 @@ def _slog(text):
 	os.system("echo '"+timestamp+": "+text+"' >> "+c.wwwroot+"_db/log.txt")
 
 def service():
-	# deleting old events
+	# deleting old events - this is now done inside pxpservice.py (it gets the directories with deleted=1 flag)
 	# try:
 	# 	_slog("service")
 	# 	# delete any undeleted directories
@@ -1321,7 +1376,8 @@ def settingsGet():
 			(10,"10s"),
 			(20,"20s")
 		])
-	except:
+	except Exception as e:
+		print e, sys.exc_traceback.tb_lineno
 		# could not get/parse some settings, download the config file from the cloud
 		pass
 	return settings
@@ -2097,18 +2153,42 @@ def _cln( text):
 	import string
 	return string.replace(text,'"','""')
 #end cln	
+def _dbgLog(msg, timestamp=True, level=0):
+    """ print debug info 
+        @param (str) msg - message to display
+        @param (bool) timestamp - display timestamp before the message
+        @param (int) level - debug level:
+                                    0 - info
+                                    1 - warning
+                                    2 - error
+    """
+    try:
+        debugLevel = 0 #the highest level to print
+        if(level<debugLevel):
+            return
+        # if the file size is over 1gb, delete it
+        logFile = "/tmp/pxp.py.log"
+        print dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"), msg
+        with open(logFile,"a") as fp:
+            fp.write(dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"))
+            fp.write(msg)
+            fp.write("\n")
+    except Exception as e:
+        print "[---]dbgLog:",e, sys.exc_traceback.tb_lineno
+
 # returns true if there is a delete process happening (will need to figure out later how to check what exactly is being deleted)
 def _deleting():
 	return pu.disk.psOn("rm -rf") or pu.disk.psOn("-exec rm {}")
-def _diskStat( humanReadable=True):
+#list all available mounted disks
+def _diskStat( humanReadable=True, path="/"):
 	import os
-	st = os.statvfs("/")
+	st = os.statvfs(path)
 	diskFree = st.f_bavail * st.f_frsize
 	diskTotal = st.f_blocks * st.f_frsize
 	diskUsed = diskTotal-diskFree
 	diskPrct = int(diskUsed*100/diskTotal)
 	if(humanReadable):
- 		return {"total":_sizeFmt(diskTotal),"free":_sizeFmt(diskFree),"used":_sizeFmt(diskUsed),"percent":str(diskPrct)}
+ 		return {"total":pu.disk.sizeFmt(diskTotal),"free":pu.disk.sizeFmt(diskFree),"used":pu.disk.sizeFmt(diskUsed),"percent":str(diskPrct)}
  	return {"total":diskTotal,"free":diskFree,"used":diskUsed,"percent":str(diskPrct)}
 #######################################################
 #returns encoder state (0 - off, 1 - live, 2 - paused)
@@ -2405,7 +2485,7 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 				else:
 					# if there are no .ts files, the file size is just the mp4
 					shiftBy=0
-				result[i]['vid_size']=_sizeFmt((os.stat(evtDir+"/video/main.mp4").st_size)<<shiftBy)
+				result[i]['vid_size']=pu.disk.sizeFmt((os.stat(evtDir+"/video/main.mp4").st_size)<<shiftBy)
 			# check if this is a live event
 			if((evtName==live) and (pu.uri.host)):
 				result[i]['live']='http://'+pu.uri.host+'/events/live/video/list.m3u8'
@@ -2580,17 +2660,6 @@ def _postProcess():
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end postProcess
 
-def _sizeFmt(size):
-	s = float(size)
-	#size names
-	sizeSuffix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
-	for x in sizeSuffix:			
-		if s < 1024 or x==sizeSuffix[len(sizeSuffix)-1]:
-			#either reached the capacity (i.e. size will be under 1024)
-			#or reached the end of suffixes (highly unlikely)
-			return "%0.2f %s" % (s, x)
-		s = s / 1024
-	return ""
 # sends tag (or other data) to a pxpservice 
 # tag - sends this tag to the service
 # data - if no tag is specified, sends this raw data

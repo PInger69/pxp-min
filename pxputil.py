@@ -1,10 +1,11 @@
 import constants as c
 import os
+import sys, subprocess
 from threading import Thread
 import time
 import sqlite3
 import urllib, urllib2
-import sha, shelve, time, Cookie, os, sys
+import sha, shelve, time, Cookie
 import socket
 import struct
 import httplib
@@ -208,6 +209,14 @@ class c_disk:
 	def copy(self, src, dst):
 		import shutil
 		shutil.copy(src,dst)
+	# returns size of a directory in bytes
+	def dirSize(self,path):
+		if(os.path.isfile(path)):
+			return os.path.getsize(path)
+		total_size = 0
+		for dirname in os.listdir(path):
+			total_size += self.dirSize(path+'/'+dirname)
+		return total_size
 	#retrieves file contents as a string
 	def file_get_contents(self, filename):
 		import os
@@ -221,6 +230,79 @@ class c_disk:
 		f = open(filename,"w")
 		f.write(text)
 		f.close()	
+	def getCPU(self,pgid=0,pid=0):
+		totalcpu = 0
+		if(pgid):
+			#list of all processes in the system
+			proclist = psutil.get_process_list().copy()
+			for proc in proclist:
+				try:#try to get pgid of the process
+					foundpgid = os.getpgid(proc.pid)
+				except:
+					continue #skip processes that do not exist/zombie/invalid/etc.
+				if(pgid==foundpgid):#this process belongs to the same group
+					try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
+						ps = psutil.Process(proc.pid)
+						totalcpu += ps.get_cpu_percent(interval=1)
+					except:
+						continue
+				#if pgid==foundpgid
+			#for proc in proclist
+		elif(pid):#looking for cpu usage of one process by pid
+			try:
+				ps = psutil.Process(pid)
+				totalcpu = ps.get_cpu_percent(interval=1)
+			except Exception as e:
+				pass
+		#get total cpu for a process
+		return totalcpu
+	#end getCPU
+
+	def list(self):
+		drives = []
+		try:
+			if(osi.name=='mac'):
+				# on a mac, all attached volumes are in /Volumes
+				# drives = os.list("/Volumes")
+	
+				# this command might be different for linux
+				listdrives=subprocess.Popen('mount', shell=True, stdout=subprocess.PIPE)
+				# the output is something like this:
+				# /dev/disk0s2 on / (hfs, local, journaled)
+				# devfs on /dev (devfs, local, nobrowse)
+				# map -hosts on /net (autofs, nosuid, automounted, nobrowse)
+				# map auto_home on /home (autofs, automounted, nobrowse)
+				# /dev/disk2s2 on /Volumes/3TB (hfs, local, nodev, nosuid, journaled)
+				# /dev/disk3s1 on /Volumes/32gb (exfat, local, nodev, nosuid, noowners)
+				# /dev/disk1s1 on /Volumes/32gb 1 (exfat, local, nodev, nosuid, noowners)
+				listdrivesout, err=listdrives.communicate()
+				for drive in listdrivesout.split('\n'):
+					if(drive.startswith("/dev")): #this is a mounted drive. gets its mount point
+						try:
+							mountpoint = drive[drive.find('on /')+3:drive.rfind('(')-1]
+							if(mountpoint!='/'): # / is the main drive - skip it. have to figure out how to skip a secondary drive (if there is one)
+								drives.append(mountpoint)
+						except: #this will happen if the format of the 'mount' output is wrong
+							pass
+					# driveParts = drive.split()
+					# if(len(driveParts)>1 and driveParts[0].find('/dev')>=0 and driveParts[2]!='/'):
+					# 	# grab full drive name (including any space it might have)
+					# 	i = 2
+					# 	driveName = ""
+					# 	while (i<len(driveParts) and driveParts[i][0]!='('):
+					# 		driveName += driveParts[i]+' '
+					# 		i +=1
+					# 	if(driveName != ""):
+					# 		drives.append(driveName.strip())
+				# for windows:
+				# if 'win' in sys.platform:
+				#     drivelist = subprocess.Popen('wmic logicaldisk get name,description', shell=True, stdout=subprocess.PIPE)
+				#     drivelisto, err = drivelist.communicate()
+				#     driveLines = drivelisto.split('\n')
+		except Exception as e:
+			print "[---]",e, sys.exc_traceback.tb_lineno
+		return drives
+	#end disklist
 	def mkdir(self, dirpath, perm=0777):
 		import os
 		try:
@@ -251,7 +333,6 @@ class c_disk:
 		except Exception as e:
 			print "[---]psGet:",e,sys.exc_traceback.tb_lineno
 		return found
-
 	#returns true if there is a specified process running
 	#checks if process is on (By name)
 	def psOn(self,process):
@@ -288,33 +369,6 @@ class c_disk:
 	# 	return os.system(cmd)==0
 	# #end psOn
 	# finds cpu usage by all processes with the same pgid
-	def getCPU(self,pgid=0,pid=0):
-		totalcpu = 0
-		if(pgid):
-			#list of all processes in the system
-			proclist = psutil.get_process_list().copy()
-			for proc in proclist:
-				try:#try to get pgid of the process
-					foundpgid = os.getpgid(proc.pid)
-				except:
-					continue #skip processes that do not exist/zombie/invalid/etc.
-				if(pgid==foundpgid):#this process belongs to the same group
-					try: #can use the same function recursively to get cpu usage of a single process, but creates too much overhead
-						ps = psutil.Process(proc.pid)
-						totalcpu += ps.get_cpu_percent(interval=1)
-					except:
-						continue
-				#if pgid==foundpgid
-			#for proc in proclist
-		elif(pid):#looking for cpu usage of one process by pid
-			try:
-				ps = psutil.Process(pid)
-				totalcpu = ps.get_cpu_percent(interval=1)
-			except Exception as e:
-				pass
-		#get total cpu for a process
-		return totalcpu
-	#end getCPU
 	# reads sizeToRead from a specified udp port
 	def sockRead(self, udpAddr="127.0.0.1", udpPort=2224, timeout=0.5, sizeToRead=1):
 		import socket
@@ -354,6 +408,58 @@ class c_disk:
 				pass
 			return e
 		return sent
+	def sockSendWait(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True):
+		""" sends a message to a socket and waits for a response """
+		import socket
+		sent = 0
+		chunkSize = 1024
+		recvd = ""
+		try:
+			sock = socket.socket(
+				socket.AF_INET, socket.SOCK_STREAM)
+			sock.connect((sockHost, sockPort))
+			if(addnewline and msg[-2:]!="\r\n"):
+				msg+="\r\n"
+			sent = sock.send(msg)
+			recvd = sock.recv(chunkSize)
+			newdata = recvd
+			while(len(newdata)>=chunkSize):
+				newdata = sock.recv(chunkSize)
+				recvd +=newdata
+			sock.close()
+		except Exception as e:
+			try:
+				sock.close()
+			except:
+				pass
+		return recvd
+	# diskStat
+	def stat(self, humanReadable=True, path="/"):
+		""" returns information about a disk
+		@param (bool) humanReadable - returns sizes in human-friendly form (e.g. Kb Mb, Gb, etc.)
+		@param (str) path - path to the mounted drive
+		"""
+		st = os.statvfs(path)
+		diskFree = st.f_bavail * st.f_frsize
+		diskTotal = st.f_blocks * st.f_frsize
+		diskUsed = diskTotal-diskFree
+		diskPrct = int(diskUsed*100/diskTotal)
+		if(humanReadable):
+	 		return {"total":self.sizeFmt(diskTotal),"free":self.sizeFmt(diskFree),"used":self.sizeFmt(diskUsed),"percent":str(diskPrct)}
+	 	return {"total":diskTotal,"free":diskFree,"used":diskUsed,"percent":str(diskPrct)}
+	 #end stat
+	def sizeFmt(self, size):
+		s = float(size)
+		#size names
+		sizeSuffix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
+		for x in sizeSuffix:			
+			if s < 1024 or x==sizeSuffix[len(sizeSuffix)-1]:
+				#either reached the capacity (i.e. size will be under 1024)
+				#or reached the end of suffixes (highly unlikely)
+				return "%0.2f %s" % (s, x)
+			s = s / 1024
+		return ""
+
 #end c_disk class
 
 #encryption/string operations class
@@ -384,7 +490,6 @@ class c_osi:
 	SN = ""
 	def __init__(self):
 		try:
-			import sys, subprocess
 			# get OS type
 			if(sys.platform.lower().find('darwin')>=0):
 				self.name = 'mac'

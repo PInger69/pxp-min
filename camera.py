@@ -24,6 +24,7 @@ def camParam(param,camID=False):
 	# check if the specified camera exists in the list
 	if(camID and not (camID in cams)):
 		return False #specified camera doesn't exist
+	cam = False
 	if(camID): #get the specified camera
 		cam = cams[camID]
 	else: # user didn't specify a camera - get the first available camera
@@ -34,7 +35,7 @@ def camParam(param,camID=False):
 		#end while cams>0
 	#end else (no camID)
 	# get the parameter from that camera
-	if(param in cam):
+	if(cam and param in cam):
 		return cam[param]
 	# the requested parameter doesn't exist
 	return False
