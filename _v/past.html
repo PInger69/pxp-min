@@ -41,7 +41,7 @@
 		</div>
 		<div class="col_2 vidColumn">
 			@if 'mp4' in ev:
-				<a class="media" href="@ev['mp4']">play</a> (@ev['vid_size'])
+				<a class="media" href="@ev['mp4']">play</a> (@ev['size_fmt'])
 			@elif 'live' in ev:
 				<a class="media" href="@ev['live']">live</a>
 			@else:

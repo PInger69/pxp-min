@@ -8,8 +8,8 @@ def iff(cond,if_true,if_false=""):
 	return if_false
 )
 <div class="col_12">
+@if 'bitrate' in settings['video'] and settings['video']['bitrate']:
 	<div class="row">
-@if settings['video']['bitrate']:
 		<section name="video">
 			<div class="col_2">
 				Stream Quality
@@ -23,7 +23,9 @@ def iff(cond,if_true,if_false=""):
 				<ajaxSpin></ajaxSpin>
 			</div>
 		</section>
+	</div>
 @end #if settings['video']
+	<div class="row">
 		<section name="tags"> 
 			<div class="col_2">
 				Tag pre-roll time
@@ -37,6 +39,8 @@ def iff(cond,if_true,if_false=""):
 				<ajaxSpin></ajaxSpin>
 			</div>
 		</section>
+	</div>
+	<div class="row">
 		<section name="tags"> 
 			<div class="col_2">
 				Tag post-roll time
@@ -51,6 +55,30 @@ def iff(cond,if_true,if_false=""):
 			</div>
 		</section>
 	</div>
+@if 'sync' in settings:
+	<div class="row">
+		<section name="sync"> 
+			<div class="col_2">
+				Sync Up (allow other servers to get events)
+			</div> 
+			<div class="col_10">
+				<input type="checkbox" name="up" @iff(int(settings['sync']['up']),'checked','')/>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+	</div>
+	<div class="row">
+		<section name="sync"> 
+			<div class="col_2">
+				Sync Down (get events form other servers)
+			</div> 
+			<div class="col_10">
+				<input type="checkbox" name="dn" @iff(int(settings['sync']['dn']),'checked','')/>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+	</div>
+@end
 </div>
 
 <script type="text/javascript">

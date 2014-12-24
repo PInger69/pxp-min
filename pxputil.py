@@ -33,9 +33,14 @@ class c_sqdb:
 			pass
 	#end close()
 	def commit(self):
-		self.autocommit = True
-		if self.con:
-			self.con.commit()
+		try:
+			autoBack = self.autocommit #save the original state of the autocommit 
+			self.autocommit = True
+			if self.con:
+				self.con.commit()
+			self.autocommit = autoBack #restore the original autocommit state
+		except Exception as e:
+			pass
 	#end commit()
    
 	#returns all rows of a query as a dictionary (associative array)
@@ -211,6 +216,8 @@ class c_disk:
 		shutil.copy(src,dst)
 	# returns size of a directory in bytes
 	def dirSize(self,path):
+		if((path.lower().find('.ds_store')>=0) or (not os.path.exists(path))):
+			return 0
 		if(os.path.isfile(path)):
 			return os.path.getsize(path)
 		total_size = 0
@@ -259,6 +266,7 @@ class c_disk:
 	#end getCPU
 
 	def list(self):
+		""" lists all attached devices """
 		drives = []
 		try:
 			if(osi.name=='mac'):
@@ -408,7 +416,7 @@ class c_disk:
 				pass
 			return e
 		return sent
-	def sockSendWait(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True):
+	def sockSendWait(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True,timeout=30):
 		""" sends a message to a socket and waits for a response """
 		import socket
 		sent = 0
@@ -417,6 +425,7 @@ class c_disk:
 		try:
 			sock = socket.socket(
 				socket.AF_INET, socket.SOCK_STREAM)
+			sock.settimeout(timeout)
 			sock.connect((sockHost, sockPort))
 			if(addnewline and msg[-2:]!="\r\n"):
 				msg+="\r\n"
@@ -459,7 +468,25 @@ class c_disk:
 				return "%0.2f %s" % (s, x)
 			s = s / 1024
 		return ""
-
+	def treeList(self, path, prefix=""):
+		""" returns directory tree (in a linear list) 
+		@param (str) path - full path to the source folder
+		@param (str) prefix - prefix to append to each entry in the returned list
+		"""
+		tree = []
+		if(not os.path.exists(path)):
+			return tree
+		dirlist = os.listdir(path)
+		for item in dirlist:
+			if(item=='.' or item=='..'):
+				continue
+			if(os.path.isdir(path+'/'+item)): #this is a sub-directory, get its tree structure
+				tree.append(prefix+item+'/')
+				tree += self.treeList(path+'/'+item,prefix+item+'/')
+			elif(os.path.isfile):
+				tree.append(prefix+item)
+		return tree
+	#end treeRead
 #end c_disk class
 
 #encryption/string operations class
@@ -484,6 +511,7 @@ class c_enc:
 	#end sxor
 #end enc class
 
+#os info class
 class c_osi:
 	"""os info class"""
 	name = None
@@ -544,10 +572,12 @@ class c_io:
 		except:
 			return False
 	#end get
-	def myIP(self):
+	def myIP(self,allDevs=False):
 		try:
 			import sys, netifaces as ni
+			ips = []
 			ipaddr = "127.0.0.1"
+			ips.append(ipaddr)
 			for dev in ni.interfaces():
 				adds = ni.ifaddresses(dev)
 				for addr in adds:
@@ -558,9 +588,14 @@ class c_io:
 							if(len(ipp)==4 and ip!=ipaddr): #this is a standard X.X.X.X address (ipv4)
 								ipaddr = ip
 							if(not self.sameSubnet("127.0.0.1",ipaddr)): #first non-localhost ip found returns - should be en0 - or ethernet connection (not wifi)
-								return ipaddr
+								if(not allDevs):
+									return ipaddr
+								if(not ipaddr in ips):
+									ips.append(ipaddr)
 		except Exception as e:
 			print "error in myIP: ", e, sys.exc_traceback.tb_lineno
+		if(allDevs):
+			return ips
 		return ipaddr
 	def myName(self):
 		try:
@@ -590,11 +625,33 @@ class c_io:
 				req = urllib2.Request(url)
 			answer = urllib2.urlopen(req,timeout=timeout)
 			respText = answer.read()
-			if(not respText):
-				return True
+			# if(not respText):
+				# return True
 			return respText
 		except Exception as e:
 			return False
+	# downloads a file form url to dst, does chunked download (in case the file is large)
+	def urlFile(self,url,params=False,timeout=60,dst=False):
+		try:
+			if(params):
+				data = urllib.urlencode(params)
+				req = urllib2.Request(url,data)
+			else:
+				req = urllib2.Request(url)
+			answer = urllib2.urlopen(req,timeout=timeout)
+			chunkSize = 1024 * 1024
+			with open(dst, 'wb') as fp:
+				while True:
+					chunk = answer.read(chunkSize)
+					if (not chunk): 
+						break
+					fp.write(chunk)
+				#end while
+			#end with
+		except Exception as e:
+			print "[---]urlFile",e,sys.exc_traceback.tb_lineno, url
+			return False
+	#end urlFile
 	# checks if there is connection to myplayxplay.net website
 	def isweb(self):
 		import urllib2
@@ -715,55 +772,154 @@ class c_session(object):
 	#end set_expires
 #end session class
 
+# class c_ssdp:
+# 	# waits for a device to announce itself on the network, any announcements that were made prior to executing .discover() will not appear here
+# 	# this method works better for matrox since it announces itself every 5 seconds or so
+# 	# for devices that announce themselves infrequently, this method will have to wait for the announcement
+# 	class ssdpObject(object):
+# 		def __init__(self, response):
+# 			self.location 	= ""
+# 			self.usn 		= ""
+# 			self.st 		= ""
+# 			# get LOCATION
+# 			posstr = response.find("LOCATION:")
+# 			if(posstr>=0):
+# 				posend = response.find("\n",posstr)
+# 				self.location = response[posstr+10:posend-1].strip()
+# 			# get USN
+# 			posstr = response.find("USN:")
+# 			if(posstr>=0):
+# 				posend = response.find("\n",posstr)
+# 				self.usn = response[posstr+4:posend-1].strip()
+# 			# get NT
+# 			posstr = response.find("NT:")
+# 			if(posstr>=0):
+# 				posend = response.find("\n",posstr)
+# 				self.st = response[posstr+3:posend-1].strip()
+# 		def __repr__(self):
+# 			return "<ssdpObject({location}, {st}, {usn})>".format(**self.__dict__)
+# 	def discover(self, service, timeout=5):
+
+# 		multicast_group   = "239.255.255.250"
+# 		multicast_port  = 1900
+# 		buffer_size = 1500
+
+# 		sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+# 		sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+# 		mreq = struct.pack('=4sl', socket.inet_aton(multicast_group), socket.INADDR_ANY) # pack multicast_group correctly
+# 		sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)		 # Request multicast_group
+
+# 		sock.bind((multicast_group, multicast_port))						   # bind on all interfaces
+# 		devices = {}
+# 		sock.settimeout(timeout)
+# 		tm_start = time.time()
+# 		while (time.time()-tm_start)<=timeout:
+# 			try:
+# 				data, srv_sock = sock.recvfrom(buffer_size)			  # Receive data (blocking)
+# 				srv_addr, srv_srcport = srv_sock[0], srv_sock[1]
+# 				device = self.ssdpObject(data)
+# 				if((service in data or service=="ssdp:all") and not device.location in devices):
+# 					devices[device.location]=device
+# 			except Exception as e:
+# 				pass
+# 		return devices
+
 class c_ssdp:
-	class ssdpObject(object):
+	# code adapted from https://gist.github.com/dankrause/6000248
+	class SSDPResponse(object): #creates an object out of an SSDP device
+		class _FakeSocket(StringIO.StringIO): #used to extract headers from the SSDP response
+			def makefile(self, *args, **kw):
+				return self
 		def __init__(self, response):
-			self.location 	= ""
-			self.usn 		= ""
-			self.st 		= ""
-			# get LOCATION
-			posstr = response.find("LOCATION:")
-			if(posstr>=0):
-				posend = response.find("\n",posstr)
-				self.location = response[posstr+10:posend-1].strip()
-			# get USN
-			posstr = response.find("USN:")
-			if(posstr>=0):
-				posend = response.find("\n",posstr)
-				self.usn = response[posstr+4:posend-1].strip()
-			# get NT
-			posstr = response.find("NT:")
-			if(posstr>=0):
-				posend = response.find("\n",posstr)
-				self.st = response[posstr+3:posend-1].strip()
+			r = httplib.HTTPResponse(self._FakeSocket(response)) #creates a fake HTTP 'response' - to get location, usn and st easier
+			r.begin()
+			try:
+				self.location = r.getheader("location")
+				self.server = r.getheader("server")
+				self.usn = r.getheader("usn")
+				self.st = r.getheader("st")
+				self.cache = r.getheader("cache-control").split("=")[1]
+			except Exception, e:
+				raise e
+		def match(self,field,value, case=False):
+			""" Determine whether this device has a specified string in its property
+
+			Args:
+				field (str): field/property to search.
+				value (str): what to look for in the field.
+				case (bool, optional): whether to perform case-sensitive search. Default: False.
+
+			Returns:
+				bool: True if this device's field contains the specified value, False otherwise.
+			"""
+			if(not hasattr(self,field)): #test if this class even has the property that the user is trying to search
+				return False
+			if(case):#case-sensitive search
+				return getattr(self,field).find(value)>=0
+			#case-insensitive search
+			return getattr(self,field).lower().find(value.lower())>=0
 		def __repr__(self):
-			return "<ssdpObject({location}, {st}, {usn})>".format(**self.__dict__)
-	def discover(self, service, timeout=5):
+			return "<SSDPResponse(location:{location}, st:{st}, usn:{usn}, server:{server})>".format(**self.__dict__)
+	 
+	def discover(self, st=False, text=False, field='server', case=False, timeout=5):
+		""" Discovers any UPnP devices (using SSDP protocol).
+		
+		The function sends an M-SEARCH request to the UPnP multicast address/port,
+		parses the response and provides a list of devices matching the search criteria.
 
-		multicast_group   = "239.255.255.250"
+		Args:
+			st (str, optional): search target for M-SEARCH request, to find all SSDP-enabled devices, use 'ssdp:all'. Default: ssdp:all
+			text (str, optional): search for the devices with this text in one of its fields. Default: False
+			field (str, optional): in which property to look for 'text'. Default: 'server'
+			case (bool, optional): whether to do a case-sensitive search on 'field'. Default: False
+			timeout (int, optional): how long to wait for a response to the M-SEARCH request and how long search. NB: if timeout is below 3, the response may be empty.
+
+		Returns:
+			dict: a dictionary of all the devices found in the system.
+			e.g.:
+			{
+				'192.168.1.15': <ssdp object>
+			}
+		"""
+
+		# NB: if M-SEARCH fails (on routers that don't support multicast), we can implement B-SEARCH as fallback method.
+
+		buffer_size = 1500 # how much to read from an M-SEARCH response
+		multicast_ip   = "239.255.255.250"
 		multicast_port  = 1900
-		buffer_size = 1500
-
-		sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-		sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-		mreq = struct.pack('=4sl', socket.inet_aton(multicast_group), socket.INADDR_ANY) # pack multicast_group correctly
-		sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)		 # Request multicast_group
-
-		sock.bind((multicast_group, multicast_port))						   # bind on all interfaces
+		group = (multicast_ip, multicast_port)
+		message = "\r\n".join([
+			'M-SEARCH * HTTP/1.1',
+			'HOST: {0}:{1}', #multicast address
+			'MAN: "ssdp:discover"',
+			'ST: {st}', #search target
+			'MX: {timeout}', #maximum time to wait for the M-SEARCH response
+			# 'USER-AGENT: pxp' #optional parameter for UPnP, compulsory for UDAP (e.g.: USER-AGENT: iOS/5.0 UDAP/2.0 iPhone/4 )
+			'', #adds newline after MX
+			''])#adds another newline (required for M-SEARCH request)
+		socket.setdefaulttimeout(timeout)
 		devices = {}
+		sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 		sock.settimeout(timeout)
+		sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+		sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
+		if(not st): #user
+			target = "ssdp:all"
+		else:
+			target = st
+		sock.sendto(message.format(*group, st=target, timeout=timeout), group)
 		tm_start = time.time()
 		while (time.time()-tm_start)<=timeout:
 			try:
-				data, srv_sock = sock.recvfrom(buffer_size)			  # Receive data (blocking)
-				srv_addr, srv_srcport = srv_sock[0], srv_sock[1]
-				device = self.ssdpObject(data)
-				if((service in data or service=="ssdp:all") and not device.location in devices):
-					devices[device.location]=device
+				response = sock.recv(buffer_size)
+				device = self.SSDPResponse(response)
+				if((st or (text and device.match(field,text))) and not (device.location in devices)):
+					#found a device that matches the search criteria
+					devices[device.location] = device
 			except Exception as e:
 				pass
 		return devices
- 
+	
 #string class
 class c_str():
 	#outputs a dictionary as json-formatted response
@@ -850,6 +1006,7 @@ class c_tt(Thread):
 	#end run
 	def kill(self):
 		try:
+			self.running = False
 			self.stop()
 			self.join()
 		except:

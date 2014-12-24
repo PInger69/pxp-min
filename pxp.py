@@ -1,6 +1,6 @@
 from time import sleep
 from datetime import datetime as dt
-import pxputil as pu, constants as c, os, json, re, shutil, sys, subprocess, time
+import pxputil as pu, constants as c, os, json, re, shutil, sys, subprocess, time, glob
 
 #######################################################
 #######################################################
@@ -24,7 +24,19 @@ def alll():
 ###################end of debug section################
 #######################################################
 #######################################################
-
+def auth():
+	try:
+		# return _err("invalid id")
+		cfg = _cfgGet()
+		if(not cfg): 
+			return _err("not initialized")
+		authorization = cfg[1]
+		customerID = cfg[2]
+		if(customerID!=pu.io.get('id')):
+			return _err("invalid id")
+		return {"success":True}
+	except:
+		pass
 #######################################################
 # checks if there is enough space on the hard drive
 # if there isn't, stops whatever encode is going on
@@ -81,6 +93,46 @@ def coachpick(sess):
 	tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","time":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
 	return dict(tagset(tagStr),**{"action":"reload"})
 
+def dbdump():
+	""" performs a pxp_main.db dump into a json """ 
+	try:
+		# first get the customer ID and match it to local ID to make sure the user has access to this feature
+		custID = pu.io.get('cid')
+		cfg = _cfgGet()
+		if(cfg[2]!=custID):
+			return _err("invalid id")
+		# customer id was verified
+		db = pu.db(c.wwwroot+"_db/pxp_main.db")
+		output = {}
+		# get events from database
+		sql = "SELECT * FROM events"
+		db.qstr(sql)
+		output["events"] = db.getasc()
+
+		sql = "SELECT * FROM leagues"
+		db.qstr(sql)
+		output["leagues"] = db.getasc()
+		# get summary from database
+		sql = "SELECT * FROM summary"
+		db.qstr(sql)
+		output["summary"] = db.getasc()
+		# get teams from database
+		sql = "SELECT * FROM teams"
+		db.qstr(sql)
+		output["teams"] = db.getasc()
+		# get teamsetup from database
+		sql = "SELECT * FROM teamsetup"
+		db.qstr(sql)
+		output["teamsetup"] = db.getasc()
+		# get users from database
+		sql = "SELECT * FROM users"
+		db.qstr(sql)
+		output["users"] = db.getasc()
+		db.close()
+		return {"data":output}
+	except Exception as e:
+		print "[---]dbdump",e,sys.exc_traceback.tb_lineno
+#end dbdump
 #######################################################
 # updates database to the latest format (from ios6 to ios7)
 #######################################################
@@ -428,10 +480,8 @@ def evtbackup():
 			_dbgLog("invalid characters in event HID")
 			return _err("invalid event")
 		_sockData(data="BKP|"+evtHID+"|")
-		#end for drive in drives
 		return {"success":True}
 	except Exception as e:
-		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 def evtbackuplist():
 	"""request backup events from the service"""
@@ -441,7 +491,6 @@ def evtbackuplist():
 		_dbgLog("answer:"+resp)
 		return {"events":json.loads(resp)}
 	except Exception as e:
-		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 def evtbackupstatus():
 	try:
@@ -455,7 +504,6 @@ def evtbackupstatus():
 		_dbgLog("answer:"+str(resp))
 		return json.loads(resp)
 	except Exception as e:
-		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 def evtrestore():
 	try:
@@ -469,9 +517,56 @@ def evtrestore():
 		#end for drive in drives
 		return {"success":True}
 	except Exception as e:
-		print "[---]evtbackup:",e, sys.exc_traceback.tb_lineno
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end evtrestore	
+def serverinfo():
+	# check if this server is a master
+	# REQUEST INFO FROM PXPSERVICE
+	try:
+		resp = json.loads(pu.disk.sockSendWait(msg="SNF|",addnewline=False))
+	except:
+		resp = [False]
+	return {"settings":pu.disk.cfgGet(section="sync"),"master":resp[0]}
+# get a list of files to sync for a specified event
+def evtsynclist():
+	try:
+		# get id of the event to back up
+		evtHID = pu.io.get('event')
+		fullView = pu.io.get('full')
+		if(fullView):
+			fullView = int(fullView) #if fullview was set, convert it to a number to determine if user actually wants fullview
+		if(re.search("[^A-z0-9]",str(evtHID))): #found non-alphanumeric characters
+			_dbgLog("invalid characters in event HID")
+			return _err("invalid event")
+		# get the directory for this event
+		db = pu.db(c.wwwroot+"_db/pxp_main.db")
+		sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+		db.query(sql,(evtHID,))
+		eventData = db.getasc()
+		db.close()
+		if(len(eventData)<=0):#there is no data
+			return _err("invalid event")
+		path = eventData[0]['datapath']
+		# prepare the event.json file
+		eventString = json.dumps(eventData[0])
+		if(not os.path.exists(c.wwwroot+path)): #the event path does not exist
+			tree = []
+		else:#the path exists
+			pu.disk.file_set_contents(c.wwwroot+path+"/event.json",eventString)
+			if(fullView):
+				# return full directory tree
+				tree = pu.disk.treeList(c.wwwroot+path,prefix="/events/"+path+'/')
+			else:
+				# return only data directory tree
+				# thumbnails
+				tree = pu.disk.treeList(c.wwwroot+path+'/thumbs',prefix="/events/"+path+'/thumbs/')
+				# data
+				tree.append('/events/'+path+'/pxp.db')
+				# event info
+				tree.append('/events/'+path+'/event.json')
+		return {"entries":tree}
+	except Exception as e:
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #######################################################
 # removes an event (sets deleted = 1)
 # delets all content associated with it
@@ -576,7 +671,7 @@ def evtimport(inputPath = False):
 				shutil.copytree(evtfolder+eventData['datapath'])
 			return {"success":True}
 		except Exception as e:
-			print "[---]evtimport",e, sys.exc_traceback
+			pass
 #end evtimport
 
 #######################################################
@@ -584,59 +679,7 @@ def evtimport(inputPath = False):
 # either json or plain text (depending on textOnly)
 #######################################################
 def encoderstatus(textOnly=True):
-	# import camera
-	#		ffmpeg or mediasegmenter are on
-	#       | app starting
-	#       | | encoder streaming
-	#       | | | camera present
-	#       | | | | pro recorder present
-	#       | | | | |
-	# bits: 0 0 0 0 0
 	try:
-		# state = _encState()
-		# stopped = not (pu.disk.psOn("ffmpeg -f mpegts -i udp") or pu.disk.psOn("mediastreamsegmenter"))
-		# if(_stopping()):
-		# 	state=0
-		# 	status = "Event is being stopped"
-		# else:
-		# 	teradeks = _getTeradeks()
-		# 	if(len(teradeks)>0):
-		# 		# when teradek is present, paused is a condition when mediasegmenter is on, but ffmpeg is not acquiring the stream
-		# 		paused = pu.disk.psOn("mediastreamsegmenter") and not pu.disk.psOn("ffmpeg -y -i rtsp")
-		# 		if(stopped):
-		# 			status="stopped"
-		# 		elif(paused):
-		# 			status="paused"
-		# 		else:
-		# 			status="live"
-		# 	else:
-		# 		if((state & (1+2+4))==7): #live is defined as: pro recoder + camera + streaming
-		# 			# app is paused if mediasegmenter and ffmpeg are running, there is no stopping.txt file, and ports are set to 65535
-		# 			# stopping = _stopping()
-		# 			# when app is stopping the encoder status will be set to 'off'
-		# 			paused = (not pu.disk.psOn("pxpStream.app") or _portSame()) and pu.disk.psOn("ffmpeg -f mpegts -i udp") and pu.disk.psOn("mediastreamsegmenter")
-		# 			if (paused):
-		# 				status = "paused"
-		# 			elif(stopped):
-		# 				status = "stopped"
-		# 			else:
-		# 				status = "live"
-		# 		elif(not (state&1)):
-		# 			status = "pro recoder disconnected"
-		# 		elif(not (state&2)):
-		# 			status = "camera disconnected"
-		# 		elif(state & 8):
-		# 			status = "streaming app is starting"
-		# 		else:
-		# 			status = "preparing to stream"
-		# 	#if teradeks...else
-		# #if stopping...else
-
-		# if (stopped):
-		# 	state &= ~16; 
-		# else:
-		# 	state |= 16; #when stopped bit 4 will be set to 1
-		# status = camera.camStatus()
 		txtStatus = pu.disk.file_get_contents(c.encStatFile)
 		if(not txtStatus):#this will only happen if the encoder is not initialized (or someone deleted the config file)
 			enc = {'status':'','code':0}
@@ -648,9 +691,14 @@ def encoderstatus(textOnly=True):
 		else:
 			state = enc['code'] #1+2+4#+8+16 #encoder + camera + streaming + ffmpeg + 
 			status = enc['status']
+		resp = pu.disk.sockSendWait(msg="SNF|",addnewline=False)
+		if(not resp):
+			data = [False]
+		else:
+			data = json.loads(resp)
 		if (textOnly):
 			return status
-		return {"status":status,"code":state}
+		return {"status":status,"code":state,"master":data[0]}
 	except Exception as e:
 		import sys
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e)+ ' '+str(txtStatus))
@@ -667,13 +715,6 @@ def encpause():
 	try:
 		if(_stopping()):
 			return _stopping(msg=True)
-		# # rez = os.system("echo '3' > /tmp/pxpcmd")
-		# # pause blackmagic (if it's being used)
-		# _portSet(hls=65535,ffm=65535,chk=65535)
-		# # pause teradek streaming (if being used)
-		# os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# sleep(1)
-		# os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")		
 		camera.camPause()
 		# add entry to the database that the encoding has paused
 		msg = _logSql(ltype="enc_pause",dbfile=c.wwwroot+"live/pxp.db")
@@ -750,19 +791,6 @@ def encstart():
 		quality = io.get('quality')
 		if not (hmteam and vsteam and league):
 			return _err("Please specify teams and league")
-		# # make sure everything is off before starting a new stream
-		# # kill m3u8 segmenter
-		# os.system("/usr/bin/killall mediastreamsegmenter")
-		# # shut down ffmpeg that converts the mp4
-		# #send 2 kill signals to ffmpeg (1 doesn't cut it)
-		# os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# sleep(1)
-		# os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# # shut down ffmpeg that grabs RTSP stream (if using teradek)
-		# os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# sleep(1)
-		# os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-
 		# create new event in the database
 		# get time for hid and for database in YYYY-MM-DD HH:MM:SS format
 		timestamp = _time()
@@ -837,37 +865,6 @@ def encstop():
 		os.system("echo '"+timestamp+"' > "+c.wwwroot+"live/stopping.txt")
 		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'stopped'}}))
 		
-		# # stop HLS segmenting
-		# if(pu.disk.psOn("mediastreamsegmenter")):
-		# 	os.system("/usr/bin/killall mediastreamsegmenter")
-		# # stop ffmpeg and wait for it to complete (to have a working mp4)
-		# if(pu.disk.psOn("ffmpeg")):
-		# 	# shut down ffmpeg that converts the mp4
-		# 	#send 2 kill signals to ffmpeg (1 doesn't cut it)
-		# 	os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# 	sleep(1)
-		# 	os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# 	# shut down ffmpeg that grabs RTSP stream (if using teradek)
-		# 	os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# 	sleep(1)
-		# 	os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# # make sure pxpStream restarts
-		# os.system("/usr/bin/killall pxpStream")
-		# # wait for ffmpeg to finish its job, and for handbrake (in case user was creating bookmarks)
-		# while (pu.disk.psOn('ffmpeg') or pu.disk.psOn("handbrake")):
-		# 	sleep(1) #wait for ffmpeg to finish its job
-		# 	if(pu.disk.psOn("ffmpeg -i udp")):
-		# 		# shut down ffmpeg that converts the mp4
-		# 		#send 2 kill signals to ffmpeg (1 doesn't cut it)
-		# 		os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# 		sleep(1)
-		# 		os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i udp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# 	if(pu.disk.psOn("ffmpeg -i rtsp")):
-		# 		# shut down ffmpeg that grabs RTSP stream (if using teradek)
-		# 		os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-		# 		sleep(1)
-		# 		os.system("/bin/kill `ps ax | grep \"ffmpeg -y -i rtsp://\" | grep 'grep' -v | awk '{print $1}'`")
-
 		# # stop the pxpStream app (it'll restart automatically, this is left over from the old times)
 		# rez = os.system("echo '2' > /tmp/pxpcmd")
 		msg = _logSql(ltype="enc_stop",dbfile=c.wwwroot+"live/pxp.db")
@@ -933,7 +930,7 @@ def gametags():
 		return _stopping(msg=True)
 	return _syncTab(user=usr, device=dev, event=evt, allData = True)
 #end gametags
-def login( sess):
+def login(sess):
 	try:
 		io = pu.io
 		email = io.get("email")
@@ -949,7 +946,9 @@ def login( sess):
 			if (not res==1):
 				return _err(res)
 			# activation was successful, perform a sync
-			_syncEnc(encEm,encPs)
+			resp = _syncEnc(encEm,encPs)
+			if(not 'success' in resp):
+				return resp
 		#if not inited
 
 		# check if user is in the database
@@ -1081,50 +1080,8 @@ def _slog(text):
 	os.system("echo '"+timestamp+": "+text+"' >> "+c.wwwroot+"_db/log.txt")
 
 def service():
-	# deleting old events - this is now done inside pxpservice.py (it gets the directories with deleted=1 flag)
-	# try:
-	# 	_slog("service")
-	# 	# delete any undeleted directories
-	# 	# get a list of deleted events
-	# 	oldevents = _listEvents(onlyDeleted = True)
-	# 	# print oldevents
-	# 	if (len(oldevents)>0):
-	# 		_slog("found "+str(len(oldevents))+" old events")
-	# 		db = pu.db(c.wwwroot+"_db/pxp_main.db")
-	# 		for event in oldevents:
-	# 			_slog("start deleting: "+str(event))
-	# 			# make sure there is a directory associated with the event
-	# 			if(not 'datapath' in event):
-	# 				#delete the event from the database (if there's no path to the file)
-	# 				sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
-	# 				db.query(sql,(event['hid'],))
-	# 				continue
-	# 			# make sure directory path is not corrupted
-	# 			if(event['datapath'].find("/")>=0 or len(event['datapath'])<3):
-	# 				_slog("invalid path")
-	# 				continue
-	# 			# check if it exists
-	# 			if(os.path.exists(c.wwwroot+event['datapath'])):
-	# 				_slog("deleting files...")
-	# 				# send request to the socket to delete this directory
-	# 				_sockData(data="RMD|"+c.wwwroot+event['datapath']+"|")
-	# 				break #delete only 1 folder at a time
-	# 			else:
-	# 				#delete the event from the database (once the file have been deleted)
-	# 				sql = "DELETE FROM `events` WHERE `hid` LIKE ?"
-	# 				db.query(sql,(event['hid'],))
-	# 		#for event in oldevents
-	# 		db.close()
-	# 	#if oldevents>0
-	# 	else:
-	# 		_slog("zero deleted events")
-	# except:
-	# 	try:
-	# 		db.close()
-	# 	except:
-	# 		pass
-	# uploading live stuff
 	try:
+		# this will be deprecated
 		settings = settingsGet()
 		# check if user has upload enabled
 		if(int(settings['uploads']['autoupload']) and not _uploading()):
@@ -1159,7 +1116,7 @@ def service():
 							db.close()
 # GET TIMESTAMP FROM EVENT, NOT FROM CURRENT TIME!!!
 							# send a request to create a new event in the cloud
-							cfg = _cfgGet(c.wwwroot+"_db/")
+							cfg = _cfgGet()
 							# check if there is internet
 							if pu.io.isweb():
 								url = "http://www.myplayxplay.net/maxdev/eventSet/ajax"
@@ -1285,17 +1242,17 @@ def service():
 		#if autoupload and not uploading
 	except Exception as e:
 		import sys
-		# print str(sys.exc_traceback.tb_lineno)+' '+str(e)	
 #end service
 # retreives the settings file in json format
 def settingsGet():
 	from collections import OrderedDict
 	import camera
 	settings = pu.disk.cfgGet(c.pxpConfigFile)
+	# return settings
 	try:
 		# go through each section and assign possible values for it
 		# make sure the setting section is available (if it's not, add it)
-		
+		# return {}		
 		# video settings
 		# get current bitrate (if its available from the encoder)
 		bitrate = camera.camParam('bitrate')
@@ -1377,7 +1334,6 @@ def settingsGet():
 			(20,"20s")
 		])
 	except Exception as e:
-		print e, sys.exc_traceback.tb_lineno
 		# could not get/parse some settings, download the config file from the cloud
 		pass
 	return settings
@@ -1453,13 +1409,21 @@ def sync2cloud(sess):
 		syncResponse = _syncEnc(sess.data['ee'],sess.data['ep'])
 		if ('success' in syncResponse):
 			return syncResponse
-			return dict(syncResponse,**{"action":"reload"})
+		return dict(syncResponse,**{"action":"reload"})
 	except Exception as e:
 		import sys
 		return _err("Error occurred please contact technical support. "+str(e)+' -- '+str(sys.exc_traceback.tb_lineno))
 #end sync2cloud
+# returns synclevel of the current encoder
+def synclevel():
+	cfg = _cfgGet()
+	if(len(cfg)>3):
+		level = cfg[3]
+	else:
+		level = 0
+	return {"level":level}
 #######################################################
-	#get any new events that happened since the last update (e.g. new tags, removed tags, etc.)
+#get any new events that happened since the last update (e.g. new tags, removed tags, etc.)
 #######################################################
 def syncme():
 	try:
@@ -1539,6 +1503,7 @@ def teamsget():
 def tagmod():
 	try:
 		strParam = pu.uri.segment(3,"{}")
+		# strParam = '{"id":2,"event":"live","user":"blah","bookmark":1}'
 		jp = json.loads(strParam)
 		if not ('user' in jp and 'event' in jp and 'id' in jp):
 			return _err("Specify user, event, and tag id")
@@ -1552,6 +1517,11 @@ def tagmod():
 		# make sure event is not being stopped
 		if(_stopping(event)):
 			return _stopping(msg=True)
+		if('sidx' in jp):
+			sIdx = jp['sidx']
+			del jp['sidx']
+		else:
+			sIdx = _firstSourceIdx(event)
 		#user info, tag id and event name are not modifications - remove those from the dictionary
 		del jp['id']
 		del jp['user']
@@ -1562,7 +1532,7 @@ def tagmod():
 		# fields that are present in the database (everything else goes in the 'meta')
 		dbFields = ('name', 'user', 'starttime', 'type', 'time', 'colour', 'duration', 'comment', 'rating', 'extra')
 		if ('bookmark' in jp):
-			bookmark = (jp['bookmark']=='1')
+			bookmark = (str(jp['bookmark'])=='1')
 			del jp['bookmark']
 		meta = {}
 		# check if manually closing a duration tag:
@@ -1595,7 +1565,7 @@ def tagmod():
 					else:
 						params +=(jp[mod],)
 		#end for mod in jp
-		
+	
 		#make sure the database exists and user is not trying to get at other folders
 		if(('/' in event) or ('\\' in event) or (not os.path.exists(c.wwwroot+event+'/pxp.db'))):
 			return _err()
@@ -1630,13 +1600,11 @@ def tagmod():
 		if success:
 			#add an entry to the event log that tag was updated or deleted
 			success = _logSql(ltype='mod_tags',lid=tid,uid=user,db=db)
-		# else:
-		# 	success = True
 		if success:
 			db.close() #close db here because next statement will return
 			if (bookmark):
 				# user wants to make a bookmark - extract the video
-				success = success and _extractclip(tagid=tid,event=event)				
+				success = success and _extractclip(tagid=tid,event=event, sIdx = sIdx)
 			return _tagFormat(event=event, user=user, tagID=tid, sockSend=True)
 		db.close()
 		return {'success':success}
@@ -1901,38 +1869,55 @@ def tagset(tagStr=False, sendSock=True):
 		tagOut['newTagID']=newTagID
 		#create a tag image if it doesn't exist already
 		pathToEvent = c.wwwroot+eventName+'/'
-		imgFile = pathToEvent+"thumbs/tn"+str(lastID)+".jpg"
-		thumbAttempt = 0
-		while(not os.path.exists(imgFile) and tagOut['type']!=40 and thumbAttempt<30):
-			thumbAttempt += 1
-			if(eventName=='live'):
-				# for live events the thumbnail must be extracted from a .TS file
-				# get the name of the .ts segment containing the right time				
-				# res = {}
-				# vidSegmfileName = _thumbName(tagtime,event=eventName,results=res)
-				# vidFile = pathToEvent+"video/"+str(vidSegmfileName)
-				res = _mkThumbPrep(eventName,tagtime)
-				vidFile = res['file']
-				sec = res['time']
-			else:
-				# for past events, the thumbnail can be extracted from the main.mp4
-				vidFile = pathToEvent+"video/main.mp4"
-				sec = tagtime
+		# get a list of all streams
+		streams, firstStream = _listEvtSources(eventName,fileMask="*.m3u8")
+		if(not streams): #there are no video sources in this event - do nothing
+			return _err("there is no video in the event")
+		oldStyleEvent = os.path.exists(pathToEvent+'/video/main.mp4') or os.path.exists(pathToEvent+'/video/list.m3u8')
+		if(oldStyleEvent):
+			sIdx = False
+			sPrefix = ""
+			sSuffix = ""
+		for s in streams:
+			# create a thumbnail for each stream
+			# get the stream index (stream name is s_XX where XX is a two-digit index)
+			q = 'hq' if('hq' in streams[s]) else 'lq'
+			if(not oldStyleEvent): #new events (regardless of single or multicam) will have the format of 00lq_segmXXX.ts for segment files and list_01hq.m3u8 or main_02lq.mp4 for playlist and mp4 files
+				sIdx = s.split('_')[1]+q
+				sPrefix = sIdx+"_"
+				sSuffix = "_"+sIdx
+			imgFile = pathToEvent+"thumbs/"+sPrefix+"tn"+str(lastID)+".jpg"
+			thumbAttempt = 0
+			while(not os.path.exists(imgFile) and tagOut['type']!=40 and thumbAttempt<10):
+				thumbAttempt += 1
+				if(eventName=='live'): 
+					# for live event, extract frames from .TS file
+					# problem: by itself a single .TS file may not have any i-frames
+					# this function will concatenate a few .ts files to ensure there's a couple i-frames there
+					res = _mkThumbPrep(eventName,tagtime,sIdx)
+					vidFile = res['file']
+					sec = res['time']
+				else:
+					# for past events, the thumbnail can be extracted from the main.mp4
+					vidFile = pathToEvent+"video/main"+sSuffix+".mp4"
+					sec = tagtime
+				if(tagOut['type']==4):
+					# telestrations require full size image as well as a thumbnail
+					fullimgFile = pathToEvent+"thumbs/"+sPrefix+"tf"+str(lastID)+".jpg"
+					_mkThumb(vidFile, fullimgFile, sec, width=0)
 
-			if(tagOut['type']==4):
-				# telestrations require full size image as well as a thumbnail
-				fullimgFile = pathToEvent+"thumbs/tf"+str(lastID)+".jpg"
-				_mkThumb(vidFile, fullimgFile, sec, width=0)
+				_mkThumb(vidFile, imgFile, sec) 
+				if(eventName=='live'):
+					try:
+						# remove the (temporary) concatenated .TS file
+						os.remove(vidFile)
+					except:
+						pass
+				if(not os.path.exists(imgFile)):
+					sleep(2) #wait for a couple seconds before trying to create the thumbnail again - if it fails, possibly because the segments weren't written yet
+			#end while(no imgFile)
+		#end for s in streams
 
-			_mkThumb(vidFile, imgFile, sec) 
-			if(eventName=='live'):
-				try:
-					os.remove(vidFile)
-				except:
-					pass
-			if(not os.path.exists(imgFile)):
-				sleep(2) #wait for a couple seconds before trying to create the thumbnail again
-		#end while(no imgFile)
 		#log that a tag was created
 		success = success and _logSql(ltype="mod_tags",lid=lastID,uid=userhid,db=db)
 		# add to the events array to send to the socket updater
@@ -1962,23 +1947,33 @@ def teleset():
 	io = pu.io
 	try:
 		tagStr = str(io.get("tag"))
-		event = json.loads(tagStr)['event']
+		jsonTag = json.loads(tagStr)
+		event = jsonTag['event']
 		if(_stopping(event)):
 			return _stopping(msg=True)
 		# create a tag first
 		t = tagset(tagStr=tagStr,sendSock=False)
 		if('success' in t and not t['success']):
 			return t
+		if('sidx' in jsonTag):
+			sIdx = jsonTag['sidx']
+		else:
+			sIdx = _firstSourceIdx(event)
+		if(os.path.exists(c.wwwroot+event+'/video/main.mp4') or os.path.exists(c.wwwroot+event+'/video/list.m3u8')):
+			#this is an old style event
+			sPrefix = ""
+		else: #this is a new style event
+			sPrefix = sIdx+'_'
 		#upload a file with the tag name
 		imgID = str(t['id'])
-		io.upload(c.wwwroot+event+"/thumbs/tl"+imgID+".png")
+		io.upload(c.wwwroot+event+"/thumbs/"+sPrefix+"tl"+imgID+".png")
 		# update the thumbnail with the telestration overlay
 		# thumbnail image as background for telestration thumbnail
-		bgFile = c.wwwroot + event+"/thumbs/tn"+imgID+".jpg"
+		bgFile = c.wwwroot + event+"/thumbs/"+sPrefix+"tn"+imgID+".jpg"
 		# full image background as bg for telestration screenshot
-		bfFile = c.wwwroot + event+"/thumbs/tf"+imgID+".jpg"
+		bfFile = c.wwwroot + event+"/thumbs/"+sPrefix+"tf"+imgID+".jpg"
 		# overlay is the png telestration
-		olFile = c.wwwroot + event+"/thumbs/tl"+imgID+".png"			
+		olFile = c.wwwroot + event+"/thumbs/"+sPrefix+"tl"+imgID+".png"			
 		# open the image files
 		bf = Image.open(bfFile) #full background
 		bg = Image.open(bgFile) #thumbnail background
@@ -2045,33 +2040,37 @@ def teleshot():
 		tagStr = pu.uri.segment(3)
 		tag = json.loads(tagStr)
 		event = tag['event']
-		imgName = "cap"+str(tag['time'])+".jpg"
+		if('sidx' in tag):
+			sIdx = tag['sidx']
+			del tag['sidx']
+		else:#source index wasn't specified, get the first available one
+			sIdx = _firstSourceIdx(event)
+		sSuffix = "_"+sIdx
+		sPrefix = sIdx+"_"
+		if(not (os.path.exists(c.wwwroot+event+'/video/main'+sSuffix+'.mp4') or os.path.exists(c.wwwroot+event+'/video/list'+sSuffix+'.m3u8'))):
+			# this is an old style event
+			sIdx = ""
+			sSuffix = ""
+			sPrefix = ""
+		imgName = sPrefix+"cap"+str(tag['time'])+".jpg"
 		imgFile = c.wwwroot+event+"/thumbs/"+imgName
 		while(not os.path.exists(imgFile)):
-			if(event=='live'):
-				# for live events the thumbnail must be extracted from a .TS file
+			vidFile = c.wwwroot+event+"/video/main"+sSuffix+".mp4"
+			if(event=='live' or not os.path.exists(vidFile)):
+				# for live events the thumbnail must be extracted from a .TS file (or if the main.mp4 doesn't exist for some reason)
 				# get the name of the .ts segment containing the right time				
 				# res = {}
 				# vidSegmfileName = _thumbName(tag['time'],event=event,results=res)
 				# vidFile = c.wwwroot+event+"/video/"+str(vidSegmfileName)
-				res = _mkThumbPrep(event,float(tag['time']))
+				res = _mkThumbPrep(event,float(tag['time']), sIdx=sIdx)
 				vidFile = res['file']
 				sec = res['time']
 				tempvid = True
-				# sec = res['remainder']
 			else:			
-				# for past events, the thumbnail can be extracted from the main.mp4
-				vidFile = c.wwwroot+event+"/video/main.mp4"
+				# for past events with existing main.mp4, the thumbnail can be extracted from the main.mp4
 				tempvid = False
 				sec = tag['time']
-				if(not os.path.exists(vidFile)):
-					res = _mkThumbPrep(event,float(tag['time']))
-					vidFile = res['file']
-					sec = res['time']
-					tempvid = True
-
 			_mkThumb(vidFile, imgFile, sec, width=0)
-
 			if(tempvid):
 				# delete the temporary ts file after image extraction
 				try:
@@ -2084,7 +2083,6 @@ def teleshot():
 	except Exception as e:
 		import sys
 		return _err("teleshot error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
-		return 
 #end teleshot
 # update server script
 def upgrader():
@@ -2103,7 +2101,7 @@ def version():
 #######################################################
 # XORs config file (simple 'encryption') to prevent tampering
 #######################################################
-def _cfgGet(cfgDir):
+def _cfgGet(cfgDir=c.wwwroot+"_db/"):
 	cfgFile = cfgDir+".cfg"
 	saltedKey = "3b2b2bcfee23d8377a3828fe3c155a868377a38"
 	# remove last 7 characters from the key
@@ -2127,7 +2125,7 @@ def _cfgGet(cfgDir):
 #######################################################
 # XORs config file (simple 'encryption') to prevent tampering
 #######################################################
-def _cfgSet( cfgDir,lines):
+def _cfgSet(cfgDir,lines):
 	# parameters are in this function so that user can't view them with dir() function
 	cfgFile = cfgDir+".cfg"
 	saltedKey = "3b2b2bcfee23d8377a3828fe3c155a868377a38"
@@ -2144,23 +2142,25 @@ def _cfgSet( cfgDir,lines):
 		f.write(encText)
 		f.close()
 		return True
-	except:
+	except Exception as e:
 		return False
 #######################################################
 #cleans a string for sqlite query (doubles " quotes)
 #######################################################
-def _cln( text):
+def _cln(text):
 	import string
 	return string.replace(text,'"','""')
 #end cln	
 def _dbgLog(msg, timestamp=True, level=0):
-    """ print debug info 
-        @param (str) msg - message to display
-        @param (bool) timestamp - display timestamp before the message
-        @param (int) level - debug level:
-                                    0 - info
-                                    1 - warning
-                                    2 - error
+    """ Print debug info 
+
+	    Args:
+			msg (str): message to display
+			timestamp (bool,optional): display timestamp before the message. default: True
+			level (int, optional): debug level (default - 0):
+				0 - info
+				1 - warning
+				2 - error
     """
     try:
         debugLevel = 0 #the highest level to print
@@ -2168,13 +2168,12 @@ def _dbgLog(msg, timestamp=True, level=0):
             return
         # if the file size is over 1gb, delete it
         logFile = "/tmp/pxp.py.log"
-        print dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"), msg
         with open(logFile,"a") as fp:
             fp.write(dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"))
             fp.write(msg)
             fp.write("\n")
     except Exception as e:
-        print "[---]dbgLog:",e, sys.exc_traceback.tb_lineno
+        pass
 
 # returns true if there is a delete process happening (will need to figure out later how to check what exactly is being deleted)
 def _deleting():
@@ -2199,16 +2198,22 @@ def _encState():
 #end encState
 def _err( msgText=""):
 	return {"success":False,"msg":msgText,"action":"popup"}
-#######################################################
-# extract number from a string (returns 0 if no numbers found)
-#######################################################
-def _exNum( text, floatPoint=False):
+def _exNum( text, floatPoint=False, startAtIdx=0):
+	""" Extract first number from the string
+
+		Args:
+			text (str): text to search
+			floatPoint (bool, optional): whether to extract a floating point number or integer. default: False
+			startAtIdx (int, optional): start searching in the text starting at this index. default: 0
+		Return:
+			mixed: either float or int based on what was requested. if a number is not found, returns 0.
+	"""
 	import re
 	try:
 		# regular expression to match digits
 		if floatPoint:
-			return float(re.search('[0-9\.]+', text).group())
-		return int(re.search('[0-9]+', text).group())
+			return float(re.search('[0-9\.]+', text[startAtIdx:]).group())
+		return int(re.search('[0-9]+', text[startAtIdx:]).group())
 	except:
 		return 0
 #end exNum
@@ -2227,7 +2232,7 @@ def _exStr(text):
 #######################################################
 # extracts video clip and saves it as mp4 file (for bookmarks)
 #######################################################
-def _extractclip( tagid, event):
+def _extractclip( tagid, event, sIdx=""):
 	from random import randrange
 	import glob
 	# the process is as follows:
@@ -2253,16 +2258,22 @@ def _extractclip( tagid, event):
 		# duration of the clip (needed for extraction from .MP4)
 		duration = float(row[1])
 
+		sSuffix = '_'+sIdx
+		sPrefix = sIdx+'_'
+		mainMP4File = c.wwwroot+event+'/video/main'+sSuffix+'.mp4'
+		if(not os.path.exists(mainMP4File)):
+			mainMP4File = c.wwwroot+event+'/video/main.mp4'
+			sPrefix = ""
 		bigTsFile = c.wwwroot+event+"/video/vid"+str(tagid)+".ts" #temporary .ts output file containing all .ts segments 
-		bigMP4File = c.wwwroot+event+"/video/vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
+		bigMP4File = c.wwwroot+event+"/video/"+sPrefix+"vid_"+str(tagid)+".mp4" #converted mp4 file (low res)
 		tempTs = c.wwwroot+event+"/video/int_"+str(tagid)+".ts"#TS file containing resized video clip
-		mainMP4File = c.wwwroot+event+"/video/main.mp4"
+
 		# re-create existing bookmarks 
 		# if (os.path.exists(bigMP4File)):
 		# 	return True # no need to re-create bookmarks that already exist
 		if(event!='live'):
 			# for past events, the mp4 file is ready for processing, extract clip from it
-			cmd = "/usr/local/bin/ffmpeg -ss "+str(startTime)+" -i "+mainMP4File+" -t "+str(duration)+" -codec copy -bsf h264_mp4toannexb "+bigTsFile
+			cmd = c.ffbin+" -ss "+str(startTime)+" -i "+mainMP4File+" -t "+str(duration)+" -codec copy -bsf h264_mp4toannexb "+bigTsFile
 			os.system(cmd)
 		if(not os.path.exists(bigTsFile) or event=='live'):
 			# either this is a live event or failed to extract a clip from the main.mp4 (may be corrupted)
@@ -2272,36 +2283,17 @@ def _extractclip( tagid, event):
 			startTime -= 2
 			if(startTime<0):#make sure it wasn't overshot
 				startTime = 0
-			strFile = _thumbName(startTime,number=True,event=event) #index of the starting .ts file
-			endFile = _thumbName(endTime,number=True,event=event) #index of the ending .ts file
+			strFile = _thumbName(startTime,number=True,event=event,sIdx=sIdx) #index of the starting .ts file
+			endFile = _thumbName(endTime,number=True,event=event,sIdx=sIdx) #index of the ending .ts file
 			# only way to extract video for live events is to concatenate .ts segments
 			vidFiles = "" #small .ts files to concatenate
 			#select .ts files that should be merged
 			for i in range(int(strFile),int(endFile)):
-				vidFiles = vidFiles+c.wwwroot+event+"/video/segm_"+str(i)+".ts "
+				vidFiles = vidFiles+c.wwwroot+event+"/video/"+sPrefix+"segm_"+str(i)+".ts "
 			# concatenate the videos
 			cmd = "/bin/cat "+vidFiles+">"+bigTsFile
 			os.system(cmd)
-		# convert to mp4, resizing it
-		#using ffmpeg
-		# cmd = "/usr/local/bin/ffmpeg -f mpegts -i "+bigTsFile +" -y -strict experimental -vf scale=iw/2:-1 -f mp4 "+bigMP4File
-		#using handbrake
-		#compression ratio here determines quality (lower number=higher quality)
-		# quality = pu.disk.cfgGet(section='clips',parameter='quality')
-		# if(not quality or quality<1):
-		# 	# if the config file doesn't exist, set default quality
-		# 	quality=8
-		# extraframes = ""
-		# if(quality<=1):
-		# 	# for very high quality add more keyframes
-		# 	# extract video full size
-		# 	cmd = "/usr/bin/ffmpeg -y -i "+bigTsFile+" -codec copy -bsf:a aac_adtstoasc "+bigMP4File
-		# 	# extraframes = "--encoder x264 -x keyint=40"
-		# else:
-		# 	# extraframes = ""
-		# 	cmd = "/usr/bin/handbrake -q "+str(quality)+" -X 720 --keep-display-aspect "+extraframes+" -i "+bigTsFile+" -o "+bigMP4File+" >/dev/null"
-		cmd = "/usr/bin/ffmpeg -y -i "+bigTsFile+" -codec copy -bsf:a aac_adtstoasc "+bigMP4File
-
+		cmd = c.ffbin+" -y -i "+bigTsFile+" -codec copy -bsf:a aac_adtstoasc "+bigMP4File
 		os.system(cmd)
 		#remove the temporary ts file
 		os.remove(bigTsFile)
@@ -2334,6 +2326,15 @@ def _extractclip( tagid, event):
 		import sys
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 #end extractClip
+def _firstSourceIdx(event):
+	try:
+		sources, firstSource = _listEvtSources(event)
+		keys = sources.keys()
+		q = 'hq' if ('hq' in sources[keys[0]]) else 'lq'
+		sIdx = keys[0].split('_')[1]+q
+	except:
+		sIdx = ""
+	return sIdx
 #######################################################
 # returns info about teradeks (if there are any)
 #######################################################
@@ -2376,7 +2377,7 @@ def _init( email, password):
 			#create all the necessary directories
 			pu.disk.mkdir(c.wwwroot+"_db")
 			#save the config info
-			_cfgSet(c.wwwroot+"_db/",[resp['authorization'],resp['customer']])
+			_cfgSet(c.wwwroot+"_db/",[resp['authorization'],resp['customer'],"0"]) #the lines of the cfg file are: authorization, customer HID, syncLevel
 			#download encoder control scripts
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encpause http://myplayxplay.net/.assets/min/encpause")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
@@ -2388,10 +2389,10 @@ def _init( email, password):
 			#download the blank database files
 			os.system("curl -#Lo "+c.wwwroot+"_db/event_template.db http://myplayxplay.net/.assets/min/event_template.db")
 			os.system("curl -#Lo "+c.wwwroot+"_db/pxp_main.db http://myplayxplay.net/.assets/min/pxp_main.db")
-			os.system("curl -#Lo "+c.wwwroot+"_db/pxpservice.sh http://myplayxplay.net/.assets/min/pxpservice.sh")
-			os.system("curl -#Lo "+c.wwwroot+"_db/spacecheck.sh http://myplayxplay.net/.assets/min/spacecheck.sh")
+			# os.system("curl -#Lo "+c.wwwroot+"_db/pxpservice.sh http://myplayxplay.net/.assets/min/pxpservice.sh")
+			# os.system("curl -#Lo "+c.wwwroot+"_db/spacecheck.sh http://myplayxplay.net/.assets/min/spacecheck.sh")
 			#download the config file
-			os.system("curl -#Lo "+c.pxpConfigFile+" http://myplayxplay.net/.assets/min/pxpcfg")
+			os.system("curl -#Lo "+c.pxpConfigFile+" http://myplayxplay.net/.assets/min/pxpcfg.v1")
 			return 1
 		#there was a response but it was an error with a message
 		return resp['msg']
@@ -2403,7 +2404,7 @@ def _init( email, password):
 #######################################################
 def _inited():
 	# LATER ON: check if server is online. if so, check auth code against the cloud
-	cfg = _cfgGet(c.wwwroot+"_db/")
+	cfg = _cfgGet()
 	return (len(cfg)>1 and cfg[0]=='.min config file')
 #end inited
 #######################################################
@@ -2426,11 +2427,11 @@ def _initLive():
 # onlyDeleted supercedes showDeleted
 #######################################################
 def _listEvents( showDeleted=True, onlyDeleted=False):
+	import hashlib
 	try:
-		# 
+		# list all all events in the local DB
 		query = "" if showDeleted else ' WHERE events.deleted=0' 
 		query = ' WHERE events.deleted=1' if onlyDeleted else query
-
 		sql = "SELECT IFNULL(events.homeTeam,'---') AS `homeTeam`, \
 					  IFNULL(events.visitTeam,'---') AS `visitTeam`, \
 					  IFNULL(events.league,'---') AS `league`, \
@@ -2450,12 +2451,20 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 		result = db.getasc()
 		# go through events and check if they have videos
 		i = 0
-		# get the name of the live event
+		# get the name of the live event, if it exists
 		if(os.path.exists(c.wwwroot+'live/evt.txt')):
-			live = pu.disk.file_get_contents(c.wwwroot+"live/evt.txt").strip()
+			liveName = pu.disk.file_get_contents(c.wwwroot+"live/evt.txt").strip()
 		else:
-			live = ""
+			liveName = ""
+		# get all events that exist in the database but are still being backed up (e.g. events that were just created and are being backed up remotely)
+		resp = pu.disk.sockSendWait(msg="LBP|",addnewline=False)
+		if(resp):
+			backingup = json.loads(resp)
+		else:
+			backingup = { }
 		for row in result:
+			if(row['hid'] in backingup):
+				continue #do not list events that are still being 'created'
 			if(onlyDeleted):
 				if(('deleted' in row) and \
 					(int(row['deleted'])) and \
@@ -2471,31 +2480,89 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 			evtDir = c.wwwroot+evtName
 			result[i]['name']=evtName
 			# check if there is a streaming file (playlist) exists
-			if(os.path.exists(evtDir+'/video/list.m3u8') and (pu.uri.host)):
-				result[i]['vid']='http://'+pu.uri.host+'/events/'+evtName+'/video/list.m3u8'
-			# check if the mp4 file exists
-			if(os.path.exists(evtDir+'/video/main.mp4') and (evtName != live)):
-				# it is - provide a path to it
-				if (pu.uri.host):
-					# result[i]['vid']='http://'+pu.uri.host+'/events/'+evtName+'/video/main.mp4'
-					result[i]['mp4']='http://'+pu.uri.host+'/events/'+evtName+'/video/main.mp4'
-				if(os.path.exists(evtDir+'/video/list.m3u8')):
-					# video size is actually double (1 for streaming + 1 for mp4 file) - times by 2 (shift left by 1 is the same as multiplying by 2)
-					shiftBy=1
-				else:
-					# if there are no .ts files, the file size is just the mp4
-					shiftBy=0
-				result[i]['vid_size']=pu.disk.sizeFmt((os.stat(evtDir+"/video/main.mp4").st_size)<<shiftBy)
+			# add any stream playlists to the sources in this format:
+
+			if (pu.uri.host):
+				# find all cameras and qualities and add them to the array of streaming sources
+				sources, firstSrc = _listEvtSources(evtName,fileMask='*.m3u8')
+				if(sources):
+					result[i]['vid'] = firstSrc
+					result[i]['vid_2'] = sources
+				# find all mp4 files and add them to the list of downloadable files
+				sources, firstSrc = _listEvtSources(evtName,fileMask='main*.mp4')
+				if(sources):
+					result[i]['mp4'] = firstSrc
+					result[i]['mp4_2'] = sources
+			#end if uri.host
+
 			# check if this is a live event
-			if((evtName==live) and (pu.uri.host)):
-				result[i]['live']='http://'+pu.uri.host+'/events/live/video/list.m3u8'
+			if((evtName==liveName) and (pu.uri.host)):
+				sources, firstSrc = _listEvtSources('live',fileMask='*.m3u8')
+				if(sources):
+					result[i]['live'] = firstSrc
+					result[i]['live_2'] = sources
+			# get full folder size
+			if(evtName==liveName):
+				evtDir = c.wwwroot+'live'
+			if(os.path.exists(evtDir) and os.path.exists(evtDir+'/pxp.db')):
+				result[i]['size'] = pu.disk.dirSize(evtDir)
+				result[i]['size_fmt'] = pu.disk.sizeFmt(result[i]['size'])
+				# get md5 checksum of the data file
+				result[i]['md5'] = hashlib.md5(open(evtDir+'/pxp.db', 'rb').read()).hexdigest()
+			else:
+				result[i]['size'] = 0
+				result[i]['md5'] = ''
 			i+=1
+		#end for row in result
 		db.close()
 		return result
 	except Exception as e:
 		import sys
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvents")
 #end listevents
+#######################################################
+# gets a list of video sources for an event
+# puts the sources in the 'vid' element of the 'output'
+# @param (str) output - dictionary that will contain the 'vid' parameter
+# video files can have a suffix containing source index and quality, e.g. list_00hq.m3u8
+#######################################################
+def _listEvtSources(evtName, fileMask='*.m3u8'):
+	try:
+		vidfiles = glob.glob(c.wwwroot+evtName+'/video/'+fileMask)
+		if(len(vidfiles)<1): #there are no sources in this folder matching the search pattern
+			return (False, "")
+		sources = { }
+		for vid in vidfiles:
+			vid = vid[vid.rfind('/')+1:]
+			# get the source number
+			nums = re.findall('\d+',vid[:vid.rfind('.')])
+			if(len(nums)<1):
+				# there is no number on this source, set this source index to '00'
+				# most likely this is a single-source event 
+				# it only contains list.m3u8 and main.mp4 files (both assumed to be HQ files)
+				n = '00'
+				q = 'hq'
+			else:
+				n = nums[0]
+				# get quality (if specified)
+				q = vid[vid.find(n)+len(n):vid.rfind('.')]
+			if(not q):# quality isn't specified - assume it's high quality
+				q = 'hq' 
+			# create entry in the dictionary (if it doesn't exist yet)
+			if(not ('s_'+n) in sources):
+				sources['s_'+n]={ }
+			# add this source to the dictionary
+			sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/'+vid
+		# end for vid
+		# set url (for web-based viewer) as the first source in the list
+		srcKeys = sources.keys() # list of sources
+		qs = sources[srcKeys[0]].keys() # list of qualities in the 1st source
+		# output[key] = sources[srcKeys[0]][qs[0]] #get the first quality in the first source (usually it'll be hq)
+		# output[key+'_2'] = sources.copy()
+		return (sources,sources[srcKeys[0]][qs[0]]) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
+	except Exception as e:
+		return (False, _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvtSources"))
+#end listEvtSources
 #######################################################
 #returns a list of teams in the system
 #######################################################
@@ -2588,26 +2655,41 @@ def _mkThumb( videoFile, outputFile, seconds, width=190, height=106):
 		params = " -ss "+ffparams
 	os.system(cmd+params) # need to wait for response otherwise the tablet will try to download image file that does not exist yet
 #end mkThumb
-# prepares video file to extract thumbnail (required for live events with .ts files)
-# must concatenate several .ts files (with at least a couple of i-frames) since just one .ts file may not have any
-def _mkThumbPrep(event,seconds):
+def _mkThumbPrep(event,seconds,sIdx=""):
+	""" Prepares video file to extract thumbnail (required for live events with .ts files). 
+		Must concatenate several .ts files (with at least a couple of i-frames) since just one .ts file may not have any
+		
+		Args:
+			event (str): name of the event (path, relative to the events/ directory).
+			seconds (float): absolute time in the event.
+			sPrefix (mixed): stream prefix - contains index of the stream (if any). used for multicam. if unspecified, the function assumes single camera. default: empty string.
+		Return:
+			dict:
+				{
+					"file": the name of the video file containing the requested time,
+					"time": relative time to the required frame - time from the beginning of this video file
+				}
+	"""
 	tmBuffer = 5
 	strTime = seconds-tmBuffer
 	if(strTime<0): 
 		strTime=0
-	bigTsFile = c.wwwroot+event+"/video/v_"+str(seconds)+".ts"
+	if(sIdx):
+		sPrefix = sIdx+'_'
+	else:
+		sPrefix = ''
+	bigTsFile = c.wwwroot+event+"/video/"+sPrefix+"v_"+str(seconds)+".ts"
 	endTime = seconds+tmBuffer
 	res = {}
-	strFile = _thumbName(strTime,number=True,event=event, results=res) #index of the starting .ts file
-	endFile = _thumbName(endTime,number=True,event=event) #index of the ending .ts file
+	strFile = _thumbName(strTime,number=True,event=event, results=res, sIdx = sIdx) #index of the starting .ts file
+	endFile = _thumbName(endTime,number=True,event=event,sIdx = sIdx) #index of the ending .ts file
 	# this is where the concatenated video 'actually' starts
 	trueStartTime = res['startTime']
-
 	vidFiles = "" #small .ts files to concatenate
 	#select .ts files that should be merged
 	for i in range(int(strFile),int(endFile)):
-		filePath = c.wwwroot+event+"/video/segm_"+str(i)+".ts"
-		filePath2 = c.wwwroot+event+"/video/segm_-"+str(i)+".ts"
+		filePath = c.wwwroot+event+"/video/"+sPrefix+"segm_"+str(i)+".ts"
+		filePath2 = c.wwwroot+event+"/video/"+sPrefix+"segm_-"+str(i)+".ts"#for compatibility with some Linux segmenters (they insist on forcing a dash)
 		if(os.path.exists(filePath)):
 			vidFiles += filePath + " "
 		elif(os.path.exists(filePath2)):
@@ -2648,11 +2730,6 @@ def _postProcess():
 		os.remove(c.wwwroot+"live/evt.txt")
 		# rename the live to that directory
 		os.rename(c.wwwroot+"live",c.wwwroot+event)
-		# update mp4 headers to make the mp4 streamable
-		# os.system("/usr/local/bin/qtfaststart "+c.wwwroot+event+'/video/main.mp4')
-		# remove all .ts files - leave them on the server for streaming past events
-		# cmd = "find "+c.wwwroot+event.strip()+"/video/ -name *.ts -print0 | xargs -0 rm"
-		# os.system(cmd)
 		# remove the stopping.txt file
 		os.system("rm "+c.wwwroot+event+"/stopping.txt")
 	except Exception as e:
@@ -2760,7 +2837,7 @@ def _syncAddTags( path,tagrow,del_arr,add_arr):
 #######################################################
 #syncs encoder to cloud
 #######################################################
-def _syncEnc( encEmail="",encPassw=""):
+def _syncEnc( encEmail="none",encPassw="none"):
 	try:
 		db = pu.db()
 		#open the main database (where everything except tags is stored)
@@ -2770,7 +2847,7 @@ def _syncEnc( encEmail="",encPassw=""):
 		# name them v1 and v2 to make sure it's not obvious what is being sent
 		# v3 is a dummy variable
 		# v0 is the authorization code (it will determine if this is encoder or another device)
-		cfg = _cfgGet(c.wwwroot+"_db/")
+		cfg = _cfgGet()
 		if(not cfg): 
 			return _err("not initialized")
 		authorization = cfg[1]
@@ -2778,15 +2855,26 @@ def _syncEnc( encEmail="",encPassw=""):
 		params ={   'v0':authorization,
 					'v1':encEmail,
 					'v2':encPassw,
-					'v3':encEmail.encode("rot13"),
+					'v3':encEmail.encode("rot13"), #dummy entry
 					'v4':customerID
 				}
 		resp = pu.io.send(url,params, jsn=True)
 		if(not resp):
 			return _err("connection error")
+		# DEBUG NOTE:
+		# CHECK WHAT HAPPENS WHEN THERE IS NO INTERNET CONNECTION, FOR SOME REASON OUTPUT IS '0'
+		# :DEBUG NOTE
 		if ('success' in resp and not resp['success']):
 			return _err(resp['msg'])
+		# get sync level in the cloud
+		try:
+			resp = json.loads(pu.io.url("http://myplayxplay.net/max/synclevel/ajax"))
+		except:
+			resp['level']=1
+		syncLevel = resp['level']
 		tables = ['users','leagues','teams','events', 'teamsetup']
+
+		# here we go through every table, delete all the old data and add new data
 		for table in tables:
 			if (resp and (not (table in resp)) or (len(resp[table])<1)):
 				continue
@@ -2867,11 +2955,11 @@ def _syncEnc( encEmail="",encPassw=""):
 			add_arr.append(", ".join(fields))
 			lastTagRow = tagrow
 		#end for tagrow in resp[tags]
-			# sql = "INSERT INTO `tags`(`hid`, `name`, `user`, `time`, `period`, `duration`, `coachpick`, `bookmark`, `playerpick`, `colour`,`starttime`,`type`)";
-		#end for tagrow in tags
 		if (len(lastTagRow)>0):
 			#last add/delete query will be run after all the tags were parsed:
 			_syncAddTags(eventDir+event,lastTagRow,del_arr,add_arr)
+		# update the sync level on the local encoder to the level in the cloud
+		_cfgSet(c.wwwroot+"_db/",[cfg[1],cfg[2],str(syncLevel)])
 		return {"success":True}
 	except Exception as e:
 		import sys
@@ -3037,37 +3125,41 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		tag['duration']=str(round(float(tag['duration'])))[:-2]
 		#time to show on the thumbnail
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
-		# thumbnail image url
-		tag['url'] = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
+
+		streams, firstStream = _listEvtSources(event,fileMask="*.m3u8")
+		oldStyleEvent = os.path.exists(c.wwwroot+event+'/video/main.mp4') or os.path.exists(c.wwwroot+event+'/video/list.m3u8')
+		if(oldStyleEvent):
+			sPrefix = ""
+
 		# path to the image file (to check if it exists)
-		imgFile = c.wwwroot+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
-		# check we need to check whether the thumbnail image exists
-		if (checkImg and not os.path.exists(imgFile)):
-			# the thumbnail image does not exist, create it
-			if(event=='live'):
-				# for live events the thumbnail must be extracted from a .TS file
-				# get the name of the .ts segment containing the right time				
-				# res = {}
-				# vidSegmfileName = _thumbName(tag['time'],event=event,results=res)
-				# vidFile = c.wwwroot+event+"/video/"+str(vidSegmfileName)
-				res = _mkThumbPrep(event,tag['time'])
-				vidFile = res['file']
-				sec = res['time']
-				# sec = res['remainder']
-			else:
-				# for past events, the thumbnail can be extracted from the main.mp4
-				vidFile = c.wwwroot+event+"/video/main.mp4"
-				sec = tag['time']
+		# imgFile = c.wwwroot+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
+		# # check we need to check whether the thumbnail image exists
+		# if (checkImg and not os.path.exists(imgFile)):
+		# 	# the thumbnail image does not exist, create it
+		# 	if(event=='live'):
+		# 		# for live events the thumbnail must be extracted from a .TS file
+		# 		# get the name of the .ts segment containing the right time				
+		# 		# res = {}
+		# 		# vidSegmfileName = _thumbName(tag['time'],event=event,results=res)
+		# 		# vidFile = c.wwwroot+event+"/video/"+str(vidSegmfileName)
+		# 		res = _mkThumbPrep(event,tag['time'])
+		# 		vidFile = res['file']
+		# 		sec = res['time']
+		# 		# sec = res['remainder']
+		# 	else:
+		# 		# for past events, the thumbnail can be extracted from the main.mp4
+		# 		vidFile = c.wwwroot+event+"/video/main.mp4"
+		# 		sec = tag['time']
 
-			_mkThumb(vidFile, imgFile, sec)
+		# 	_mkThumb(vidFile, imgFile, sec)
 
-			if(event=='live'):
-				# delete the temporary ts file after image extraction
-				try:
-					os.remove(vidFile)
-				except:
-					pass
-		#end if checkImg
+		# 	if(event=='live'):
+		# 		# delete the temporary ts file after image extraction
+		# 		try:
+		# 			os.remove(vidFile)
+		# 		except:
+		# 			pass
+		# #end if checkImg
 
 		tag['own'] = tag['user']==user #whether this is user's own tag
 
@@ -3078,13 +3170,6 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		#set deleted attribute for a tag
 		tag['deleted'] = tag['type']==3
 		tag['success'] = True #if got here, the tag info was retreived successfully
-		if(int(tag['type'])==4): #add telestration url for telestration tags only
-			tag['teleurl']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tl'+str(tag['id'])+'.png'
-			tag['telefull']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tf'+str(tag['id'])+'.jpg'
-		if(int(tag['type'])==40):
-			tag['televid']='http://'+pu.uri.host+'/events/'+event+'/thumbs/tv'+str(tag['id'])+'.mp4'
-		if(os.path.exists(c.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')):
-			tag['vidurl']='http://'+pu.uri.host+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
 		if('hid' in tag):
 			del(tag['hid'])
 		# extract metadata as individual fields
@@ -3102,6 +3187,42 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 			else:
 				outDict[field]=tag[field]
 		# send the data to the socket (broadcast for everyone)
+		outDict['url_2'] = {}
+		outDict['teleurl_2'] = {}
+		outDict['telefull_2'] = {}
+		outDict['vidurl_2'] = {}
+		for s in streams:
+			q = 'hq' if ('hq' in streams[s]) else 'lq'
+			sIdx = s.split('_')[1]+q
+			if(not oldStyleEvent):
+				sPrefix = sIdx+'_'
+			tnPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tn'+str(outDict['id'])+'.jpg' #thumbnail image
+			tlPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tl'+str(outDict['id'])+'.png' #telestration drawing
+			tfPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tf'+str(outDict['id'])+'.jpg' #full size screenshot (for telestration)
+			tvPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tv'+str(outDict['id'])+'.mp4' #video telestration
+			vuPath = 'http://'+pu.uri.host+'/events/'+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4'#extracted mp4 clip
+
+			if(not 'url' in outDict):
+				outDict['url'] = tnPath
+			outDict['url_2'][s] = tnPath
+
+			if(int(outDict['type'])==4): #static telestration - add teleurl only for these tags
+				if(not 'teleurl' in outDict):
+					outDict['teleurl']=tlPath
+					outDict['telefull']=tfPath
+				outDict['teleurl_2'][s]=tlPath
+				outDict['telfeull_2'][s]=tfPath
+
+			if(int(outDict['type'])==40): #video telestration - add televid only for these tags
+				if(not 'televid' in outDict):
+					outDict['televid']=tvPath
+				outDict['televid_2'][s]=tvPath
+
+			if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4')): #there's a bookmark associated with this tag already
+				if(not 'vidurl' in outDict):
+					outDict['vidurl']=vuPath
+				outDict['vidurl_2'][s]=vuPath
+
 		outDict['islive']=event=='live'
 		if(sockSend):
 			_sockData(event=event,tag=outDict,db=db)
@@ -3122,10 +3243,14 @@ def _time(format='%Y-%m-%d %H:%M:%S',timeStamp=False):
 #returns file name for the video that contains appropriate time 
 #if totalTime is set to True, returns the length of the event in seconds
 #######################################################
-def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False):
+def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,sIdx=""):
 	import math
 	# path to the list.m3u8 file - playlist for the hls
-	listPath = c.wwwroot+event+"/video/list.m3u8"
+	if(sIdx):
+		sSuffix = "_"+sIdx
+	else:
+		sSuffix = ""
+	listPath = c.wwwroot+event+"/video/list"+sSuffix+".m3u8"
 	#open m3u8 file:
 	#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at roughly 00:00:50 time. reachedTime contains the number of seconds since file0
 	reachedTime = 0.0
@@ -3179,7 +3304,7 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False):
 	if (not fileName):
 		return 0
 	if(number):#only return the number without the rest of the filename
-		results['number']=_exNum(fileName)
+		results['number']=_exNum(fileName,startAtIdx=len(sSuffix))
 		return results['number']
 	return fileName
 #end calcThumb
