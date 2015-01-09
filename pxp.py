@@ -520,13 +520,19 @@ def evtrestore():
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end evtrestore	
 def serverinfo():
-	# check if this server is a master
-	# REQUEST INFO FROM PXPSERVICE
+	# get info about the encoder
+	result = {"version":c.ver}
 	try:
 		resp = json.loads(pu.disk.sockSendWait(msg="SNF|",addnewline=False))
+		settings = pu.disk.cfgGet(section="sync")
+		result.update(resp)
+		result['settings']=settings		
 	except:
-		resp = [False]
-	return {"settings":pu.disk.cfgGet(section="sync"),"master":resp[0]}
+		result["settings"]={}
+		result["master"]=False
+		result['down']=True
+	return result
+	# return {"settings":settings,"master":resp}
 # get a list of files to sync for a specified event
 def evtsynclist():
 	try:
@@ -693,12 +699,14 @@ def encoderstatus(textOnly=True):
 			status = enc['status']
 		resp = pu.disk.sockSendWait(msg="SNF|",addnewline=False)
 		if(not resp):
-			data = [False]
+			data = {}
 		else:
 			data = json.loads(resp)
 		if (textOnly):
 			return status
-		return {"status":status,"code":state,"master":data[0]}
+		result = {"status":status,"code":state}
+		result.update(data)
+		return result
 	except Exception as e:
 		import sys
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e)+ ' '+str(txtStatus))
@@ -1082,6 +1090,7 @@ def _slog(text):
 def service():
 	try:
 		# this will be deprecated
+		return
 		settings = settingsGet()
 		# check if user has upload enabled
 		if(int(settings['uploads']['autoupload']) and not _uploading()):
@@ -1114,7 +1123,7 @@ def service():
 							else:
 								leagueHID = ""
 							db.close()
-# GET TIMESTAMP FROM EVENT, NOT FROM CURRENT TIME!!!
+							# GET TIMESTAMP FROM EVENT, NOT FROM CURRENT TIME!!!
 							# send a request to create a new event in the cloud
 							cfg = _cfgGet()
 							# check if there is internet
@@ -1334,6 +1343,7 @@ def settingsGet():
 			(20,"20s")
 		])
 	except Exception as e:
+		settings["err"]=str(e)+' '+str(sys.exc_traceback.tb_lineno)
 		# could not get/parse some settings, download the config file from the cloud
 		pass
 	return settings
@@ -1873,12 +1883,13 @@ def tagset(tagStr=False, sendSock=True):
 		streams, firstStream = _listEvtSources(eventName,fileMask="*.m3u8")
 		if(not streams): #there are no video sources in this event - do nothing
 			return _err("there is no video in the event")
-		oldStyleEvent = os.path.exists(pathToEvent+'/video/main.mp4') or os.path.exists(pathToEvent+'/video/list.m3u8')
+		oldStyleEvent = os.path.exists(pathToEvent+'/video/main.mp4')
 		if(oldStyleEvent):
 			sIdx = False
 			sPrefix = ""
 			sSuffix = ""
 		for s in streams:
+			print "tagging", s, streams[s]
 			# create a thumbnail for each stream
 			# get the stream index (stream name is s_XX where XX is a two-digit index)
 			q = 'hq' if('hq' in streams[s]) else 'lq'
@@ -1959,7 +1970,7 @@ def teleset():
 			sIdx = jsonTag['sidx']
 		else:
 			sIdx = _firstSourceIdx(event)
-		if(os.path.exists(c.wwwroot+event+'/video/main.mp4') or os.path.exists(c.wwwroot+event+'/video/list.m3u8')):
+		if(os.path.exists(c.wwwroot+event+'/video/main.mp4')):
 			#this is an old style event
 			sPrefix = ""
 		else: #this is a new style event
@@ -2552,6 +2563,8 @@ def _listEvtSources(evtName, fileMask='*.m3u8'):
 			if(not ('s_'+n) in sources):
 				sources['s_'+n]={ }
 			# add this source to the dictionary
+			if(not pu.uri.host):
+				pu.uri.host=pu.io.myIP()
 			sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/'+vid
 		# end for vid
 		# set url (for web-based viewer) as the first source in the list
@@ -2633,6 +2646,7 @@ def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):
 #######################################################
 def _mkThumb( videoFile, outputFile, seconds, width=190, height=106):
 	import os
+	print "mkthumb: ",videoFile
 	if not os.path.exists(videoFile):
 		#there is no video for this event
 		return False
@@ -2678,11 +2692,13 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 		sPrefix = sIdx+'_'
 	else:
 		sPrefix = ''
+	print "thumbprep:",sIdx
 	bigTsFile = c.wwwroot+event+"/video/"+sPrefix+"v_"+str(seconds)+".ts"
 	endTime = seconds+tmBuffer
 	res = {}
-	strFile = _thumbName(strTime,number=True,event=event, results=res, sIdx = sIdx) #index of the starting .ts file
-	endFile = _thumbName(endTime,number=True,event=event,sIdx = sIdx) #index of the ending .ts file
+	strFile = _thumbName(strTime, number=True, event=event, results=res, sIdx = sIdx) #index of the starting .ts file
+	endFile = _thumbName(endTime, number=True, event=event, sIdx = sIdx) #index of the ending .ts file
+	print "start,end:",strFile,endFile
 	# this is where the concatenated video 'actually' starts
 	trueStartTime = res['startTime']
 	vidFiles = "" #small .ts files to concatenate
@@ -2696,6 +2712,7 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 			vidFiles += filePath2 + " "
 	# concatenate the video segments
 	cmd = "cat "+vidFiles+">"+bigTsFile
+	print "mkthumbprep:",cmd
 	os.system(cmd)
 	# the required frame will be 4 seconds into the file
 	return {"file":bigTsFile,"time":seconds-trueStartTime}
@@ -3127,7 +3144,7 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
 
 		streams, firstStream = _listEvtSources(event,fileMask="*.m3u8")
-		oldStyleEvent = os.path.exists(c.wwwroot+event+'/video/main.mp4') or os.path.exists(c.wwwroot+event+'/video/list.m3u8')
+		oldStyleEvent = os.path.exists(c.wwwroot+event+'/video/main.mp4')
 		if(oldStyleEvent):
 			sPrefix = ""
 
@@ -3251,6 +3268,7 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 	else:
 		sSuffix = ""
 	listPath = c.wwwroot+event+"/video/list"+sSuffix+".m3u8"
+	print "thumbname for",sIdx," from: ",listPath
 	#open m3u8 file:
 	#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at roughly 00:00:50 time. reachedTime contains the number of seconds since file0
 	reachedTime = 0.0
@@ -3303,6 +3321,7 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 		return reachedTime
 	if (not fileName):
 		return 0
+	print "extract from:", fileName, "sfx:",sSuffix
 	if(number):#only return the number without the rest of the filename
 		results['number']=_exNum(fileName,startAtIdx=len(sSuffix))
 		return results['number']

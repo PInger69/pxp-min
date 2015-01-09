@@ -4,6 +4,7 @@ from datetime import datetime as dt
 from uuid import getnode as getmac
 from pxputil import TimedThread
 from urlparse import parse_qsl
+from itertools import izip_longest
 import camera, constants as c, copy, json, os, psutil, pxp, pxputil as pu, signal, socket, subprocess as sb, time
 import sys, shutil, hashlib, re
 
@@ -441,15 +442,18 @@ class backupEvent(object):
     # end treeCopy
     def webCopy(self,url,fileList,dst):
         """ downloads files from the specified url and saves them to the local directory 
-        @param (str) url - base url of the server where to download files
-        @param (list) fileList - list of files with their path relative to the 'url'
-        @param (str) dst - destination directory on the local drive, where to save files
+            Args:
+                url(str) : base url of the server where to download files
+                fileList(list) : list of files with their path relative to the 'url'
+                dst(str) : destination directory on the local drive, where to save files
         """
         try:
             # this is the directory where the event will be stored
             fileHome = dst[dst.rfind('/'):]
             dbg.prn(dbg.BKP,"fileHome:",fileHome)
             for item in fileList:
+                if(self.kill or (enc.code & enc.STAT_SHUTDOWN)):
+                    break
                 dbg.prn(dbg.BKP,"trying ", item)
                 # get full directory path (excluding the file)
                 fullDir = dst+item[item.find(fileHome)+len(fileHome):item.rfind('/')]
@@ -687,7 +691,7 @@ def deleteFiles():
         if (pu.disk.psOn("rm -f") or pu.disk.psOn("rm -rf") or pu.disk.psOn("xargs -0 rm") or not (enc.code & (enc.STAT_READY | enc.STAT_NOCAM))):
             return
         # check how big is the log file
-        if(os.stat(c.logFile).st_size>c.maxLogSize):
+        if(os.path.exists(c.logFile) and (os.stat(c.logFile).st_size>c.maxLogSize)):
             #the file is too big - leave only last 500k lines in there (should be about 40-50mb)
             os.system("cat -n 500000 "+c.logFile+" > "+c.logFile)
         # first, take care of the old session files (>1 day) should take no more than a couple of seconds
@@ -961,14 +965,18 @@ class encDevice(object):
         self.initStarted    = int(time.time()*1000) # for timing out the initialization procedure if it stalls for too long
         self.rtspURL        = False # url of the RTP/RTSP stream on the encoder device
         self.isIP           = True  # this is an ip-streaming device (by default). only a few select devices will be set as non-ip (has to be forced manually)
+        self.alarm          = False # whther this device has alarm triggered (or a list of which alarms are triggered if there is more than 1)
     def __repr__(self):
         return "<encDevice> ip:{ip} fr:{framerate} br:{bitrate} url:{rtspURL} init:{initialized} on:{isOn}".format(**self.__dict__)
+    # determine if this camera has alarm triggered
+    def alarmChk(self):
+        pass
     # create ffmpeg command that captures the rtsp stream
     def buildCapCmd(self, camURL, chkPRT, camMP4, camHLS):
         # if ther's a problem, try adding -rtsp_transport udp before -i
         # liquid image EGO camerea requires -fflags +genpts otherwise you get "first pts value must be set" error
         # return c.ffbin+" -fflags +genpts -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
-        return c.ffbin+" -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+str(chkPRT)+" -codec copy -f h264 udp://127.0.0.1:"+str(camMP4)+" -codec copy -f mpegts udp://127.0.0.1:"+str(camHLS)
+        return c.ffbin+" -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+str(chkPRT)+" -codec copy -f mpegts udp://127.0.0.1:"+str(camMP4)+" -codec copy -f mpegts udp://127.0.0.1:"+str(camHLS)
     #end encBuildCmd
     def setBitrate(self, bitrate):
         pass
@@ -1011,6 +1019,7 @@ class encTeradek(encDevice):
                 output['port'] = results['port']
             output['ip'] = results['ip']
             output['type'] = "td_cube"
+            output['devClass'] = encTeradek
             callback(output)
         #end discovered
         pu.bonjour.discover(regtype="_tdstream._tcp",callback=discovered)
@@ -1171,7 +1180,7 @@ class encTeradek(encDevice):
             response = pu.io.url(url+url2, timeout=15)
             if(not response): #didn't get a response - timeout?
                 dbg.prn(dbg.TDK, "no response from: ",url+url2)
-                self.tdSession = None
+                self.tdSession = None #this will cause if(self.tdSession) to fail on the next run of update(), which will cause RTSP to be restarted, and if it can't, the device will be removed from the system
                 return False
             self.resolution = self.getParam(response,'resolution')
             self.framerate = int(self.getParam(response,'framerate'))
@@ -1218,18 +1227,20 @@ class encMatrox(encDevice):
                             continue
                         params = self.getParams(devIP) #get all the parameters from the monarch's page
                         if(params and params['rtsp_url'] and params['rtsp_port']):
-                            outputs = {}
-                            outputs['ip'] = devIP
-                            outputs['type'] = 'mt_monarch'
-                            outputs['url'] = params['rtsp_url']
-                            outputs['port'] = params['rtsp_port']
-                            callback(outputs)
+                            output = {}
+                            output['ip'] = devIP
+                            output['type'] = 'mt_monarch'
+                            output['url'] = params['rtsp_url']
+                            output['port'] = params['rtsp_port']
+                            output['devClass'] = encMatrox
+                            callback(output)
                     except Exception as e: #may fail if the device is invalid or doesn't have required attributes
                         dbg.prn(dbg.MTX|dbg.ERR, "[---]encMatrox.discover",e, sys.exc_traceback.tb_lineno)
                 #end for devLoc in monarchs
             #end if monarchs>0
             else:
-                dbg.prn(dbg.MTX,"not found any monarchs")
+                # dbg.prn(dbg.MTX,"not found any monarchs")
+                pass
         except Exception as e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]encMatrox.discover",e, sys.exc_traceback.tb_lineno)
     def getParams(self,ip=False):
@@ -1241,7 +1252,8 @@ class encMatrox(encDevice):
             "inputResolution"   : False,
             "streamResolution"  : False,
             "streamFramerate"   : False,
-            "streamBitrate"     : False
+            "streamBitrate"     : False,
+            "connection"        : False #whether there is connection with this device at all
         }
         if(not ip):
             ip = self.ip
@@ -1389,6 +1401,7 @@ class encMatrox(encDevice):
             #         params["streamBitrate"]    = bitrate;
             # #end if posStart>0
             # ########### end stream settings ###########
+            params["connection"] = True 
         except Exception, e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]matrox.getParams",e,sys.exc_traceback.tb_lineno)
         dbg.prn(dbg.MTX,params)
@@ -1420,7 +1433,7 @@ class encMatrox(encDevice):
     def update(self):
         params = self.getParams()
         dbg.prn(dbg.MTX, params, "mt.update")
-        if(params):
+        if(params and params['connection']):
             self.resolution = params['inputResolution']
             self.isCamera = self.resolution!=False
             self.bitrate = params['streamBitrate']
@@ -1456,11 +1469,13 @@ class encPivothead(encDevice):
             output['port'] = results['port']
             output['ip'] = results['ip']
             output['type'] = "ph_glass"
+            output['devClass'] = encPivothead
             callback(output)
         #end discovered
         pu.bonjour.discover(regtype="_pxpglass._udp",callback=discovered)
     def update(self):
-        self.isCamera = True #when the device is found, assume glasses are present - need to make a more robust verification (change pxpinit.py on the glasses pi)
+        self.isOn = pu.io.ping(self.ip)
+        self.isCamera = self.isOn #when the device is found, assume glasses are present - need to make a more robust verification (change pxpinit.py on the glasses pi)
 #end encPivothead
 
 class encSonySNC(encDevice):
@@ -1469,6 +1484,24 @@ class encSonySNC(encDevice):
         if(ip):
             super(encSonySNC,self).__init__(ip)
             self.ccBitrate      = True # can change bitrate
+    def alarmChk(self):
+        try:
+            # ensure it's in CBR mode and set the bitrate
+            response = pu.io.url("http://"+self.ip+"/command/inquiry.cgi?inq=sensor",username='admin',password='admin')
+            dbg.prn(dbg.SNC,"snc.alarm:",response)
+            if(not response):
+                self.alarm = False
+                return
+            params = dict(parse_qsl(response))
+            self.alarm = ('PresenceSensorStatus' in params) and (int(params['PresenceSensorStatus']))
+            if(self.alarm):
+                dbg.prn(dbg.SNC,"!!!!!!!!!!!!!!!!!!!!!!!!!!ALARM!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!",self.ip)
+            else:
+                dbg.prn(dbg.SNC,"*************************no alarm******************************",self.ip)
+        except Exception as e:
+            self.alarm = False
+            dbg.prn(dbg.ERR|dbg.SNC,"[---]snc.alarmChk:", e, sys.exc_traceback.tb_lineno, "( resp : ",response,')')
+        
     def discover(self, callback):
         """ find any new devices. callback is called when a device is found """
         try:
@@ -1487,18 +1520,20 @@ class encSonySNC(encDevice):
                             continue
                         params = self.getParams(devIP) #get all the parameters from the monarch's page
                         if(params and params['rtsp_url'] and params['rtsp_port']):
-                            outputs = {}
-                            outputs['ip'] = devIP
-                            outputs['type'] = 'sn_snc'
-                            outputs['url'] = params['rtsp_url']
-                            outputs['port'] = params['rtsp_port']
-                            callback(outputs)
+                            output = {}
+                            output['ip'] = devIP
+                            output['type'] = 'sn_snc'
+                            output['url'] = params['rtsp_url']
+                            output['port'] = params['rtsp_port']
+                            output['devClass'] = encSonySNC
+                            callback(output)
                     except Exception as e: #may fail if the device is invalid or doesn't have required attributes
                         dbg.prn(dbg.SNC|dbg.ERR, "[---]encSonySNC.discover",e, sys.exc_traceback.tb_lineno)
                 #end for devLoc in devs
             #end if devs>0
             else:
-                dbg.prn(dbg.SNC,"not found any SNCs")
+                # dbg.prn(dbg.SNC,"not found any SNCs")
+                pass
         except Exception as e:
             dbg.prn(dbg.SNC|dbg.ERR,"[---]encSonySNC.discover",e, sys.exc_traceback.tb_lineno)
     def getParams(self,ip=False):
@@ -1510,7 +1545,8 @@ class encSonySNC(encDevice):
             "inputResolution"   : False,
             "streamResolution"  : False,
             "streamFramerate"   : False,
-            "streamBitrate"     : False
+            "streamBitrate"     : False,
+            "connection"        : False #whether there is connection with this device at all
         }
 
         if(not ip):
@@ -1535,6 +1571,7 @@ class encSonySNC(encDevice):
                     params['streamResolution']=res[1]+'p'
                     params['streamFramerate']=rtspParams['FrameRate1']
                     params['rtsp_port']=int(rtspParams['RTSPPort'])
+                    params['connection']=True
         except Exception as e:
             dbg.prn(dbg.SNC|dbg.ERR,"[---]encSonySNC.getParams",e,sys.exc_traceback.tb_lineno)
         return params
@@ -1565,20 +1602,30 @@ class encSonySNC(encDevice):
     def setBitrate(self,bitrate):
         try:
             result = False
-            result = pu.io.url("http://"+self.ip+"/command/camera.cgi?CBR=on")
-            result = result and pu.io.url("http://"+self.ip+"/command/camera.cgi?BitRate="+bitrate)
+            dbg.prn(dbg.SNC,"snc.setbitrate:",bitrate, self.ip)
+            # ensure it's in CBR mode and set the bitrate
+            result = pu.io.url("http://"+self.ip+"/command/camera.cgi?CBR1=on&BitRate1="+str(bitrate),username='admin',password='admin')
             return result
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SNC,"[---]snc.setBitrate:", e, sys.exc_traceback.tb_lineno)
         return result
-    def setFramerate(self):
-        pass
+    def setFramerate(self,framerate):
+        try:
+            result = False
+            dbg.prn(dbg.SNC,"snc.setframerate:",framerate, self.ip)
+            # set the framerate (page uses basic authentication)
+            result = pu.io.url("http://"+self.ip+"/command/camera.cgi?FrameRate1="+str(framerate),username='admin',password='admin')
+            return result
+        except Exception as e:
+            dbg.prn(dbg.ERR|dbg.SNC,"[---]snc.setFramerate:", e, sys.exc_traceback.tb_lineno)
+        return result
     def setResolution(self):
         pass
     def update(self):
+        # get the device parameters
         params = self.getParams()
         # dbg.prn(dbg.SNC, params, "snc.update")
-        if(params):
+        if(params and params['connection']):
             self.resolution = params['inputResolution']
             self.isCamera = self.resolution!=False
             self.bitrate = params['streamBitrate']
@@ -1602,7 +1649,7 @@ class encDebug(encDevice):
     def buildCapCmd(self, camURL, chkPRT, camMP4, camHLS): #override the function for the EGO camera
         # if ther's a problem, try adding -rtsp_transport udp before -i
         # liquid image EGO camerea requires -fflags +genpts otherwise you get "first pts value must be set" error and won't start ffmpeg
-        return c.ffbin+" -fflags +genpts -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
+        return c.ffbin+" -fflags +genpts -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f mpegts udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
         # return c.ffbin+" -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
     #end encBuildCmd
     def discover(self, callback):
@@ -1611,21 +1658,23 @@ class encDebug(encDevice):
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
             devIP = "192.168.42.1"
-            response = pu.io.url("http://"+devIP+"/setting/cgi-bin/fd_control_client?func=fd_get_camera_info")
+            response = pu.io.url("http://"+devIP+"/setting/cgi-bin/fd_control_client?func=fd_get_camera_info",timeout=5)
             if(response and response.find('EGO')>0): #found LiquidImage EGO camera
-                outputs = {}
-                outputs['ip'] = devIP
-                outputs['type'] = 'db_tst'
-                outputs['url'] = "rtsp://"+devIP+"/AmbaStreamTest"
-                outputs['port'] = 554
-                callback(outputs)
+                output = {}
+                output['ip'] = devIP
+                output['type'] = 'db_tst'
+                output['url'] = "rtsp://"+devIP+"/AmbaStreamTest"
+                output['port'] = 554
+                output['devClass'] = encDebug
+                callback(output)
             else:
-                dbg.prn(dbg.TST,"did not find any debug devices")
+                # dbg.prn(dbg.TST,"not found any debug devices")
+                pass
         except Exception as e:
             dbg.prn(dbg.TST|dbg.ERR,"[---]encDebug.discover",e, sys.exc_traceback.tb_lineno)
     def update(self):
         devIP = "192.168.42.1"
-        response = pu.io.url("http://"+devIP+"/setting/cgi-bin/fd_control_client?func=fd_get_camera_info")
+        response = pu.io.url("http://"+devIP+"/setting/cgi-bin/fd_control_client?func=fd_get_camera_info",timeout=5)
         if(response and response.find('EGO')>0): 
             self.resolution = "240p30"
             self.isCamera = True
@@ -1644,22 +1693,21 @@ class encDebug(encDevice):
 
 
 class source:
-    """ defines a video source """
-    def __init__(self,ip, encType, ports={}, url=False, preview=False):
+    """ a wrapper for a video source (this contains the reference to the video device itself)"""
+    def __init__(self,ip, encType, ports={}, url=False, preview=False, devClass=False):
         """ create a new video source
-        @param (str)    ip      - ip address of the source (used for checking if the device is alive)
-        @param (dict)   ports   - dictionary of ports used for this source: 
-                                    mp4 - udp port where ffmpeg that records mp4 file receives data, 
-                                    hls - udp port where m3u8 segmenter receives MPEG-TS data, 
-                                    chk - udp port that is used to check whether packets are coming in, 
-                                    rtp - port used to connect to the rtsp server (for source validation)
-        @param (str)    encType - type of source/encoder (e.g. td_cube, ph_glass, mt_monarch)
-        @param (str)    url     - rtsp source url (must specify url or preview)
-        @param (str)    preview - url of the preview rtp stream (must specify url or preview)
+            Args:
+                ip(str)       : ip address of the source (used for checking if the device is alive)
+                ports(dict)   : dictionary of ports used for this source: 
+                          mp4 : udp port where ffmpeg that records mp4 file receives data, 
+                          hls : udp port where m3u8 segmenter receives MPEG-TS data, 
+                          chk : udp port that is used to check whether packets are coming in, 
+                          rtp : port used to connect to the rtsp server (for source validation)
+                encType(str)  : type of source/encoder (e.g. td_cube, ph_glass, mt_monarch)
+                url(str)      : rtsp source url (must specify url or preview)
+                preview(str)  : url of the preview rtp stream (must specify url or preview)
         """
         try:
-            self.isData         = False # video data present (accessible through RTSP)
-            self.isUsed         = True  # use this source when starting a live event
             self.isEncoding     = False # set to true when it's being used in a live event
             self.ports          = ports
             self.type           = encType
@@ -1667,34 +1715,31 @@ class source:
             self.id             = int(time.time()*1000000) #id of each device is gonna be a time stamp in microseconds (only used for creating threads)
             self.ipcheck        = '127.0.0.1' #connect to this ip address to check rtsp - for now this will be simply connecting to the rtsp proxy, constant pinging of the RTSP on the device directly can cause problems
             # add a new device, based on its type
-            if(self.type=='td_cube'):
-                self.device = encTeradek(ip)
-            elif(self.type=='mt_monarch'):
-                self.device = encMatrox(ip)
-            elif(self.type=='ph_glass'):
-                self.device = encPivothead(ip)
-            elif(self.type=='sn_snc'):
-                self.device = encSonySNC(ip)
-            elif(self.type=='db_tst'):
-                self.device = encDebug(ip)
-            else: #unknown device type specified
+            if(not devClass):
                 return False
+            self.device = devClass(ip)
             if(url):
                 self.device.rtspURL = url #this is a private url used for getting the video directly form the device
             if(preview):
                 self.previewURL = preview
             if(not 'src' in tmr):
                 tmr['src']={}
-            tmr['src'][self.id] = TimedThread(self.monitor,period=2)
+            # monitor the stream and parameters every 2 seconds
+            tmr['src'][self.id] = TimedThread(self.monitor,period=3)
+            # monitor alarms every second
+            tmr['src'][str(self.id)+'alarm'] = TimedThread(self.device.alarmChk,period=2)
+
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC, "[---]source.init", e, sys.exc_traceback.tb_lineno)
     #end init
     def __repr__(self):
+        # prints a string representation of the class object)
         return "<source> url:{rtspURL} type:{type} dev:{device}".format(**self.__dict__)
     def buildCapCmd(self):
+        # creates an ffmpeg capture command for this source
         return self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
     def camPortMon(self):
-        """ monitor data coming in from the camera - to make sure it's continuously receiving """
+        """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
         try:
             dbg.prn(dbg.SRC,"starting camportmon for ", self)
             host = '127.0.0.1'          #local ip address
@@ -1743,50 +1788,70 @@ class source:
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon err: ", e, sys.exc_traceback.tb_lineno)
     def monitor(self):
-        """ monitors the device parameters and sets its parameters accordingly """
+        """ monitors the (actual) device parameters and sets source (i.e. wrapper) parameters accordingly """
         try:
             self.device.update() #get all available parameters
             if(enc.code & enc.STAT_SHUTDOWN):
+                self.stopMonitor()
                 return False
             # make sure live555 is running
             urlFilePath = "/tmp/pxp-url-"+str(self.device.ip)
-            if(not procMan.pexists(name="live555",devID=self.device.ip)):
+            # ensure there's a live555 proxy running for this device - this statement is executed once, when the device is just added
+            if(self.device.rtspURL and not procMan.pexists(name="live555",devID=self.device.ip)): #there is no live555 associated with this device
                 dbg.prn(dbg.SRC,"adding live555 for ", self.device.ip, self.type)
+                #start live555 process for this device
                 procMan.padd(name="live555",devID=self.device.ip,cmd="live555ProxyServer -o "+urlFilePath+" "+self.device.rtspURL,keepAlive=True,killIdle=True, forceKill=True)
-                self.device.liveStart = time.time()  # record the time of the live555 server start
-            live555timeout = time.time()-10 #wait for 10 seconds to restart live555 server
-            if(not self.device.isOn and self.device.liveStart<live555timeout):
+                # record the time of the live555 server start - will be used in the next step to determine when live555 should be restarted
+                self.device.liveStart = time.time()  
+
+            live555timeout = time.time()-10 #wait for 10 seconds to restart live555 server if it stalls
+            
+            # stop live555 to restart it later in an attempt to recover a stalled/stopped stream
+            if(not self.device.isOn and self.device.liveStart<live555timeout): 
+                # timeout reached - there was no stream - restart live555
+                # usually this will happen if the ip address or port on the device changed, 
+                # restarting live555 will set it up with those new parameters and get the stream going
                 dbg.prn(dbg.SRC,"stopping live555")
                 procMan.pstop(name="live555",devID=self.device.ip)
+            
             #make sure live555 is up and running and no changes were made to the ip address
             if(os.path.exists(urlFilePath)): #should always exist!!!!
+                # in the modified version of live555 the proxied rtsp stream url is stored in a text file, get it
                 streamURL = pu.disk.file_get_contents(urlFilePath).strip()
-                self.rtspURL = streamURL
+                if(not self.rtspURL): #url wasn't set before
+                    self.rtspURL = streamURL
                 if(enc.busy() and not (enc.code & enc.STAT_STOP) and self.rtspURL != streamURL):
+                    # there is an encode going on
+                    # RTSP (proxied url) changed - most likey because live555 was restarted - need to update settings with this url
+                    self.rtspURL = streamURL
                     dbg.prn(dbg.SRC,"url changed", self.rtspURL, streamURL)
-                    #the streaming url changed - update it in the capturing ffmpeg command if the encoder was live already
+                    #update RTSP url in the capturing ffmpeg command if the encoder was live already
                     while(procMan.pexists(name='capture', devID = self.device.ip)):
+                        #try to stop and wait untill the process is gone 
+                        # NB: could stall here if the process refuses to exit or if it's not forced to exit
                         dbg.prn(dbg.SRC,"trying to stoppppppppppppppppp")
                         procMan.pstop(name='capture',devID=self.device.ip)
+                    # set the new ports (in case they were changed) for the ffmpeg capture command
                     camMP4  = str(self.ports['mp4'])
                     camHLS  = str(self.ports['hls'])
                     chkPRT  = str(self.ports['chk'])
-                    capCMD  = self.buildCapCmd()
+                    capCMD  = self.buildCapCmd() #this will create the capture command (it's individual based on the type of device)
+                    # start the ffmpeg process
                     procMan.padd(name="capture",devID=self.device.ip,cmd=capCMD, keepAlive=True, killIdle=True, forceKill=True)
-                #end if enc.busy and not stop
-                #end if stream url changed mid-stream
+                #end if enc.busy and not stop and stream url changed mid-stream
+                
                 # get the port (used to connect to rtsp stream to check its state)
-                #the url should be in this format: rtsp://192.168.3.140:8554/proxyStream
+                # the url should be in this format: rtsp://192.168.3.140:8554/proxyStream
                 # to get the port:
                 # 1) split it by colons: get [rtsp, //192.168.3.140, 8554/proxyStream]
                 # 2) take 3rd element and split it by /, get: [8554, proxyStream]
                 # 3) return the 8554
+                # this port is used for a 'telnet' connection to the server (in the next step)
                 self.ports['rtp'] = int(self.rtspURL.split(':')[2].split('/')[0].strip())
             #end if path.exists
             # check rtsp connectivity if it wasn't checked yet
-            if(not self.rtspURL): #no url with rtsp stream is available yet
-                return False
-            if(not (self.device.isOn and enc.busy())):
+            if(self.rtspURL and not(self.device.isOn and enc.busy())):# stream wasn't flagged as OK yet
+                # send a rtsp DESCRIBE command to check if the streaming server is ok
                 msg = "DESCRIBE "+self.rtspURL+" RTSP/1.0\r\nCSeq: 2\r\nAccept: application/sdp\r\nUser-Agent: Python MJPEG Client\r\n\r\n"""
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 s.settimeout(2)
@@ -1801,28 +1866,36 @@ class source:
                 try:
                     s.close()
                 except:
-                    #probably failed because couldn't connect to the rtsp server - no need to worry
+                    #probably failed because couldn't connect to the rtsp server - no need to worry, this error will be handled in the next step
                     pass
-                # make sure the framerate is ok on this device 
                 strdata = data[:2048].lower().strip()
                 if(strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
-                    # found a "ghost": this device recently disconnected
+                    # found a "ghost": this device recently disconnected from the network
                     dbg.prn(dbg.SRC,"RTSP ghost found - device is disconnected")
                     pass
-                if(strdata.find('timed out')>-1): #the connection is down (maybe temporarily?), the isOn is already set to false
+                if(strdata.find('timed out')>-1): #the connection is down (maybe temporarily?), the isOn is already set to false - that's how we got into this IF statement in the first place!
                     dbg.prn(dbg.SRC,"RTSP timeout - temporarily unreachable?")
                     pass
                 #a device is not available (either just connected or it's removed from the system)
                 #when connection can't be established or a response does not contain RTSP/1.0 200 OK
                 self.device.isOn = (data.find('RTSP/1.0 200 OK')>=0)
-            # this is only relevant for medical
-            if(self.device.initialized and self.device.ccFramerate and self.device.framerate>=50):
-                self.device.setFramerate(self.device.framerate/2) #set resolution to half if it's too high (for tablet rtsp streaming)
-            # if(self.device.isOn):
-                # self.device.initialized = True
+
+            # this next IF cuts the framerate in half if it's 50p or 60p
+            # most iPads (as of Aug. 2014) can't handle decoding that framerate (coming by RTSP) using ffmpeg 
+            # it will decode about 30-50% slower which will create a noticeable (and growing) lag
+            # this is only relevant for medical (or any other system that gets direct RTSP stream)
+            # maybe now this is irrelevant and can be removed?
+            # if(self.device.initialized and self.device.ccFramerate and self.device.framerate>=50):
+            #     self.device.setFramerate(self.device.framerate/2) #set resolution to half if it's too high (for tablet rtsp streaming)
+
+            #when device is initialized already, reset the timer - this timer is used to kill the device if it didn't initialize in a certain amount of time
             if(self.device.initialized):
-                self.device.initStarted    = int(time.time()*1000) #when device is initialized already, reset the timer
-            self.device.initialized = self.device.isOn #if the stream is unreachable, try to re-initialize the device or remove it form the system
+                self.device.initStarted    = int(time.time()*1000) 
+
+            # device is only considered initialized if the stream is on
+            # if the stream is unreachable, this will cause device to be re-initialized 
+            # or to be removed form the system (if it doesn't start in time) in the sourceManager monitor
+            self.device.initialized = self.device.isOn 
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]source.monitor", e, sys.exc_traceback.tb_lineno)
             dbg.prn(dbg.ERR|dbg.SRC,"[---dbg---]", self.device.isOn, self.device.liveStart, live555timeout)
@@ -1832,14 +1905,15 @@ class source:
     def stopMonitor(self):
         try:
             # stop the monitor
-            dbg.prn(dbg.SRC,"stop monitor thread")
+            dbg.prn(dbg.SRC,"stop monitor thread (and other related threads)")
             self.isEncoding = False
             if('src' in tmr and self.id in tmr['src']):
                 tmr['src'][self.id].kill()
+                tmr['src'][str(self.id)+'alarm'].kill()
             dbg.prn(dbg.SRC,"stopping camportmon thread")
             if('portCHK' in tmr and self.id in tmr['portCHK']):
                 dbg.prn(dbg.SRC,"encoding: ", self.isEncoding)
-                tmr['portCHK'][self.id].kill()
+                tmr['portCHK'][self.id].kill()                
             dbg.prn(dbg.SRC,"stopping live555")
             # stop the processes associated with this device
             procMan.pstop(name="live555",devID=self.id)
@@ -1849,24 +1923,46 @@ class source:
 #end source class
 
 class sourceManager:
-    def __init__(self):
+    """ discovers, monitors and managers all the video sources (or wrappers for devices) """
+    def __init__(self,devList):
+        """ Initializes the source manager
+            Args:
+                devList(dict): dictionary of all enabled sources
+        """
         self.allowIP = True  #whether to allow IP streaming sources to be added
         self.mp4Base = 22500 #ffmpeg captures rtsp stream and outputs H.264 stream here
         self.hlsBase = 22600 #ffmpeg captures rtsp stream and outputs MPEG-TS here
         self.chkBase = 22700 #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
         self.sources = [] #video sources go here
+        self.devList = devList
         if(not 'srcmgr' in tmr):
             tmr['srcmgr'] = {}
         tmr['srcmgr']['mgrmon'] = TimedThread(self.monitor, period=3)
-        tmr['srcmgr']['discvr'] = TimedThread(self.discover, period=3)
+        tmr['srcmgr']['discvr'] = TimedThread(self.discovererManage, period=3)
+    def alarms(self):
+        # return an array of devices that have alarms set off
+        sources = copy.deepcopy(self.sources)
+        alarms = []
+        idx = 0
+        for src in sources:
+            if src.device.alarm:
+                alarms.append("s_"+str(idx).zfill(2)) #the s_ prefix is generated in pxp.py
+            idx+=1
+        return alarms
     def addDevice(self, inputs):
-        """ adds a source to the list 
-        @param (str)    ip      - ip address of the source (used for checking if the device is alive)
-        @param (str)    url     - rtsp source url
-        @param (str)    encType - type of source/encoder (e.g. td_cube, ph_glass, mt_monarch)
+        """ Adds a source to the source list
+            Args:
+                inputs (dict): the list of parameters required for each source:
+                        ip (str) : ip address of the source (used for checking if the device is alive)
+                        url (str) : rtsp source url
+                        port (int): rtsp port
+                        type (str) : type of source/encoder (e.g. td_cube, ph_glass, mt_monarch, etc.)
+                        devClass (class) : reference to the class of the device (for initialization)
+            Returns:
+                bool : True if success, False otherwise
         """
         try:
-            if(enc.code & enc.STAT_SHUTDOWN):
+            if((enc.code & enc.STAT_SHUTDOWN) or enc.busy()):#do not add new cameras during live event
                 return False
             sources = copy.deepcopy(self.sources)
             if(not((('url' in inputs) or ('preview' in inputs)) and ('ip' in inputs))):
@@ -1898,10 +1994,10 @@ class sourceManager:
                 }
             if('url' in inputs):#the device discovered was the main url device
                 ports['rtp'] = int(inputs['port'])
-                dev = source(ip=ip,url=inputs['url'],encType=inputs['type'], ports=ports)
+                dev = source(ip=ip,url=inputs['url'],encType=inputs['type'], ports=ports, devClass=inputs['devClass'])
             elif('preview' in inputs):#discovered the preview version of the device
                 ports['preview'] = int(inputs['preview-port'])
-                dev = source(ip=ip,preview=inputs['preview'],encType=inputs['type'], ports=ports)
+                dev = source(ip=ip,preview=inputs['preview'],encType=inputs['type'], ports=ports, devClass=inputs['devClass'])
             if(dev):
                 self.sources.append(dev)
                 dbg.prn(dbg.SRM,"all sources (devices): ", self.sources)
@@ -1910,7 +2006,8 @@ class sourceManager:
             dbg.prn(dbg.SRM|dbg.ERR, "[---]srcMgr.addDevice: ",e, sys.exc_traceback.tb_lineno)
         return False
     #end addDevice
-    def discover(self):
+    def discovererManage(self):
+        """ Starts device discoverers if the current server is master or stops them if it's not """
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return #encoder is shutting down - nothing to do here
@@ -1932,22 +2029,15 @@ class sourceManager:
             # this device IS a master
             self.allowIP = True
             if('srcmgr' in tmr and 'devs' in tmr['srcmgr']):
-                return #the devices are already being discovered
+                return #the discoverers were started already
+            
             # this is the first time running this method since this device became Master
             # this dictionary will contain threads that look for video sources on the network
             tmr['srcmgr']['devs'] = {}
-
-            encTD = encTeradek()
-            encMT = encMatrox()
-            encPH = encPivothead()
-            encSN = encSonySNC()
-            encDB = encDebug()
-
-            tmr['srcmgr']['devs']['td'] = TimedThread(encTD.discover, params=self.addDevice, period=5)
-            tmr['srcmgr']['devs']['mt'] = TimedThread(encMT.discover, params=self.addDevice, period=5)
-            tmr['srcmgr']['devs']['ph'] = TimedThread(encPH.discover, params=self.addDevice, period=5)
-            tmr['srcmgr']['devs']['sn'] = TimedThread(encSN.discover, params=self.addDevice, period=5)
-            tmr['srcmgr']['devs']['db'] = TimedThread(encDB.discover, params=self.addDevice, period=5)
+            # start discovering all known devices
+            for devName in self.devList:
+                dev = self.devList[devName]['class']()
+                tmr['srcmgr']['devs'][devName] = TimedThread(dev.discover, params=self.addDevice, period=5)
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRM, "[---]srcMgr.discover: ",e, sys.exc_traceback.tb_lineno)
     #end discover
@@ -1981,6 +2071,12 @@ class sourceManager:
             # individual ffmpeg instances to capture each camera (this way if one fails, the rest continue working)
             ffcaps = {}
             streamid = 0
+            # old versions of the app do not dynamically read urls, the url (events/live/list.m3u8) is hard-coded 
+            # and thus with multicam (or single camera but new server) setup it will not work
+            # for backwards compatibility, use first camera as "the only" camera available for streaming 
+            # and create a soft link to the first list_XX.m3u8
+            oldSupportSuffix = -1
+            # go through each source and set up the streaming/capturing services
             for idx in xrange(len(self.sources)):
                 if(idx>=len(self.sources)):
                     break
@@ -2005,9 +2101,12 @@ class sourceManager:
                 # always add source indecies - future server versions will deprecate old style file naming
                 filePrefix = camIdx.zfill(2)+'hq_' #left-pad the camera index with zeros (easier to sort through segment files and thumbnails later on)
                 listSuffix = "_"+camIdx.zfill(2)+'hq' #for normal source, assume it's high quality
-                # TODO: add a lq stream for devices with preview
+                # backward-compatibility for old ipad app versions
+                if(oldSupportSuffix<1):
+                    oldSupportSuffix = listSuffix
 
-                ffmp4Out +=" -map "+camIdx+" -codec copy "+c.wwwroot+"live/video/main"+listSuffix+".mp4"
+                # TODO: add a lq stream for devices with preview
+                ffmp4Out +=" -map "+camIdx+" -codec copy -bsf:a aac_adtstoasc "+c.wwwroot+"live/video/main"+listSuffix+".mp4"
                 # this is HLS capture (segmenter)
                 if (pu.osi.name=='mac'): #mac os
                     segmenters[src.device.ip] = c.segbin+" -p -t 1s -S 1 -B "+filePrefix+"segm_ -i list"+listSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+camHLS
@@ -2046,6 +2145,8 @@ class sourceManager:
             startSuccess = startSuccess and procMan.padd(cmd=ffMP4recorder,name="record",devID="ALL",forceKill=False)
             if(not startSuccess): #the start didn't work, stop the encode
                 self.encCapStop() #it will be force-stopped automatically in the stopcap function
+            # for backwards compatibility (with older app versions) add list.m3u8
+            os.system("ln -s "+c.wwwroot+"live/video/list"+oldSupportSuffix+".m3u8 "+c.wwwroot+"live/video/list.m3u8 >/dev/null 2>/dev/null")
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRM,"[---]encCapStop: ",e,sys.exc_traceback.tb_lineno)
             self.encCapStop() #it will be force-stopped automatically in the stopcap function
@@ -2053,7 +2154,8 @@ class sourceManager:
     #end encCapStart
     def encCapStop(self,force=False):
         """stops the capture, kills all ffmpeg's and segmenters
-        force - (optional) force-kill all the processes - makes stopping process faster
+            Args:
+                force (bool,optional) : force-kill all the processes - makes stopping process faster
         """
         try:
             dbg.prn(dbg.SRM,"stopping capture... force:",force)
@@ -2076,7 +2178,7 @@ class sourceManager:
                     break
                 src = self.sources[idx]
                 self.sources[idx].isEncoding = False
-                ffBlue += " -r 30 -vcodec libx264 -an -f h264 udp://127.0.0.1:"+str(src.ports['mp4'])
+                ffBlue += " -r 30 -vcodec libx264 -an -f mpegts udp://127.0.0.1:"+str(src.ports['mp4'])
             #end while
             timeout = 20 #how many seconds to wait for process before force-stopping it
             timeStart = time.time() #start the timeout timer to make sure the process doesn't hang here
@@ -2123,8 +2225,10 @@ class sourceManager:
     #end encStopCap
     def exists(self, ip):
         """ check if a device with this IP exists already 
-        @param (str)    ip  -   ip address of the device to lookup
-        @return (int)       -   if the search is successful, return index of the device in the array, if the device is not found return -1
+            Args:
+                ip (str) :   ip address of the device to lookup
+            Returns:
+                (int): if the search is successful, return index of the device in the array, if the device is not found return -1
         """
         try:
             sources = copy.deepcopy(self.sources)
@@ -2145,26 +2249,31 @@ class sourceManager:
             sources = copy.deepcopy(self.sources)
             idx = 0
             isCamera = False
-            # dbg.prn(dbg.SRM, "mon..................")
-            # dbg.prn(dbg.SRM, sources)
-            # dbg.prn(dbg.SRM, "..................mon")
+            # time (in ms) to wait for a device to initialize before removing it.
+            # i.e. if a device didn't initialize in this time, it will be removed from the list
+            initTimeout = 20000 
             for src in sources:
                 now = int(time.time()*1000)
-                if (((not src.device.initialized) and (now-src.device.initStarted)>60000) or ((not self.allowIP) and src.device.isIP)): 
-                    #could not initialize the device after a minute or the device is an IP streaming device and they are not allowed at the moment
-                    dbg.prn(dbg.SRM, "could not init device or IP sources are not allowed - stop monitor")
-                    # src.stopMonitor()
-                    self.sources[idx].stopMonitor()
-                    devIP = src.device.ip
-                    dbg.prn(dbg.SRM, "deleting...", self.sources)
-                    del self.sources[idx]
-                    dbg.prn(dbg.SRM, "deleted ", self.sources)
-                    if(not(enc.code & (enc.STAT_LIVE|enc.STAT_PAUSED|enc.STAT_STOP))):
-                        procMan.pstop(devID=devIP) #stop all the processes associated with this device
+                if (((not src.device.initialized) and (now-src.device.initStarted)>initTimeout) or ((not self.allowIP) and src.device.isIP)): 
+                    # could not initialize the device or the device is an IP streaming device and they are not allowed at the moment
+                    if(not enc.busy()):
+                        # do not touch this device during a live event
+                        dbg.prn(dbg.SRM, "could not init device or IP sources are not allowed - stop monitor")
+                        # src.stopMonitor()
+                        self.sources[idx].stopMonitor()
+                        devIP = src.device.ip
+                        dbg.prn(dbg.SRM, "deleting...", self.sources)
+                        del self.sources[idx]
+                        dbg.prn(dbg.SRM, "deleted ", self.sources)
+                        if(not(enc.code & (enc.STAT_LIVE|enc.STAT_PAUSED|enc.STAT_STOP))):
+                            procMan.pstop(devID=devIP) #stop all the processes associated with this device
+                    #end if not busy
                 else:
                     idx+=1
                     isCamera = isCamera or src.device.isCamera
-            #end for
+                #end if not inited...else
+
+            #end for src in sources
             if(not isCamera):# no cameras on any encoders
                 # set status bit to NO CAMERA - this will need to be done on per-camera basis (not for the entire encoder)
                 enc.statusSet(enc.STAT_NOCAM,overwrite=(enc.code & enc.STAT_READY)>0)
@@ -2215,7 +2324,6 @@ class sourceManager:
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRM, "[---]srcmgr.toJSON", e, sys.exc_traceback.tb_lineno)
         return {}
-
     #end toJSON
 #end sourceManager class
 
@@ -2232,16 +2340,8 @@ class SyncSrv(object):
     dnCount   = 0 #how many updateInfo requests failed
     def __init__(self, ip):
         self.ip = ip
-        # determine whether this server allows sync
         try:
-            resp = pu.io.url("http://"+self.ip+"/min/ajax/serverinfo",timeout=5) #if it takes more than 10 seconds to get the server info, the connection is too slow for backup anyway
-            if(not resp):
-                dbg.prn(dbg.SSV,"bad response from", self.ip,':', resp)
-                return
-            resp = json.loads(resp)
-            self.enabledUp = int(resp['settings']['up'])
-            self.enabledDn = int(resp['settings']['dn'])
-            self.master = int(resp['master'])
+            self.updateInfo()
             tmr['srvsync'][self.ip] = TimedThread(self.updateInfo,period=5)
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SSV,"[---]syncsrv.init:", e, sys.exc_traceback.tb_lineno)
@@ -2259,8 +2359,8 @@ class SyncSrv(object):
         try:
             cfg = pxp._cfgGet(c.wwwroot+"_db/")
             dbg.prn(dbg.SSV,"trying sync")
-            if(not cfg):
-                return _err("not initialized")
+            if(not cfg): #probably this server is not initialized
+                return False
             if(len(cfg)<4): #old encoders won't have the syncLevel by default, this is a workaround
                 localSyncLevel = 0
             else:
@@ -2268,6 +2368,8 @@ class SyncSrv(object):
             customerID = cfg[2]
             # get a list of remove events
             resp = pu.io.url("http://"+self.ip+"/min/ajax/getpastevents",timeout=10)
+            if(not resp):#remote server went down or something happened to the network
+                return False
             data = json.loads(resp)
             eventsRm = data['events']
             if(not(type(eventsRm) is list)):
@@ -2337,10 +2439,16 @@ class SyncSrv(object):
                 self.dnCount +=1
                 return
             resp = json.loads(resp)
-            self.enabledUp = int(resp['settings']['up'])
-            self.enabledDn = int(resp['settings']['dn'])
-            self.master = int(resp['master'])
-            self.dnCount = 0
+            if('settings' in resp and 'up' in resp['settings']):
+                self.enabledUp = int(resp['settings']['up'])
+            if('settings' in resp and 'dn' in resp['settings']):
+                self.enabledDn = int(resp['settings']['dn'])
+            if('master' in resp):
+                self.master = int(resp['master'])
+            if('down' in resp):
+                self.dnCount +=1
+            else:
+                self.dnCount = 0
         except Exception as e:#something is wrong with the response from the server
             self.dnCount +=1
             dbg.prn(dbg.ERR|dbg.SSV,"[---]syncsrv.init:", e, sys.exc_traceback.tb_lineno)
@@ -2380,11 +2488,51 @@ class SyncManager(object):
             # and local device has highest string-value-IP of all other servers OR it was elected as a master previously
             self.isMaster = (not masterPresent) and ((highestIP in pu.io.myIP(allDevs = True)) or self.isMaster)
             master = 'master' if self.isMaster else 'not master'
-            dbg.prn(dbg.SMG,'found', len(servers), 'the local is', master)
+            dbg.prn(dbg.SMG,'found', (len(servers)+1), 'the local is', master)
             if(enc.code & enc.STAT_INIT):
                 enc.statusSet(enc.STAT_READY,overwrite=False)
         except Exception as e:
             dbg.prn(dbg.SMG|dbg.ERR, "[---]syncmgr.arbitrate:", e, sys.exc_traceback.tb_lineno)
+    def compareVersion(self,ver1,ver2="1.0.13"):
+        """ compares two versions (in dot-delimeted string format)
+
+        Args:
+            ver1 (str): version number to compare. e.g. 1.0.9
+            ver2 (str, optional): pre-defined version number being compared. default: 1.0.13
+        
+        Returns:
+            int:    1  if ver1>ver2
+                    0  if they are equal
+                    -1 if ver1<ver2
+        """
+        # compares 2 groups (i.e. in 1.0.10a 1, 0, 10a are groups)
+        def cmpGroup(grp1,grp2):
+            # extract a number from each group
+            n1 = re.sub('[^0-9]+','',grp1)
+            n2 = re.sub('[^0-9]+','',grp2)
+            # extract non-numeric part of the group (e.g. 'c' from 3c)
+            s1 = re.sub('[0-9]+','',grp1)
+            s2 = re.sub('[0-9]+','',grp2)
+            # make sure empty strings are counted as zero
+            n1 = 0 if (not n1) else n1
+            n2 = 0 if (not n2) else n2
+            # take the difference
+            diff = min(max(int(n1)-int(n2),-1),1)
+            if(diff):
+                return diff #the numbers are different - return the result
+            # so far the groups are the same - compare the non-numeric parts
+            return 1 if (s1>s2) else -1 if(s2<s1) else 0
+        #end cmpGroup
+        result = 0
+        # compare version
+        arr1  = re.sub('[^0-9\.]+','',ver1).split('.') #e.g. ['1','2','11'] for version 1.2.11
+        arr2  = re.sub('[^0-9\.]+','',ver2).split('.')  #e.g. ['1','0','13'] for version 1.0.13
+        # go through each tuple and compare the numbers
+        for g1, g2 in izip_longest(arr1,arr2,fillvalue='0'): # creates a list of tuples, e.g.: [('1','1'), ('0','2'), ('13','11')]
+            result = cmpGroup(g1,g2) if(not result) else result
+        return result
+    #end compareVersion
+
     def discover(self):
         """ discovers any pxp servers on the network """
         if(enc.code & enc.STAT_SHUTDOWN):
@@ -2394,6 +2542,7 @@ class SyncManager(object):
         if(not cfg): 
             return _err("not initialized")
         customerID = cfg[2]
+        self.discoveredRunning = False
         def discovered(result):
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
@@ -2402,19 +2551,42 @@ class SyncManager(object):
             if(result['ip'] in self.servers): #this server was already discovered
                 return
             try:
+                if(self.discoveredRunning): #to prevent multiple versions of discovered() running at the same time - don't need to add multiple copies of the same remote server
+                    return
+                self.discoveredRunning = True
                 srvResponse = ''
+                # check version first (older versions don't support sync)
+                srvResponse = pu.io.url("http://"+result['ip']+'/min/ajax/version')
+                if(not srvResponse):
+                    dbg.prn(dbg.SMG, 'no server at',result['ip'])
+                    self.discoveredRunning = False
+                    return
+                resp = json.loads(srvResponse.strip())
+                if(not 'version' in resp):
+                    dbg.prn(dbg.SMG, 'old server at',result['ip'])
+                    self.discoveredRunning = False
+                    return
+                if(self.compareVersion(resp['version'])<0):
+                    dbg.prn(dbg.SMG, 'old server at',result['ip'],'version:',resp['version'])
+                    self.discoveredRunning = False
+                    return
+                dbg.prn(dbg.SMG,"server version: ",resp['version'])
                 # check if this server is from the same customer
                 srvResponse = pu.io.url("http://"+result['ip']+'/min/ajax/auth/',params={'id':customerID})
                 if(not srvResponse):
                     dbg.prn(dbg.SMG, 'no server at',result['ip'])
+                    self.discoveredRunning = False
                     return
                 resp = json.loads(srvResponse.strip())
                 if ('success' in resp and resp['success']):
                     self.servers[result['ip']]=SyncSrv(result['ip'])
-                    speak("found "+re.sub('[\.]','.dot.',str(result['ip'][result['ip'].rfind('.')+1:]))+", total "+str(len(self.servers))+" servers, derka derka.")
+                    speak("found "+re.sub('[\.]','.dot.',str(result['ip'][result['ip'].rfind('.')+1:]))+", total "+str(len(self.servers)+1)+" servers, derka derka.")
+                else:
+                    dbg.prn(dbg.SMG,"server not added (wrong customer):",result['ip'])
             except Exception as e:
                 # most likely could not process response - that was an old server
-                dbg.prn(dbg.ERR|dbg.SMG, "[---]syncmgr.discovered:", e, sys.exc_traceback.tb_lineno)
+                dbg.prn(dbg.ERR|dbg.SMG, "[---]syncmgr.discovered:", e, sys.exc_traceback.tb_lineno, "response:",srvResponse)
+            self.discoveredRunning = False
         #end discovered
         pu.bonjour.discover(regtype="_pxp._udp",callback=discovered)
         if((time.time()-self.startTime)>30):
@@ -2439,9 +2611,6 @@ class SyncManager(object):
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SMG,"[---]syncmgr.monitor",e,sys.exc_traceback.tb_lineno)
     #end monitor
-    def servInfo(self):
-        """ return server information """
-        return [self.isMaster]
     def syncAll(self):
         """ syncs all servers to self """
         try:
@@ -2449,7 +2618,7 @@ class SyncManager(object):
                 return
             # make sure local server has sync enabled
             settings = pu.disk.cfgGet(section="sync")
-            if(settings['dn']):#down sync enabled on the local server - sync all remote servers
+            if('dn' in settings and int(settings['dn'])):#down sync enabled on the local server - sync all remote servers
                 servers = self.servers.keys() #list of remote servers
                 for srvIP in servers:
                     if(srvIP in self.servers and self.servers[srvIP].enabledUp and not(enc.code & (enc.STAT_SHUTDOWN | enc.STAT_LIVE | enc.STAT_PAUSED))):
@@ -2464,9 +2633,11 @@ class SyncManager(object):
 #######################
 ## utility functions ##
 #######################
+def serverInfo():
+    return {"master":syncMgr.isMaster,"alarms":srcMgr.alarms()}
 def speak(msg):
-    os.system("say -v Veena "+str(msg))
-    pass
+    if(pu.io.myIP()=='192.168.3.100'):
+        os.system("say -v Veena "+str(msg))
 #recursively kills threads in the ttObj
 def pxpTTKiller(ttObj={},name=False):
     dbg.prn(dbg.KLL,"pxpkill: ",name,"...")
@@ -2863,13 +3034,15 @@ class procmgr:
 # nextGap = gap(arr,0,count(arr)-1)
 
 
-# attempts to kill a process based on PID (sends SIGKILL, equivalent to -9)
-# @param (int) pid - process ID
-# @param (int) pgid - process group ID
-# @param (obj) ref - reference to the Popen process (used to .communicate() - should prevent zombies)
-# @param (int) timeout - timeout in seconds how long to try and kill the process
-# @param (bool) force - whether to force exit a process (sends KILL - non-catchable, non-ignorable kill)
 def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
+    """ attempts to kill a process based on PID (sends SIGKILL, equivalent to -9)
+        Args:
+            pid(int,optional) - process ID (either PID or PGID must be specified)
+            pgid(int,optional) - process group ID
+            ref(obj,optional) - reference to the Popen process (used to .communicate() - should prevent zombies)
+            timeout(int,optional) - timeout in seconds how long to try and kill the process
+            force(bool,optional) - whether to force exit a process (sends KILL - non-catchable, non-ignorable kill)
+    """
     if(not(pid or pgid)):
         return #one must be specified 
     #this function is required to enable proper .communicate with ref - in case it stalls, it doesn't hang entire function
@@ -2968,7 +3141,7 @@ def DataHandler(data,addr):
                 if(dataParts[0]=='LBE'): #list events that are backed up on external storage (available for restore)
                     return backuper.archiveList()
                 if(dataParts[0]=='SNF'):# server info
-                    return syncMgr.servInfo()
+                    return serverInfo()
                 if(dataParts[0]=='CML'): # camera list
                     return srcMgr.toJSON()
                 if(dataParts[0]=='LBP'): # list events that are in the process of backing up (do not yet fully exist on local machine)
@@ -3046,18 +3219,37 @@ def SockHandler(sock,addr):
         pass
 ####################################################################################
 
-# set encoder status
+# devices that will be discovered on this system
+devEnabled = {
+     "td":{ #teradek cube
+         "class":encTeradek
+    }
+    ,"mt":{ #matrox monarch
+        "class":encMatrox
+    }
+    ,"ph":{ #pivothead
+        "class":encPivothead
+    }
+    ,"sn":{ #sony SNC
+        "class":encSonySNC
+    }
+    # ,"db":{
+    #     "class":encDebug
+    # }
+}
 
-#make sure there is only 1 instance of this script running
-# me = singleton.SingleInstance()
+# initialize logging class
 dbg = debugLogger()
+
+# ensure there's only 1 instance of this script
 procs = pu.disk.psGet("pxpservice.py")
 if(len(procs)>0 and not (os.getpid() in procs)):
-    dbg.prn(dbg.MN, "ps on!!")
+    dbg.prn(dbg.MN, "this script is already running")
     exit()
 else:
     dbg.prn(dbg.MN, procs)
-    dbg.prn(dbg.MN, "ps off!!")
+    dbg.prn(dbg.MN, "single instance")
+
 tmr = {}
 enc = encoderStatus()
 encControl = commander() #encoder control commands go through here (start/stop/pause/resume)
@@ -3085,7 +3277,7 @@ tmr['bonjour']      = TimedThread(pu.bonjour.publish,params=("_pxp._udp",pu.io.m
 
 syncMgr = SyncManager()
 
-srcMgr = sourceManager()
+srcMgr = sourceManager(devEnabled)
 
 # start deleter timer (deletes files that are not needed/old/etc.)
 tmr['delFiles']     = TimedThread(deleteFiles,period=5)

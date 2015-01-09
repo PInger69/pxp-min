@@ -10,11 +10,14 @@ from time import sleep
 
 def getOnCams():
 	import json, os
-	# check if there are any teradek devices
-	# cams = json.loads(pdisk.file_get_contents(c.devCamList))
-	cams = json.loads(pdisk.sockSendWait('CML|',addnewline=False))
-	if((type(cams) is dict) and (len(cams)>0)):
-		return cams
+	try:
+		# check if there are any teradek devices
+		# cams = json.loads(pdisk.file_get_contents(c.devCamList))
+		cams = json.loads(pdisk.sockSendWait('CML|',addnewline=False))
+		if((type(cams) is dict) and (len(cams)>0)):
+			return cams
+	except:
+		pass
 	# no RTSP sources found
 	return {}
 #end getOnCams

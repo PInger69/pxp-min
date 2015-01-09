@@ -5,6 +5,7 @@ from threading import Thread
 import time
 import sqlite3
 import urllib, urllib2
+import base64
 import sha, shelve, time, Cookie
 import socket
 import struct
@@ -220,6 +221,7 @@ class c_disk:
 			return 0
 		if(os.path.isfile(path)):
 			return os.path.getsize(path)
+		# print path
 		total_size = 0
 		for dirname in os.listdir(path):
 			total_size += self.dirSize(path+'/'+dirname)
@@ -572,6 +574,16 @@ class c_io:
 		except:
 			return False
 	#end get
+	# checks if there is connection to myplayxplay.net website
+	def isweb(self):
+		import urllib2
+		from time import time as tm				
+		try:
+			timestamp = str(int(tm()*1000))
+			response=urllib2.urlopen('http://myplayxplay.net/?timestamp='+timestamp,timeout=10)
+			return True
+		except Exception as e: pass
+		return False
 	def myIP(self,allDevs=False):
 		try:
 			import sys, netifaces as ni
@@ -608,6 +620,11 @@ class c_io:
 		except Exception as e:
 			print "[---]io.myName: ", e, sys.exc_traceback.tb_lineno
 		return ""	
+	def ping(self,host):
+		try:
+			return os.system("ping -c 1 -W 1000 "+host+" > /dev/null") == 0
+		except:
+			return False
 	def sameSubnet(self, ip1,ip2):
 		"""returns true if both ip addresses belong to the same subnet"""
 		try:
@@ -615,53 +632,6 @@ class c_io:
 		except:
 			return False
 	#end sameSubnet
-	# creates a url call (i.e. a 'get' request)
-	def url(self,url,params=False,timeout=60):
-		try:
-			if(params):
-				data = urllib.urlencode(params)
-				req = urllib2.Request(url,data)
-			else:
-				req = urllib2.Request(url)
-			answer = urllib2.urlopen(req,timeout=timeout)
-			respText = answer.read()
-			# if(not respText):
-				# return True
-			return respText
-		except Exception as e:
-			return False
-	# downloads a file form url to dst, does chunked download (in case the file is large)
-	def urlFile(self,url,params=False,timeout=60,dst=False):
-		try:
-			if(params):
-				data = urllib.urlencode(params)
-				req = urllib2.Request(url,data)
-			else:
-				req = urllib2.Request(url)
-			answer = urllib2.urlopen(req,timeout=timeout)
-			chunkSize = 1024 * 1024
-			with open(dst, 'wb') as fp:
-				while True:
-					chunk = answer.read(chunkSize)
-					if (not chunk): 
-						break
-					fp.write(chunk)
-				#end while
-			#end with
-		except Exception as e:
-			print "[---]urlFile",e,sys.exc_traceback.tb_lineno, url
-			return False
-	#end urlFile
-	# checks if there is connection to myplayxplay.net website
-	def isweb(self):
-		import urllib2
-		from time import time as tm				
-		try:
-			timestamp = str(int(tm()*1000))
-			response=urllib2.urlopen('http://myplayxplay.net/?timestamp='+timestamp,timeout=10)
-			return True
-		except Exception as e: pass
-		return False
 	def send(self,url,params,jsn=False):
 		import httplib, urllib, urlparse, json
 		try:
@@ -696,6 +666,48 @@ class c_io:
 		return False
 		#end fileitem
 	#end upload
+	# creates a url call (i.e. a 'get' request)
+	def url(self,url,params=False,timeout=60, username=False, password=False):
+		try:
+			if(params):
+				data = urllib.urlencode(params)
+				req = urllib2.Request(url,data)
+			else:
+				req = urllib2.Request(url)
+			if(username and password):
+				base64string = base64.encodestring('%s:%s' % (username, password))[:-1]
+				authheader =  "Basic %s" % base64string
+				req.add_header("Authorization", authheader)
+			answer = urllib2.urlopen(req,timeout=timeout)
+			respText = answer.read()
+			# if(not respText):
+				# return True
+			return respText
+		except Exception as e:
+			print "[---]urlERR:",e, sys.exc_traceback.tb_lineno, '---url:',url
+			return False
+	# downloads a file form url to dst, does chunked download (in case the file is large)
+	def urlFile(self,url,params=False,timeout=60,dst=False):
+		try:
+			if(params):
+				data = urllib.urlencode(params)
+				req = urllib2.Request(url,data)
+			else:
+				req = urllib2.Request(url)
+			answer = urllib2.urlopen(req,timeout=timeout)
+			chunkSize = 1024 * 1024
+			with open(dst, 'wb') as fp:
+				while True:
+					chunk = answer.read(chunkSize)
+					if (not chunk): 
+						break
+					fp.write(chunk)
+				#end while
+			#end with
+		except Exception as e:
+			print "[---]urlFile",e,sys.exc_traceback.tb_lineno, url
+			return False
+	#end urlFile
 	def urlexists(self,urlpath):
 		import httplib
 		# remove the beginning http:// if it's there
