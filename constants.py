@@ -1,5 +1,5 @@
 # app version
-ver 					= "1.1.1"
+ver 					= "1.1.3"
 # where application executables are
 approot 				= "/var/www/html/min/"
 # where events and config files are stores

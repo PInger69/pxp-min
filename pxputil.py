@@ -366,6 +366,38 @@ class c_disk:
 			except:
 				continue #skip processes that do not exist/zombie/invalid/etc.
 		return False
+	def quickEvtSize(self,mp4List):
+		""" does a quick estimate for event size based on the list of mp4 files in that event
+			Args:
+				mp4List(dict): a dictionary containing URLs to the mp4 files (same as mp4_2 entry in each event from ajax/getpastevents call)
+			Returns:
+				(int): approximate size of the event (in bytes)
+		"""
+		# list is formatted as such:
+		# s_02: {
+		# 		hq: "http://pxp5.local/events/2015-01-29_12-04-45_5bb91fe9a9423a9fb242cf82ee62b3849cfffa7b_local/video/main_02hq.mp4"
+		# 	},
+		# s_00: {
+		# 		hq: "http://pxp5.local/events/2015-01-29_12-04-45_5bb91fe9a9423a9fb242cf82ee62b3849cfffa7b_local/video/main_00hq.mp4"
+		# 	},
+		# s_01: {
+		# 		hq: "http://pxp5.local/events/2015-01-29_12-04-45_5bb91fe9a9423a9fb242cf82ee62b3849cfffa7b_local/video/main_01hq.mp4"
+		#	}
+		totalSize = 0
+		for s in mp4List:
+			keys = mp4List[s].keys()
+			for key in keys:
+				# get the url
+				url = mp4List[s][key]
+				# get path part of the URI
+				relPath = "/".join(url.split('/')[4:])
+				# get absoulute path to the file:
+				fullPath = c.wwwroot+relPath
+				# get the size of the file, double it (since it will have same size in .TS segments) and add it to the total event size
+				totalSize += os.path.getsize(fullPath)<<1 #<<1 is faster than *2
+		return totalSize
+	# end quickEvtSize
+
 	# def psOn(self, process):
 	# 	import platform, os
 	# 	if (platform.system()=="Windows"):
@@ -406,6 +438,7 @@ class c_disk:
 		try:
 			sock = socket.socket(
 				socket.AF_INET, socket.SOCK_STREAM)
+			sock.settimeout(5) #wait for 'timeout' seconds, if the server doesn't respond - move on
 			sock.connect((sockHost, sockPort))
 			if(addnewline and msg[-2:]!="\r\n"):
 				msg+="\r\n"
@@ -418,7 +451,7 @@ class c_disk:
 				pass
 			return e
 		return sent
-	def sockSendWait(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True,timeout=30):
+	def sockSendWait(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True,timeout=20):
 		""" sends a message to a socket and waits for a response """
 		import socket
 		sent = 0
@@ -1057,7 +1090,13 @@ class c_uri:
 		""" returns array of segments """
 		return self.uriList[1:]
 	def segment(self,segnum,ifempty=False):
-		""" returns a specified segment (segment 0 is the script name) """
+		""" returns a specified segment from the script URI (segment 0 is the script name) 
+			Args:
+				segnum(int): segment index to retreive (e.g. from http://localhost/min/seg/num, segment #1 will be 'seg')
+				ifempty(mixed,optional): this value will be returned if specified segment does not exist. default: False
+			Return:
+				mixed: will return string containing the value from the requested segment or ifempty value if the segment doesn't exist
+		"""
 		if len(self.uriList)<(segnum+1):
 			#element doesn't exist, return the ifempty string (if it was specified)
 			return ifempty

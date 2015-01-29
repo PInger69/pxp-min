@@ -24,23 +24,29 @@ def alll():
 ###################end of debug section################
 #######################################################
 #######################################################
+
 def auth():
+	""" Verify a customer authorization ID."""
 	try:
 		# return _err("invalid id")
 		cfg = _cfgGet()
-		if(not cfg): 
+		if(not cfg):
 			return _err("not initialized")
 		authorization = cfg[1]
 		customerID = cfg[2]
-		if(customerID!=pu.io.get('id')):
-			return _err("invalid id")
-		return {"success":True}
+		resp = pu.uri.segment(3)
+		if(not resp): #authorization ID wasn't passed through URL, check if it was passed as a form parameter
+			queryID = pu.io.get('id')
+		else:
+			queryID = json.loads(resp)
+			queryID = queryID['id']
+		return {"success":customerID==queryID}
 	except:
 		pass
 #######################################################
 # checks if there is enough space on the hard drive
 # if there isn't, stops whatever encode is going on
-# currently. 
+# currently.
 # @return boolean: true if there is enough free space
 #######################################################
 def checkspace():
@@ -523,7 +529,7 @@ def serverinfo():
 	# get info about the encoder
 	result = {"version":c.ver}
 	try:
-		resp = json.loads(pu.disk.sockSendWait(msg="SNF|",addnewline=False))
+		resp = json.loads(pu.disk.sockSendWait(msg="SNF|",addnewline=False,timeout=3))
 		settings = pu.disk.cfgGet(section="sync")
 		result.update(resp)
 		result['settings']=settings		
@@ -860,7 +866,7 @@ def encstop():
 		timestamp = _time(timeStamp=True)
 		rez = camera.camStop()
 		
-		# end any duration tags (lines, periods, etc.) set their duration to the end of the video
+		# close any duration tags (lines, periods, etc.): set their duration to the end of the video
 		# get the length of the video
 		totalVidLength = _thumbName(totalTime=True)
 		# update all the odd-type (start) tags to proper duration
@@ -873,8 +879,6 @@ def encstop():
 		os.system("echo '"+timestamp+"' > "+c.wwwroot+"live/stopping.txt")
 		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'stopped'}}))
 		
-		# # stop the pxpStream app (it'll restart automatically, this is left over from the old times)
-		# rez = os.system("echo '2' > /tmp/pxpcmd")
 		msg = _logSql(ltype="enc_stop",dbfile=c.wwwroot+"live/pxp.db")
 		
 		# rename the live directory to the proper event name
@@ -917,7 +921,7 @@ def getcameras():
 # returns list of the past events in array
 #######################################################
 def getpastevents():
-	return {"events":_listEvents()} #send it in dictionary format to match the sync2cloud format
+	return {"events":_listEvents(showSizes=False)} #send it in dictionary format to match the sync2cloud format
 #end getpastevents
 
 #######################################################
@@ -938,11 +942,12 @@ def gametags():
 		return _stopping(msg=True)
 	return _syncTab(user=usr, device=dev, event=evt, allData = True)
 #end gametags
-def login(sess):
+def login(sess=False, email=False, passw=False):
 	try:
 		io = pu.io
-		email = io.get("email")
-		passw = io.get("pass")
+		if(not(email and passw)):
+			email = io.get("email")
+			passw = io.get("pass")
 		if not (email and passw):
 			return _err("Email and password must be specified")
 		encEm = pu.enc.sha(email)
@@ -967,17 +972,18 @@ def login(sess):
 		if(len(rows)<1):
 			return _err("Invalid email or password")
 		# log him in
-		#first, make sure there are no old session variables
-		sess.destroy()
-		sess.start(expires=24*60*60,cookie_path="/")
-		usrData = rows[0]
-		sess.data['user']=usrData[0] #user hid
-		# store plain text email in the session (to display logged in user)
-		sess.data['email']=email
-		# encrypted email
-		sess.data['ee']=encEm
-		# encrypted password
-		sess.data['ep']=encPs
+		if(sess):
+			#first, make sure there are no old session variables
+			sess.destroy()
+			sess.start(expires=24*60*60,cookie_path="/")
+			usrData = rows[0]
+			sess.data['user']=usrData[0] #user hid
+			# store plain text email in the session (to display logged in user)
+			sess.data['email']=email
+			# encrypted email
+			sess.data['ee']=encEm
+			# encrypted password
+			sess.data['ep']=encPs
 	except Exception as e:
 		import sys
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
@@ -1507,6 +1513,31 @@ def teamsget():
 		import sys
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 	return result
+
+
+def taglive(name,user):
+	try:
+		# get maximum available time:
+		# get all streams
+		streams, firstStream = _listEvtSources("live",fileMask="*.m3u8")
+		if(not streams): #there are no video sources in this event - do nothing
+			return False
+		# assume there's zero video right now
+		liveTime = 0
+		# go through each stream and find the live time
+		for s in streams:
+			# get the stream index (stream name is s_XX where XX is a two-digit index)
+			q = 'hq' if('hq' in streams[s]) else 'lq'
+			sIdx = s.split('_')[1]+q
+			# get the time at live (less 2 seconds)
+			liveTime = max(liveTime,_thumbName(totalTime=True,sIdx=sIdx,maxOnFail=True)-2)
+		# end for s in streams
+		# create a tag at live
+		tagStr = json.dumps({"name":name,"colour":"#FF0000","user":user,"time":liveTime,"event":"live"})
+		result = tagset(tagStr)
+	except Exception, e:
+		result = False
+	return result
 #######################################################
 #modify a tag - set as coachpick, bookmark, etc
 #######################################################
@@ -1889,7 +1920,6 @@ def tagset(tagStr=False, sendSock=True):
 			sPrefix = ""
 			sSuffix = ""
 		for s in streams:
-			print "tagging", s, streams[s]
 			# create a thumbnail for each stream
 			# get the stream index (stream name is s_XX where XX is a two-digit index)
 			q = 'hq' if('hq' in streams[s]) else 'lq'
@@ -2095,6 +2125,66 @@ def teleshot():
 		import sys
 		return _err("teleshot error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
 #end teleshot
+def thumbcheck(dataStr=False):
+	""" Verifies that a thumbnail was created, if it wasn't attempts to re-create it.
+		Args:
+			dataStr(str, optional): json string containing the url to the thumbnail. If unspecified, the function will attempt to extract it from the url itself. e.g.: {"url":"http://192.168.1.111/events/live/video/01hq_tn3.jpg"}. default: False
+		Returns:
+			dict: a dictionary with "success" set to either True (if thumbnail exists or was successfully created) and False if could not re-create thumbnail. e.g.: {"success":True}
+	"""
+	try:
+		# get image 
+		if(not dataStr):
+			dataStr = pu.uri.segment(3)
+		data = json.loads(dataStr)
+		# url is in the format http://192.168.1.111/events/live/video/01hq_tn3.jpg
+		# get the event and the thumbnail name
+		thumbName = data["thumb"]
+		eventName = data["event"]
+		# get the tag id associated with it
+		tagID = _exNum(text=thumbName,startAtIdx=thumbName.rfind('_'))
+		# path to the image file
+		imgFile = c.wwwroot+eventName+'/thumbs/'+thumbName
+		# id of the video source (e.g. 01hq)
+		sIdx = thumbName[0:thumbName.find('_')]
+		sSuffix = sIdx+'_'
+		sPrefix = '_'+sIdx
+		# get tag time from the event database:
+		db = pu.db()
+		db.open(c.wwwroot+eventName+'/pxp.db')
+		sql = "SELECT `time` FROM `tags` WHERE `id`=?"
+		db.query(sql,(tagID,))
+		row = db.getrow()
+		tagtime = row[0]
+		db.close()
+		# check that this image exists and attempt to re-create it if it doesn't
+		thumbAttempt = 0
+		while(not os.path.exists(imgFile) and thumbAttempt<10): #try 10 times to re-create it
+			thumbAttempt += 1
+			if(eventName=='live'): 
+				# for live event, extract frames from .TS file
+				# problem: by itself a single .TS file may not have any i-frames
+				# this function will concatenate a few .ts files to ensure there's a couple i-frames there
+				res = _mkThumbPrep(eventName,tagtime,sIdx)
+				vidFile = res['file']
+				sec = res['time']
+			else:
+				# for past events, the thumbnail can be extracted from the main.mp4
+				vidFile = pathToEvent+"video/main"+sSuffix+".mp4"
+				sec = tagtime
+			_mkThumb(vidFile, imgFile, sec) 
+			if(eventName=='live'):
+				try:
+					# remove the (temporary) concatenated .TS file
+					os.remove(vidFile)
+				except:
+					pass
+			if(not os.path.exists(imgFile)):
+				sleep(1) #wait before trying to create the thumbnail again - if it fails, possibly because the segments weren't written yet
+		#end while(no imgFile)
+		return {"success":os.path.exists(imgFile)}
+	except Exception, e:
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+' '+dataStr)
 # update server script
 def upgrader():
 	currentVersion = version
@@ -2163,7 +2253,7 @@ def _cln(text):
 	return string.replace(text,'"','""')
 #end cln	
 def _dbgLog(msg, timestamp=True, level=0):
-    """ Print debug info 
+    """ Output debug info 
 
 	    Args:
 			msg (str): message to display
@@ -2174,7 +2264,7 @@ def _dbgLog(msg, timestamp=True, level=0):
 				2 - error
     """
     try:
-        debugLevel = 0 #the highest level to print
+        debugLevel = 0 #the highest level to output
         if(level<debugLevel):
             return
         # if the file size is over 1gb, delete it
@@ -2394,7 +2484,7 @@ def _init( email, password):
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
-			os.system("curl -#Lo "+c.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy")
+			os.system("curl -#Lo "+c.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy08") #download the rquired version of idevcopy!!
 			#add execution privileges for the scripts
 			os.system("chmod +x "+c.wwwroot+"_db/*")
 			#download the blank database files
@@ -2437,7 +2527,7 @@ def _initLive():
 # onlyDeleted - will only return deleted events when set
 # onlyDeleted supercedes showDeleted
 #######################################################
-def _listEvents( showDeleted=True, onlyDeleted=False):
+def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 	import hashlib
 	try:
 		# list all all events in the local DB
@@ -2515,8 +2605,12 @@ def _listEvents( showDeleted=True, onlyDeleted=False):
 			# get full folder size
 			if(evtName==liveName):
 				evtDir = c.wwwroot+'live'
-			if(os.path.exists(evtDir) and os.path.exists(evtDir+'/pxp.db')):
-				result[i]['size'] = pu.disk.dirSize(evtDir)
+			if(os.path.exists(evtDir) and os.path.exists(evtDir+'/pxp.db') and showSizes):
+				# a quicker way to get the event size than this:
+				# result[i]['size'] = pu.disk.dirSize(evtDir)
+				# is this(although only approximate):
+				# get all mp4 files, double their size and that will be the size of the event (approximately)
+				result[i]['size'] = pu.disk.quickEvtSize(result[i]['mp4_2'])
 				result[i]['size_fmt'] = pu.disk.sizeFmt(result[i]['size'])
 				# get md5 checksum of the data file
 				result[i]['md5'] = hashlib.md5(open(evtDir+'/pxp.db', 'rb').read()).hexdigest()
@@ -2541,8 +2635,10 @@ def _listEvtSources(evtName, fileMask='*.m3u8'):
 	try:
 		vidfiles = glob.glob(c.wwwroot+evtName+'/video/'+fileMask)
 		if(len(vidfiles)<1): #there are no sources in this folder matching the search pattern
-			return (False, "")
+			return (False, "no files")
 		sources = { }
+		lowestIndex = 999 #this is lowest index of the stream. (e.g. if there's 00, 01, 02, it'll be set to 00)
+		firstSource = ""
 		for vid in vidfiles:
 			vid = vid[vid.rfind('/')+1:]
 			# get the source number
@@ -2566,13 +2662,16 @@ def _listEvtSources(evtName, fileMask='*.m3u8'):
 			if(not pu.uri.host):
 				pu.uri.host=pu.io.myIP()
 			sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/'+vid
+			if(int(n)<lowestIndex):
+				lowestIndex = int(n)
+				firstSource = 's_'+n
 		# end for vid
 		# set url (for web-based viewer) as the first source in the list
-		srcKeys = sources.keys() # list of sources
-		qs = sources[srcKeys[0]].keys() # list of qualities in the 1st source
+		# srcKeys = sources.keys() # list of sources
+		qs = sources[firstSource].keys() # list of qualities in the 1st source
 		# output[key] = sources[srcKeys[0]][qs[0]] #get the first quality in the first source (usually it'll be hq)
 		# output[key+'_2'] = sources.copy()
-		return (sources,sources[srcKeys[0]][qs[0]]) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
+		return (sources,sources[firstSource][qs[0]]) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
 	except Exception as e:
 		return (False, _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvtSources"))
 #end listEvtSources
@@ -2646,7 +2745,6 @@ def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):
 #######################################################
 def _mkThumb( videoFile, outputFile, seconds, width=190, height=106):
 	import os
-	print "mkthumb: ",videoFile
 	if not os.path.exists(videoFile):
 		#there is no video for this event
 		return False
@@ -2692,13 +2790,16 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 		sPrefix = sIdx+'_'
 	else:
 		sPrefix = ''
-	print "thumbprep:",sIdx
 	bigTsFile = c.wwwroot+event+"/video/"+sPrefix+"v_"+str(seconds)+".ts"
 	endTime = seconds+tmBuffer
 	res = {}
-	strFile = _thumbName(strTime, number=True, event=event, results=res, sIdx = sIdx) #index of the starting .ts file
-	endFile = _thumbName(endTime, number=True, event=event, sIdx = sIdx) #index of the ending .ts file
-	print "start,end:",strFile,endFile
+	# print "thumbprep:",sIdx, seconds, "start,stop:",strTime,endTime
+	strFile = _thumbName(strTime, number=True, event=event, results=res, sIdx = sIdx,maxOnFail=True) #index of the starting .ts file
+	endFile = _thumbName(endTime, number=True, event=event, sIdx = sIdx,maxOnFail=True) #index of the ending .ts file
+	if(strFile==endFile):
+		strFile = max(int(strFile)-5,0)
+		res['startTime']=2
+	# print "start,end:",strFile,endFile
 	# this is where the concatenated video 'actually' starts
 	trueStartTime = res['startTime']
 	vidFiles = "" #small .ts files to concatenate
@@ -2712,7 +2813,7 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 			vidFiles += filePath2 + " "
 	# concatenate the video segments
 	cmd = "cat "+vidFiles+">"+bigTsFile
-	print "mkthumbprep:",cmd
+	# print "mkthumbprep:",cmd
 	os.system(cmd)
 	# the required frame will be 4 seconds into the file
 	return {"file":bigTsFile,"time":seconds-trueStartTime}
@@ -2883,9 +2984,9 @@ def _syncEnc( encEmail="none",encPassw="none"):
 		# :DEBUG NOTE
 		if ('success' in resp and not resp['success']):
 			return _err(resp['msg'])
-		# get sync level in the cloud
+		# get sync level in the cloud ()
 		try:
-			resp = json.loads(pu.io.url("http://myplayxplay.net/max/synclevel/ajax"))
+			resp = json.loads(pu.io.url("http://myplayxplay.net/max/synclevel/ajax",params,jsn=True))
 		except:
 			resp['level']=1
 		syncLevel = resp['level']
@@ -3144,6 +3245,8 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
 
 		streams, firstStream = _listEvtSources(event,fileMask="*.m3u8")
+		if(not streams):
+			return _err(firstStream)
 		oldStyleEvent = os.path.exists(c.wwwroot+event+'/video/main.mp4')
 		if(oldStyleEvent):
 			sPrefix = ""
@@ -3208,6 +3311,8 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		outDict['teleurl_2'] = {}
 		outDict['telefull_2'] = {}
 		outDict['vidurl_2'] = {}
+		# for old app version, use first source for everything (thumbnail, playback, clips, etc)
+		lowestIndex = 999
 		for s in streams:
 			q = 'hq' if ('hq' in streams[s]) else 'lq'
 			sIdx = s.split('_')[1]+q
@@ -3219,26 +3324,30 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 			tvPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tv'+str(outDict['id'])+'.mp4' #video telestration
 			vuPath = 'http://'+pu.uri.host+'/events/'+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4'#extracted mp4 clip
 
-			if(not 'url' in outDict):
-				outDict['url'] = tnPath
 			outDict['url_2'][s] = tnPath
 
 			if(int(outDict['type'])==4): #static telestration - add teleurl only for these tags
-				if(not 'teleurl' in outDict):
-					outDict['teleurl']=tlPath
-					outDict['telefull']=tfPath
 				outDict['teleurl_2'][s]=tlPath
 				outDict['telfeull_2'][s]=tfPath
 
 			if(int(outDict['type'])==40): #video telestration - add televid only for these tags
-				if(not 'televid' in outDict):
-					outDict['televid']=tvPath
 				outDict['televid_2'][s]=tvPath
 
 			if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4')): #there's a bookmark associated with this tag already
-				if(not 'vidurl' in outDict):
-					outDict['vidurl']=vuPath
 				outDict['vidurl_2'][s]=vuPath
+			
+			# set old-app style parameters
+			if(int(s.split('_')[1])<lowestIndex):
+				lowestIndex=int(s.split('_')[1])
+				outDict['url'] = tnPath #thumbnail path
+				if(int(outDict['type'])==4): #static telestration - add teleurl only for these tags
+					outDict['teleurl']=tlPath
+					outDict['telefull']=tfPath
+				if(int(outDict['type'])==40): #video telestration - add televid only for these tags
+					outDict['televid']=tvPath
+				if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4')): #there's a bookmark associated with this tag already
+					outDict['vidurl']=vuPath
+			#end if sIdx<lowestIndex
 
 		outDict['islive']=event=='live'
 		if(sockSend):
@@ -3260,7 +3369,19 @@ def _time(format='%Y-%m-%d %H:%M:%S',timeStamp=False):
 #returns file name for the video that contains appropriate time 
 #if totalTime is set to True, returns the length of the event in seconds
 #######################################################
-def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,sIdx=""):
+def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,sIdx="",maxOnFail=False):
+	""" Looks through an m3u8 playlist looking for the segment with the desired time.
+		Args:
+			seekTo(float,optional): time (in seconds) to find in the playlist file. must specify it or totalTime default: 0
+			number(bool,optional): return only the number of the segment (not the actual file name). default: False
+			event(str,optional): event folder name. default: "live"
+			results(dict,optional): if passed, this will contain remainder, number, firstSegm, lastSegm, startTime
+			totalTime(bool,optional): return total time of the playlist. default: False
+			sIdx(str,optional): source index. default: ""
+			maxOnFail(bool,optional): if could not find desired time (i.e. seekTo > totalTime), return maximum possible time from the playlist. default:False
+		Returns:
+			mixed: file name of the segment containing desired time, OR number of the segment file containing desired time (if number=True), OR total time of the video (if totalTime=True)
+	"""
 	import math
 	# path to the list.m3u8 file - playlist for the hls
 	if(sIdx):
@@ -3268,7 +3389,6 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 	else:
 		sSuffix = ""
 	listPath = c.wwwroot+event+"/video/list"+sSuffix+".m3u8"
-	print "thumbname for",sIdx," from: ",listPath
 	#open m3u8 file:
 	#the time of the current file. e.g. if there are 50 files of 1seconds each then file50.ts will be at roughly 00:00:50 time. reachedTime contains the number of seconds since file0
 	reachedTime = 0.0
@@ -3303,7 +3423,7 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 		cleanStr = line.strip()
 		if(cleanStr[:7]=='#EXTINF'):#this line contains time information
 			lastSegTime = float(cleanStr[8:-1])#get the number (without the trailing comma) - this is the duration of this segment file
-			reachedTime += lastSegTime 
+			reachedTime += lastSegTime
 		elif(cleanStr[-3:]=='.ts'):#this line contains filename
 			if (not results['firstSegm']): #only assign the first segment once
 				results['firstSegm']=cleanStr
@@ -3314,6 +3434,9 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 				fileName = cleanStr
 				results['remainder']=reachedTime-seekTo
 				break
+			if(maxOnFail):
+				fileName = cleanStr
+				results['remainder']=reachedTime-seekTo
 	f.close()
 	results['startTime']=reachedTime - lastSegTime
 	# if user only wants the total time 
@@ -3321,7 +3444,6 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 		return reachedTime
 	if (not fileName):
 		return 0
-	print "extract from:", fileName, "sfx:",sSuffix
 	if(number):#only return the number without the rest of the filename
 		results['number']=_exNum(fileName,startAtIdx=len(sSuffix))
 		return results['number']
@@ -3383,11 +3505,14 @@ def _uploading(event="live"):
 # shortcut for outputting text to the screen
 def _x(txt):
 	pu.sstr.pout(txt)
-# convert dictionary to xml
-# @param (dict) data: dictionary to parse (or any other object type)
-# @param (int) depth: level within a dictionary (translates to how many tabs to put before the string)
-# @param (str)	 key: dictionary key (required when passing dictionary, ignored otherwise)
+
 def _xmldict(data,key="",depth=0):
+	""" Convert a dictionary to xml
+		Args:
+			data(dict): dictionary to parse (or any other object type)
+			key(str,optional): dictionary key (required when passing dictionary, ignored otherwise)
+			depth(int,optional): level within a dictionary (translates to how many tabs to put before the string) NB: this function will parse the ENTIRE 'data', this is used only for formatting the
+	"""
 	xmlOutput = ""
 	try:
 		typeName = _xmltype(data)
@@ -3397,6 +3522,7 @@ def _xmldict(data,key="",depth=0):
 			xmlOutput+=''.rjust(depth,'\t')+'<key>'+str(key)+'</key>\n'
 			# add tag detail
 			xmlOutput+=''.rjust(depth,'\t')+'<dict>\n'
+			# convert each of the fields recursively
 			for field in data:
 				# get the field type
 				xmlOutput += _xmldict(data[field],field,depth+1)
@@ -3427,6 +3553,7 @@ def _xmldict(data,key="",depth=0):
 	return xmlOutput	
 #end xmldict
 def _xmltype(variable):
+	""" detect variable type (used for xml parsing)"""
 	varType = type(variable)
 	if(varType is int or varType is long):
 		return "integer"

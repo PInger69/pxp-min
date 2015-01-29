@@ -13,7 +13,7 @@ def getOnCams():
 	try:
 		# check if there are any teradek devices
 		# cams = json.loads(pdisk.file_get_contents(c.devCamList))
-		cams = json.loads(pdisk.sockSendWait('CML|',addnewline=False))
+		cams = json.loads(pdisk.sockSendWait('CML|',addnewline=False,timeout=10))
 		if((type(cams) is dict) and (len(cams)>0)):
 			return cams
 	except:
