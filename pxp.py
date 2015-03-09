@@ -7,14 +7,21 @@ import pxputil as pu, constants as c, os, json, re, shutil, sys, subprocess, tim
 ################debug section goes here################
 #######################################################
 #######################################################
-#create a bunch of random tags
 def alll():
+	""" creates a bunch of random tags in the live event 
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			none
+	"""
 	from random import randrange as rr
 	# tags = ["MID.3RD", "OFF.3RD", "DEF.3RD"]
 	tags = ["purple","teal","cyan","white","yellow","black","blue","red","pink"]
 	colours = ["FF0000","00FF00","0000FF","FF00FF","00FFFF","FFFF00","333366","FFFFFF"]
 	pu.sstr.pout("")
-	vidlen = len(os.listdir(c.wwwroot+"live/video/"))-2
+	vidlen = _thumbName(totalTime=True)
 	for i in range(0,1000):
 		col = colours[i % len(colours)]
 		tstr = '{"name":"'+tags[i%len(tags)]+'","colour":"'+col+'","user":"356a1927953b04c54574d18c28d46e6395428ab","time":"'+str(rr(10,vidlen))+'","event":"live"}'
@@ -26,12 +33,20 @@ def alll():
 #######################################################
 
 def auth():
-	""" Verify a customer authorization ID."""
+	""" Verify a customer authorization ID.
+		Args:
+			none
+		API args:
+			id(str): customer authorization ID given by the cloud to a device
+		Returns:
+			(dictionary): 
+				success(bool): whether the user is authenticated
+	"""
 	try:
 		# return _err("invalid id")
 		cfg = _cfgGet()
 		if(not cfg):
-			return _err("not initialized")
+			return {"success":False}
 		authorization = cfg[1]
 		customerID = cfg[2]
 		resp = pu.uri.segment(3)
@@ -42,14 +57,16 @@ def auth():
 			queryID = queryID['id']
 		return {"success":customerID==queryID}
 	except:
-		pass
-#######################################################
-# checks if there is enough space on the hard drive
-# if there isn't, stops whatever encode is going on
-# currently.
-# @return boolean: true if there is enough free space
-#######################################################
+		return {"success":False}
 def checkspace():
+	""" checks if there is enough space on the hard drive if there isn't, stops whatever encode is going on currently.
+		Args: 
+			none
+		API args: 
+			none
+		Returns: 
+			bool: true if there is enough free space, false otherwise.
+	"""
 	# find how much free space is available
 	diskInfo = _diskStat(humanReadable=False)
 	enoughSpace = diskInfo['free']>c.minFreeSpace
@@ -58,10 +75,15 @@ def checkspace():
 		encstop()
 	return enoughSpace
 #end checkspace
-#######################################################
-# creates a coach pick
-#######################################################
 def coachpick(sess):
+	""" creates a coach pick tag at live
+		Args:
+			sess(obj): session object passed by the controller - it's used to get the user information
+		API args:
+			none
+		Returns:
+			(dictionary): see _tagFormat description
+	"""
 	import glob
 	# make sure there is a live event
 	if(not os.path.exists(c.wwwroot+'live/video')):
@@ -75,22 +97,14 @@ def coachpick(sess):
 	# get his tag colour from the database
 	db = pu.db(c.wwwroot+'_db/pxp_main.db')
 	sql = "SELECT `tagColour` FROM `users` WHERE `hid` LIKE ?"
-
 	db.query(sql,(user,))
 	users = db.getasc()
 	# make sure this user is in the database
 	if(len(users)<1):
 		return _err("invalid user")
 	colour = users[0]['tagColour']
-	# find last created segment (to get the time)
-	# segFiles = glob.glob(c.wwwroot+"live/video/segm*.ts")
-	# if(len(segFiles)<3):
-	# 	return _err("there is no video yet")
-	# lastSeg = len(segFiles)-3 #segments start at segm0
-	# # set time
-	# tagTime = lastSeg * 0.984315
 	# get the total video time minus a couple seconds (to make sure that .ts file already exists)
-	tagTime = _thumbName(0,totalTime=True)-2 
+	tagTime = _thumbName(totalTime=True)-2 
 	try:
 		tagnum = int(pu.uri.segment(3,"1"))
 	except Exception as e:
@@ -99,15 +113,16 @@ def coachpick(sess):
 	tagStr = '{"name":"Coach Tag '+str(tagnum)+'","colour":"'+colour+'","user":"'+user+'","time":"'+str(tagTime)+'","event":"live","coachpick":"1"}'
 	return dict(tagset(tagStr),**{"action":"reload"})
 
-def dbdump():
-	""" performs a pxp_main.db dump into a json """ 
+def _dbdump():
+	""" PRIVATE. performs a pxp_main.db dump into a json 
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			none
+	""" 
 	try:
-		# first get the customer ID and match it to local ID to make sure the user has access to this feature
-		custID = pu.io.get('cid')
-		cfg = _cfgGet()
-		if(cfg[2]!=custID):
-			return _err("invalid id")
-		# customer id was verified
 		db = pu.db(c.wwwroot+"_db/pxp_main.db")
 		output = {}
 		# get events from database
@@ -139,163 +154,17 @@ def dbdump():
 	except Exception as e:
 		print "[---]dbdump",e,sys.exc_traceback.tb_lineno
 #end dbdump
-#######################################################
-# updates database to the latest format (from ios6 to ios7)
-#######################################################
-def dbupdate():
-	pprefix = "/var/www/html/events/"
-	# open the main db		
-	db = pu.db(pprefix+"_db/pxp_main.db")
-	# add 'datapath' column to the events table
-	sql = "ALTER TABLE events ADD COLUMN datapath TEXT"
-	db.qstr(sql)
-	sql = "ALTER TABLE events ADD COLUMN extra TEXT"
-	db.qstr(sql)
-	sql = "ALTER TABLE teams ADD COLUMN league TEXT"
-	db.qstr(sql)
-	sql = "ALTER TABLE teams ADD COLUMN sport TEXT"
-	db.qstr(sql)
-	sql = "ALTER TABLE teams ADD COLUMN extra TEXT"
-	db.qstr(sql)
-	# update datapath in the table as proper path name: event timestamp + HID
-	sql = "UPDATE events SET datapath=strftime('%Y-%m-%d_%H-%M-%S',`date`) || '_' || `hid`"
-	db.qstr(sql)
-	# get a list of all events
-	sql = "SELECT strftime('%Y-%m-%d_%H-%M-%S',events.date) || '_H' || replace(replace(substr(events.homeTeam,1,3),' ','_'),'''','_') || '_V' || replace(replace(substr(events.visitTeam,1,3),' ','_'),'''','_') || '_L' || replace(replace(substr(events.league,1,3),' ','_'),'''','_') AS `oldpath`, events.*, leagues.sport FROM `events` LEFT JOIN `leagues` ON leagues.name=events.league"
-	db.qstr(sql)
-	events = db.getasc()
-	db.close()
-	# generate event folder: 2013-05-06_17-32-03_HTes_VSwa_LCIS - done in sql
-	for event in events:
-		# check if directory exists
-		if(not os.path.exists(pprefix+event['oldpath']) or not os.path.exists(pprefix+event['oldpath']+"/pxp.db")):
-			continue #move on to the next event
-		# get sport
-		sport = event['sport'].lower()
-		# rename directory
-		os.rename(pprefix+event['oldpath'],pprefix+event['datapath'])
-		# connect to the event database
-		db.open(pprefix+event['datapath']+'/pxp.db')
-		# get all the tags
-		sql = "SELECT * FROM `tags`"
-		db.qstr(sql)
-		tags = db.getasc()
-		# alter table: remove - period, coachpick, bookmark, deleted, line, player, strength, zone
-		#              add    - meta (TEXT)
-		# sqlite doesn't support alter table - so have to re-create it
-		# BEGIN TRANSACTION;
-		# CREATE TEMPORARY TABLE tags_backup("id" INTEGER PRIMARY KEY  NOT NULL ,"hid" text,"name" text,"user" text,"time" decimal(5,3),"duration" INTEGER DEFAULT 30 ,"colour" text DEFAULT 000000 ,"starttime" decimal(5,3),"type" integer DEFAULT 0 ,"comment" TEXT,"rating" INTEGER DEFAULT 0 ,"extra" TEXT, "meta" TEXT);
-		# INSERT INTO tags_backup SELECT * FROM `tags`;
-		# DROP TABLE tags;
-		# CREATE TABLE tags("id" INTEGER PRIMARY KEY  NOT NULL ,"hid" text,"name" text,"user" text,"time" decimal(5,3),"duration" INTEGER DEFAULT 30 ,"colour" text DEFAULT 000000 ,"starttime" decimal(5,3),"type" integer DEFAULT 0 ,"comment" TEXT,"rating" INTEGER DEFAULT 0 ,"extra" TEXT, "meta" TEXT);
-		# INSERT INTO tags SELECT * FROM tags_backup;
-		# DROP TABLE tags_backup
-		# COMMIT;
-
-		sql = """
-				BEGIN TRANSACTION;
-				DROP TABLE tags;
-				CREATE TABLE tags("id" INTEGER PRIMARY KEY  NOT NULL,
-								  "hid" text,
-								  "name" text,
-								  "user" text,
-								  "time" decimal(5,3),
-								  "duration" INTEGER DEFAULT 30 ,
-								  "colour" text DEFAULT 000000 ,
-								  "starttime" decimal(5,3),
-								  "type" integer DEFAULT 0 ,
-								  "comment" TEXT,
-								  "rating" INTEGER DEFAULT 0 ,
-								  "extra" TEXT, 
-								  "meta" TEXT);
-				COMMIT;
-			"""
-		db.qstr(sql,multiple=True)
-		for tag in tags:
-			# check type:
-			# 0 - simply add it to the table:
-				# id, name, user, time, duration, colour, starttime, type, comment, rating, meta (only if zone or player is specified) (extra is blank)
-			# 1 & 2 - distinguish between line_f_ (type 1 & 2 ) and line_d (type 5 & 6) HOCKEY; and zone SOCCER
-				# now add
-				# id, name, user, time, duration, colour, starttime, type(1,2,5,6, 15,16), comment, rating, meta contains zone or line (extra is blank)
-			# 3 - ignore
-			# 4 - add it:
-				# id, name, user, time, duration, colour, starttime, type(4), comment, rating (meta and extra are blank)
-			# 5, 6 - player shift (those don't exist) - ignore
-			# 7, 8 - period(hockey)/half(soccer)
-				# now add
-				# id, name, user, time, duration, colour, starttime, type(7,8, 17,18), comment, rating, meta contains period or half (extra is blank)
-			# 9, 10 - strength (hockey only)
-				# now add
-				# id, name, user, time, duration, colour, starttime, type(9,10), comment, rating, meta contains strength (extra is blank)
-			meta = {}
-			tag['type'] = int(tag['type'])
-			if(tag['type']==3): 
-				continue
-			oldfields =  ['period', 'bookmark', 'deleted', 'coachpick', 'line', 'player', 'strength', 'zone']
-			for field in oldfields:
-				# delete fields that are empty and extra attributes from telestrations
-				#telestrations do not need this info
-				if(field in tag and (str(tag[field])=='' or tag[field]==None) or tag['type']==4):
-					del tag[field]
-
-			if ('zone' in tag):
-				meta['zone'] = tag['zone']
-			if ('player' in tag):
-				meta['player']=tag['player'].split(',')
-			if (tag['type']==1 or tag['type']==2):
-				if(tag['name'][:6]=='line_d'): #offence lines are types 5&6
-					tag['type']=tag['type']+4
-				if(sport=='soccer'):
-					# for soccer 'lines' are zones: update - types 15&16
-					tag['type']=tag['type']+14
-					meta['zone']=tag['name']
-			if(tag['type']==7 or tag['type']==8):
-				if(sport=='hockey'):
-					meta['period']=tag['name']
-				if(sport=='soccer'):
-					meta['half']=tag['name']
-					tag['type']=tag['type']+10 #halfs are types 17&18 in soccer
-
-			if(tag['type']==9 or tag['type']==10):
-				meta['strength']=tag['strength']
-				# tag['type']+=4# strength type is now 13 and 14
-			if('coachpick' in tag and tag['coachpick']=='1'):
-				meta['coachpick']="1"
-			if(int(tag['rating'])>0):
-				meta['rating']=tag['rating']
-			sql = "INSERT INTO `tags`(`id`,`name`,`user`,`time`,`duration`,`colour`,`starttime`,`type`,`comment`,`rating`,`meta`) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-			db.query(sql,(tag['id'],tag['name'],tag['user'],tag['time'],tag['duration'],tag['colour'],tag['starttime'],tag['type'],tag['comment'],tag['rating'],json.dumps(meta)))
-		#end for tag in tags
-		# go through logs and update current_XXXXXX to a number
-		sql = "SELECT * FROM `logs`"
-		db.qstr(sql)
-		logs = db.getasc()
-		if(sport=='hockey'):
-			tagTypes = {'line':1,'period':7,'strength':9}
-		else:
-			tagTypes = {'line':15,'period':17}
-		for log in logs:
-			if(log['type'][:7]=='current'):
-				tt = log['type'][8:]
-				if(not tt in tagTypes):
-					print(tt)
-					continue
-				curnum = tagTypes[tt]
-				if(curnum==1 and log['id'][:6]=='line_d'):
-					curnum=5
-				newname='current_'+str(curnum)
-
-				sql = "UPDATE `logs` SET `type`=? WHERE logID=?"
-				db.query(sql,(newname,log['logID']))
-		db.close() #close db for this event
-	#end for event in events
-#end dbupdate
-#######################################################
-# gets download progress from the progress.txt file
-# sums up all the individual progresses and outputs a number
-#######################################################
 def dlprogress():
+	""" DEPRECATED. Gets download progress from the progress file, sums up all the individual progresses (if downloading to multiple ipads) and outputs a number
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				progress(int): total progress in percent
+				status(int): numeric status of the download
+	"""
 	#get progress for each device
 
 	progresses = pu.disk.file_get_contents("/tmp/pxpidevprogress")
@@ -477,7 +346,277 @@ def egg():
 	"""
 	return r
 #end egg
+
+def encoderstatus(textOnly=True):
+	""" Outputs the encoder status.
+		Args:
+			textOnly(bool, optional): whether to print the status as text only or as json. default: True.
+		API args:
+			none
+		Returns:
+			(mixed): -text status (if textOnly requested)
+					 -dictionary:
+					 	status(str): text status
+					 	code(int): numeric encoder status (see pxpservice.py for different numeric statuses)
+	"""
+	try:
+		txtStatus = pu.disk.file_get_contents(c.encStatFile)
+		if(not txtStatus):#this will only happen if the encoder is not initialized (or someone deleted the config file)
+			enc = {'status':'','code':0}
+		else:
+			enc = json.loads(txtStatus)
+		if(not 'status' in enc):
+			state = 0
+			status = "pro recorder disconnected"
+		else:
+			state = enc['code'] #1+2+4#+8+16 #encoder + camera + streaming + ffmpeg + 
+			status = enc['status']
+		resp = pu.disk.sockSendWait(msg="SNF|",addnewline=False)
+		if(not resp):
+			data = {}
+		else:
+			data = json.loads(resp)
+		if (textOnly):
+			return status
+		result = {"status":status,"code":state}
+		result.update(data)
+		return result
+	except Exception as e:
+		import sys
+		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e)+ ' '+str(txtStatus))
+#end encoderstatus
+def encoderstatjson():
+	""" Outputs the encoder status in json format.
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary):
+				status(str): text status
+				code(int): numeric encoder status (see pxpservice.py for different numeric statuses)
+	"""
+	return encoderstatus(textOnly = False)
+def encpause():
+	""" Pauses a live encode.
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): error message (if applicable)
+	"""
+	import camera
+	msg = ""
+	rez = False
+	try:
+		if(_stopping()):
+			return _stopping(msg=True)
+		camera.camPause()
+		# add entry to the database that the encoding has paused
+		msg = _logSql(ltype="enc_pause",dbfile=c.wwwroot+"live/pxp.db")
+		pu.disk.sockSend(json.dumps({'actions':{'event':'live','status':'paused'}}))
+	except Exception as e:
+		msg = str(e)
+		rez = True
+	# rez = False
+	return {"success":not rez,"msg":msg}
+#end encpause
+def encresume():
+	""" Resumes a (paused) live encode.
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): error message (if applicable)
+	"""
+	import os, camera
+	msg = ""
+	rez = False
+	try:
+		if(_stopping()):
+			return _stopping(msg=True)
+		# add entry to the database that the encoding has paused
+		camera.camResume()
+		msg = _logSql(ltype="enc_resume",dbfile=c.wwwroot+"live/pxp.db")
+		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
+		rez = False
+	except Exception as e:
+		return _err(str(e))
+	# rez = False
+	return {"success":not rez, "msg":msg}
+#end encresume
+def encshutdown():
+	""" Shutds down the server.
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): error message (if applicable)
+	"""
+	import os
+	msg = ""
+	try:
+		if(os.path.exists(c.wwwroot+"live/evt.txt")):
+			encstop() #there is a live event - stop it before shut down
+		while(_stopping()):
+			sleep(1) #wait until the live stream is stopped
+		rez = os.system("sudo /sbin/shutdown -h now")
+	except Exception as e:
+		rez = False
+	# rez = False
+	return {"success":not rez, "msg":rez}
+#end encresume
+def encstart():
+	""" Starts a new encode.
+		Args:
+			none
+		API args:
+			hmteam(str): name of the home team
+			vsteam(str): name of the visitor team
+			league(str): name of the league
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): error message (if applicable)
+	"""
+	import os, camera
+	try:
+		success = True
+		if(not os.path.exists(c.wwwroot+'_db/pxp_main.db')):
+			return _err("not initialized")
+		# if an event is being stopped, wait for it
+		while(_stopping()):
+			sleep(1)
+		# make sure there is enough free space
+		if(not checkspace()):
+			return _err("Not enough free space to start a new encode. Delete some of the old events from the encoder.")
+		# make sure not overwriting an old event
+		if(os.path.exists(c.wwwroot+"live/evt.txt")): #there was a live event before that wasn't stopped proplery - end it
+			encstop()
+		#make sure the 'live' directory was initialized
+		_initLive()
+		io = pu.io
+		# get the team and league informaiton
+		hmteam = io.get('hmteam')
+		vsteam = io.get('vsteam')
+		league = io.get('league')
+		if not (hmteam and vsteam and league):
+			return _err("Please specify teams and league")
+		# create new event in the database
+		# get time for hid and for database in YYYY-MM-DD HH:MM:SS format
+		timestamp = _time()
+		stampForFolder = timestamp.replace(":","-").replace(" ","_")
+
+		minEvtHid = pu.enc.sha(_time(timeStamp=True))+'_local' #local event hid (temporary, will be updated when the event goes up to .Max)
+		db = pu.db(c.wwwroot+"_db/pxp_main.db")
+		#the name of the directory will be YYYY-MM-DD_HH-MM-SS_EVENTHID
+		evtName = stampForFolder+'_'+minEvtHid#'_H'+hmteam[:3]+'_V'+vsteam[:3]+'_L'+league[:3]
+		sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`,`datapath`) VALUES(?,?,?,?,?,?)"
+		db.query(sql,(minEvtHid,timestamp,hmteam,vsteam,league,evtName))
+		#store the event name (for processing when it's stopped)
+		pu.disk.file_set_contents(c.wwwroot+"live/evt.txt",evtName)
+
+		# get hid of the teams
+		# home team
+		sql = "SELECT `hid` FROM `teams` WHERE `name` LIKE ?"
+		db.query(sql,(hmteam,))
+		hmteamHID = db.getasc()
+		hmteamHID = hmteamHID[0]['hid']
+		# visitor team
+		sql = "SELECT `hid` FROM `teams` WHERE `name` LIKE ?"
+		db.query(sql,(vsteam,))
+		vsteamHID = db.getasc()
+		# return {"success":0,"msg":str(vsteamHID)+' -- '+vsteam}
+		vsteamHID = vsteamHID[0]['hid']
+		# get hid of the leagu
+		sql = "SELECT `hid` FROM `leagues` WHERE `name` LIKE ?"
+		db.query(sql,(league,))
+		leagueHID = db.getasc()
+		leagueHID = leagueHID[0]['hid']
+		db.close()
+		# add entry to the database that the encoding has started
+		msg = _logSql(ltype="enc_start",lid=(hmteamHID+','+vsteamHID+','+leagueHID),dbfile=c.wwwroot+"live/pxp.db")
+		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
+		# start encoder (run ffmpeg, segmenter, etc)
+		success = success and camera.camStart()
+		if success:
+			evtHid = minEvtHid
+			# save the event ID
+			pu.disk.file_set_contents(c.wwwroot+"live/eventid.txt",evtHid)
+		#if success
+		msg = ""
+	except Exception as e:
+		import sys
+		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
+	return {"success":success,"msg":msg}
+#end encstart
+def encstop():
+	""" Stops a live encode.
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): error message (if applicable)
+				bookmarking(bool): true if there are bookmarks (MyClip's) being generated
+	"""
+	import camera
+	msg = ""
+	try:
+		if(not os.path.exists(c.wwwroot+'live')):
+			return _err('no live event to stop')
+		timestamp = _time(timeStamp=True)
+		rez = camera.camStop()
+		
+		# close any duration tags (lines, periods, etc.): set their duration to the end of the video
+		# get the length of the video
+		totalVidLength = _thumbName(totalTime=True)
+		# update all the odd-type (start) tags to proper duration
+		sql = "UPDATE `tags` SET `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END, `type`=`type`+1 WHERE (NOT (`type`=3)) AND ((`type` & 1)=1)"
+		db = pu.db(c.wwwroot+'live/pxp.db')
+		db.query(sql,(totalVidLength,totalVidLength))
+		db.close()
+
+		# make sure nobody creates new tags or does other things to this event anymore
+		os.system("echo '"+timestamp+"' > "+c.wwwroot+"live/stopping.txt")
+		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'stopped'}}))
+		
+		msg = _logSql(ltype="enc_stop",dbfile=c.wwwroot+"live/pxp.db")
+		
+		# rename the live directory to the proper event name
+		_postProcess()
+		# check if there are clips being generated
+		# bookmarking = pu.disk.psOn("ffmpeg -ss") or pu.disk.psOn("handbrake") or pu.disk.psOn("ffmpeg -i")
+		bookmarking = False
+	except Exception as e:
+		bookmarking = False
+		rez = False
+		msg=str(e)
+	return {"success":not rez,"msg":msg,"bookmarking":bookmarking}
+#end encstop
+
+
 def evtbackup():
+	""" Sends a request to the service to backup specified event. The backup process itself takes place in pxpservice.py
+		Args:
+			none
+		API args:
+			event(str): name of the event to back up
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+	"""
 	try:
 		# get id of the event to back up
 		evtHID = pu.io.get('event')
@@ -485,20 +624,40 @@ def evtbackup():
 		if(re.search("[^A-z0-9]",str(evtHID))): #found non-alphanumeric characters
 			_dbgLog("invalid characters in event HID")
 			return _err("invalid event")
+		# send request to service script to back up the event
 		_sockData(data="BKP|"+evtHID+"|")
 		return {"success":True}
 	except Exception as e:
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 def evtbackuplist():
-	"""request backup events from the service"""
+	""" Request a list of events that were backed up locally
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary):
+				events(list): list of backed up events with their backup paths
+	"""
 	try:
-		# get id of the event to back up
+		# request events from the services
 		resp = pu.disk.sockSendWait(msg="LBE|",addnewline=False)
 		_dbgLog("answer:"+resp)
+		# return them
 		return {"events":json.loads(resp)}
 	except Exception as e:
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 def evtbackupstatus():
+	""" Get status of an event that is being backed up (or restored)
+		Args:
+			none
+		API args:
+			event(str): hid of the event that is being backed up or recovered
+		Returns:
+			(list):
+				[0]: copy status
+				[1]: percent copied
+	"""
 	try:
 		# get id of the event to back up
 		evtHID = pu.io.get('event')
@@ -512,6 +671,15 @@ def evtbackupstatus():
 	except Exception as e:
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 def evtrestore():
+	""" Sends a request to the service to restore specified event. The process itself takes place in pxpservice.py
+		Args:
+			none
+		API args:
+			event(str): hid of the event to restore
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+	"""
 	try:
 		# get id of the event to back up
 		evtHID = pu.io.get('event')
@@ -526,7 +694,19 @@ def evtrestore():
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end evtrestore	
 def serverinfo():
-	# get info about the encoder
+	""" Get info about the encoder
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				version(str): encoder version
+				settings(dictionary): dictionary containing settings available on this encoder
+				master(bool): whether this device is master
+				down(bool): this will be added when service is down, and it'll be set to true
+				alarms(list): returns list of cameras that have alarm triggered
+	"""
 	result = {"version":c.ver}
 	try:
 		resp = json.loads(pu.disk.sockSendWait(msg="SNF|",addnewline=False,timeout=3))
@@ -539,8 +719,18 @@ def serverinfo():
 		result['down']=True
 	return result
 	# return {"settings":settings,"master":resp}
-# get a list of files to sync for a specified event
+#end serverinfo
 def evtsynclist():
+	""" Get a list of files to sync for a specified event
+		Args:
+			none
+		API args:
+			event(str): hid of the event to back up
+			full(bool): whether to return full directory tree (segments and thumbnails) or just thumbnails
+		Returns:
+			(dictionary): 
+				entries(list): list of relative paths to each file
+	"""
 	try:
 		# get id of the event to back up
 		evtHID = pu.io.get('event')
@@ -584,350 +774,91 @@ def evtsynclist():
 # delets all content associated with it
 #######################################################
 def evtdelete():
+	""" Mark an event as deleted in the database (subsequently removes the files associated with it).
+		Args:
+			none
+		API args:
+			event(str): hid of the event to back up
+			full(bool): whether to return full directory tree (segments and thumbnails) or just thumbnails
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): error message (if applicable)
+	"""
 	import subprocess
-	# check to make sure the database event exists
-	if(not os.path.exists(c.wwwroot+'_db/pxp_main.db')):
-		return _err("not initialized")
-	io = pu.io
-	folder = io.get('name') #name of the folder containing the content
-	event  = io.get('event') #hid of the event  stored in the database
-	if((not folder) or (len(folder)<5) or ('\\' in folder) or ('/' in folder) or len(c.wwwroot)<10):
-		#either event was not specified or there's invalid characters in the name 
-		#e.g. user tried to get clever by deleting other directories
-		return _err("Invalid event")
-	# remove event folder
-	# if(os.path.exists(c.wwwroot+folder)):
-		# subprocess.Popen(["rm", "-r", c.wwwroot+folder])
-		# os.system("rm -r "+c.wwwroot+folder+" >/dev/null &")
-		# success = not subprocess.call("rm -r "+c.wwwroot+folder,shell=True) #os.system("rm -r "+c.wwwroot+folder)
-	# remove the event from the database
-	db = pu.db(c.wwwroot+"_db/pxp_main.db")
-	sql = "UPDATE `events` SET `deleted`=1 WHERE `hid` LIKE ?"
-	db.query(sql,(event,))
-	db.close()
-	# wait for files to finish removing
-	if 'rmPipe' in locals():
-		rmPipe.communicate()
-	success = True
-	return {"success":success}
-#end evtdelete
-#######################################################
-# exports the event (all metadata and video)
-# @param (str) evtHID  - hashed ID of the event
-# @param (str) outputPath - where to put the folder with the data
-# @param (bool) fullExport - export videos and tags also
-#######################################################
-def evtexport(evtHID=False, outputPath=False, fullExport = False):
 	try:
-		if(not evtHID):
-			# get the event HID
-			evtHID = io.get('event')
-		if(not outputPath):
-			outputPath = c.wwwroot+"backup/"+evtHID
-		# get the event details from the database
-		db = pu.db(c.wwwroot+"_db/pxp_main.db")
-		sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
-		db.query(sql,(evtHID,))
-		eventData = db.getasc()
-		db.close()
-		# make sure the destination folder exists
-		if(not os.path.exists(outputPath)):
-			pu.disk.mkdir(outputPath)
-		if(len(eventData)>0):#there is some data
-			# save the data in a text file
-			eventString = json.dumps(eventData[0])
-			pu.disk.file_set_contents(outputPath+"/event.json",eventString)
-			if(fullExport):
-				# copy the video and tags
-				originPath = c.wwwroot+eventData[0]['datapath']
-				shutil.copytree(originPath,outputPath+"/"+eventData[0]['datapath'])
-		return {"success":True}
-	except Exception as e:
-		return _err("export error:"+str(e)+str(sys.exc_traceback.tb_lineno))
-#end evtexport
-
-#######################################################
-# imports all events from a specified path
-#######################################################
-def evtimport(inputPath = False):
-	if(not inputPath):
-		inputPath = c.wwwroot+"backup/"
-	if(not os.path.exists(inputPath)):
-		return _err("path does not exist"+str(inputPath))
-	for item in os.listdir(inputPath):
-		try:
-			evtfolder = inputPath+item
-			if(not os.path.isdir(evtfolder)):
-				continue
-			if(not os.path.exists(evtfolder+"/event.json")):
-				continue #invalid format of the event
-			# try to get the event information
-			eventString = pu.disk.file_get_contents(evtfolder+"/event.json")
-			eventData = json.loads(eventString)
-			# make sure this event doesn't already exist in the database
-			db = pu.db(c.wwwroot+"_db/pxp_main.db")
-			sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
-			db.query(sql,(eventData['hid'],))
-			numrows = db.numrows()
-			if(numrows>0):
-				db.close()
-				continue #this event already exists
-			# add the event to the database
-			sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`,`datapath`,`extra`) VALUES(?,?,?,?,?,?,?)"
-			db.query(sql,(eventData['hid'],eventData['date'],eventData['homeTeam'],eventData['visitTeam'],eventData['league'],eventData['datapath'],eventData['extra']))
-			db.close()
-			# copy the folder to the events folder
-			if(not os.path.exists(c.wwwroot+eventData['datapath'])): #video files and tags weren't copied yet
-				if(not os.path.exists(evtfolder+eventData['datapath'])):
-					continue #the video file not found
-				shutil.copytree(evtfolder+eventData['datapath'])
-			return {"success":True}
-		except Exception as e:
-			pass
-#end evtimport
-
-#######################################################
-# returns encoder status as a string, 
-# either json or plain text (depending on textOnly)
-#######################################################
-def encoderstatus(textOnly=True):
-	try:
-		txtStatus = pu.disk.file_get_contents(c.encStatFile)
-		if(not txtStatus):#this will only happen if the encoder is not initialized (or someone deleted the config file)
-			enc = {'status':'','code':0}
-		else:
-			enc = json.loads(txtStatus)
-		if(not 'status' in enc):
-			state = 0
-			status = "pro recorder disconnected"
-		else:
-			state = enc['code'] #1+2+4#+8+16 #encoder + camera + streaming + ffmpeg + 
-			status = enc['status']
-		resp = pu.disk.sockSendWait(msg="SNF|",addnewline=False)
-		if(not resp):
-			data = {}
-		else:
-			data = json.loads(resp)
-		if (textOnly):
-			return status
-		result = {"status":status,"code":state}
-		result.update(data)
-		return result
-	except Exception as e:
-		import sys
-		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e)+ ' '+str(txtStatus))
-#end encoderstatus
-def encoderstatjson():
-	return encoderstatus(textOnly = False)
-#######################################################
-#pauses a live encode
-#######################################################
-def encpause():
-	import camera
-	msg = ""
-	rez = False
-	try:
-		if(_stopping()):
-			return _stopping(msg=True)
-		camera.camPause()
-		# add entry to the database that the encoding has paused
-		msg = _logSql(ltype="enc_pause",dbfile=c.wwwroot+"live/pxp.db")
-		pu.disk.sockSend(json.dumps({'actions':{'event':'live','status':'paused'}}))
-	except Exception as e:
-		msg = str(e)
-		rez = True
-	# rez = False
-	return {"success":not rez,"msg":msg}
-#end encpause
-#######################################################
-#resumes a paused encode
-#######################################################
-def encresume():
-	import os, camera
-	msg = ""
-	rez = False
-	try:
-		if(_stopping()):
-			return _stopping(msg=True)
-		# _portSet()
-		# add entry to the database that the encoding has paused
-		camera.camResume()
-		msg = _logSql(ltype="enc_resume",dbfile=c.wwwroot+"live/pxp.db")
-		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
-		rez = False
-	except Exception as e:
-		return _err(str(e))
-	# rez = False
-	return {"success":not rez}
-#end encresume
-#######################################################
-#shuts down the encoder
-#######################################################
-def encshutdown():
-	import os
-	msg = ""
-	try:
-		if(os.path.exists(c.wwwroot+"live/evt.txt")):
-			encstop() #there is a live event - stop it before shut down
-		while(_stopping()):
-			sleep(1) #wait until the live stream is stopped
-		rez = os.system("sudo /sbin/shutdown -h now")
-	except Exception as e:
-		rez = False
-	# rez = False
-	return {"success":not rez, "msg":rez}
-#end encresume
-#######################################################
-#starts a new encode
-#######################################################
-def encstart():
-	import os, camera
-	try:
-		success = True
+		# check to make sure the database event exists
 		if(not os.path.exists(c.wwwroot+'_db/pxp_main.db')):
 			return _err("not initialized")
-		# if an event is being stopped, wait for it
-		while(_stopping()):
-			sleep(1)
-		# make sure there is enough free space
-		if(not checkspace()):
-			return _err("Not enough free space to start a new encode. Delete some of the old events from the encoder.")
-		# make sure not overwriting an old event
-		if(os.path.exists(c.wwwroot+"live/evt.txt")): #there was a live event before that wasn't stopped proplery - end it
-			encstop()
-		#make sure the 'live' directory was initialized
-		_initLive()
 		io = pu.io
-		# get the team and league informaiton
-		hmteam = io.get('hmteam')
-		vsteam = io.get('vsteam')
-		league = io.get('league')
-		quality = io.get('quality')
-		if not (hmteam and vsteam and league):
-			return _err("Please specify teams and league")
-		# create new event in the database
-		# get time for hid and for database in YYYY-MM-DD HH:MM:SS format
-		timestamp = _time()
-		stampForFolder = timestamp.replace(":","-").replace(" ","_")
-
-		minEvtHid = pu.enc.sha(_time(timeStamp=True))+'_local' #local event hid (temporary, will be updated when the event goes up to .Max)
+		event  = io.get('event') #hid of the event  stored in the database
+		if(re.search("[^A-z0-9]",event)):
+			#either event was not specified or there's invalid characters in the name 
+			#e.g. user tried to get clever by deleting other directories
+			return _err("Invalid event")
+		# mark the event as deleted in the database (it'll be removed in pxpservice.py)
 		db = pu.db(c.wwwroot+"_db/pxp_main.db")
-		#the name of the directory will be YYYY-MM-DD_HH-MM-SS_EVENTHID
-		evtName = stampForFolder+'_'+minEvtHid#'_H'+hmteam[:3]+'_V'+vsteam[:3]+'_L'+league[:3]
-		sql = "INSERT INTO `events` (`hid`,`date`,`homeTeam`,`visitTeam`,`league`,`datapath`) VALUES(?,?,?,?,?,?)"
-		db.query(sql,(minEvtHid,timestamp,hmteam,vsteam,league,evtName))
-		#store the event name (for processing when it's stopped)
-		pu.disk.file_set_contents(c.wwwroot+"live/evt.txt",evtName)
-
-		# get hid of the teams
-		# home team
-		sql = "SELECT `hid` FROM `teams` WHERE `name` LIKE ?"
-		db.query(sql,(hmteam,))
-		hmteamHID = db.getasc()
-		hmteamHID = hmteamHID[0]['hid']
-		# visitor team
-		sql = "SELECT `hid` FROM `teams` WHERE `name` LIKE ?"
-		db.query(sql,(vsteam,))
-		vsteamHID = db.getasc()
-		vsteamHID = vsteamHID[0]['hid']
-		# get hid of the leagu
-		sql = "SELECT `hid` FROM `leagues` WHERE `name` LIKE ?"
-		db.query(sql,(league,))
-		leagueHID = db.getasc()
-		leagueHID = leagueHID[0]['hid']
+		sql = "UPDATE `events` SET `deleted`=1 WHERE `hid` LIKE ?"
+		db.query(sql,(event,))
 		db.close()
-		# add entry to the database that the encoding has started
-		msg = _logSql(ltype="enc_start",lid=(hmteamHID+','+vsteamHID+','+leagueHID),dbfile=c.wwwroot+"live/pxp.db")
-		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'live'}}))
-		if(not(quality=='low' or quality=='high')):
-			quality='high'
-		# start encoder (run ffmpeg, segmenter, etc)
-		success = success and camera.camStart(quality)
-		if success:
-			evtHid = minEvtHid
-			# save the event ID
-			pu.disk.file_set_contents(c.wwwroot+"live/eventid.txt",evtHid)
-		#if success
-		msg = ""
 	except Exception as e:
-		import sys
-		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
-	return {"success":success,"msg":msg}
-#end encstart
-#######################################################
-#stops a live encode
-#######################################################
-def encstop():
-	import camera
-	msg = ""
-	try:
-		if(not os.path.exists(c.wwwroot+'live')):
-			return _err('no live event to stop')
-		timestamp = _time(timeStamp=True)
-		rez = camera.camStop()
-		
-		# close any duration tags (lines, periods, etc.): set their duration to the end of the video
-		# get the length of the video
-		totalVidLength = _thumbName(totalTime=True)
-		# update all the odd-type (start) tags to proper duration
-		sql = "UPDATE `tags` SET `duration`=CASE WHEN (?-`time`)>0 THEN (?-`time`) ELSE 0 END, `type`=`type`+1 WHERE (NOT (`type`=3)) AND ((`type` & 1)=1)"
-		db = pu.db(c.wwwroot+'live/pxp.db')
-		db.query(sql,(totalVidLength,totalVidLength))
-		db.close()
-
-		# make sure nobody creates new tags or does other things to this event anymore
-		os.system("echo '"+timestamp+"' > "+c.wwwroot+"live/stopping.txt")
-		pu.disk.sockSend(json.dumps({"actions":{'event':'live','status':'stopped'}}))
-		
-		msg = _logSql(ltype="enc_stop",dbfile=c.wwwroot+"live/pxp.db")
-		
-		# rename the live directory to the proper event name
-		_postProcess()
-		# check if there are clips being generated
-		# bookmarking = pu.disk.psOn("ffmpeg -ss") or pu.disk.psOn("handbrake") or pu.disk.psOn("ffmpeg -i")
-		bookmarking = False
-	except Exception as e:
-		bookmarking = False
-		rez = False
-		msg=str(e)
-	return {"success":not rez,"msg":msg,"bookmarking":bookmarking}
-#end encstop
-
-#######################################################
-# returns the input video settings
-#######################################################
-def getcamera():
-	# this is for TD:
+		return {"success":False,"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno)}
+	return {"success":True, "msg":""}
+#end evtdelete
+def getvideoinfo():
+	""" Gets resolutions for each camera and encoder status
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				success(bool): whether the command was successful
+				msg(str): list of cameras' resolutions
+				encoder(str): encoder status in text format
+	"""
 	import camera
 	cams = camera.getOnCams()
 	if(len(cams)>0):
-		return {"success":True,"msg":camera.camParam('resolution'),"encoder":encoderstatus()}
-	# this is for BM
-	# appon = pu.disk.psOn('pxpStream.app')
-	# # get camera info
-	# cfg = pu.disk.file_get_contents(c.wwwroot+"_db/.cam")
-	# if appon and cfg:
-	# 	return {"success":True,"msg":cfg,"encoder":encoderstatus()}
+		return {"success":True,"msg":', '.join(camera.camParam('resolution',getAll=True)),"encoder":encoderstatus()}
 	return {"success":True,"msg":"N/A","encoder":encoderstatus()}
 #end getcamera
-#######################################################
-# returns a list of available cameras (in json format)
-#######################################################
 def getcameras():
+	""" Gets all detected cameras
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				camlist(dictionary): a dictionary of cameras with their IP addresses as indecies
+	"""
 	import camera
 	return {"camlist":camera.getOnCams()}
 #end getcameras
-#######################################################
-# returns list of the past events in array
-#######################################################
 def getpastevents():
+	""" Gets resolutions for each camera and encoder status
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				events(list): see _listEvents description
+	"""
 	return {"events":_listEvents(showSizes=False)} #send it in dictionary format to match the sync2cloud format
 #end getpastevents
-
-#######################################################
-#returns all the game tags for a specified event
-#######################################################
 def gametags():
+	""" Gets all the tags for a specified event
+		Args:
+			none
+		API args:
+			user(str): hid of the user requesting data
+			event(str): event name
+			device(str): hid of the device requesting data
+		Returns:
+			(dictionary): see _syncTab description
+	"""
 	strParam = pu.uri.segment(3,"{}")
 	jp = json.loads(strParam)
 	if not ('user' in jp and 'event' in jp and 'device' in jp):
@@ -943,6 +874,18 @@ def gametags():
 	return _syncTab(user=usr, device=dev, event=evt, allData = True)
 #end gametags
 def login(sess=False, email=False, passw=False):
+	""" Authenticates a user and saves his info in a session
+		Args:
+			sess(obj): session object
+			email(str): user's email (in plain text)
+			passw(str): plain text password
+		API args:
+			email(str): user's email (in plain text)
+			passw(str): plain text password
+		Returns:
+			(dictionary):
+				success(bool): whether the login was successful
+	"""
 	try:
 		io = pu.io
 		if(not(email and passw)):
@@ -989,21 +932,38 @@ def login(sess=False, email=False, passw=False):
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 	# return {io.get("email"):io.get("pass")}
 	return {"success":True}
-#logs the user out
-#session variable must be passed here
-#initializing it in this method opens it as read-only(??)
+#end login
 def logout( sess):
+	""" Authenticates a user and saves his info in a session
+		Args:
+			sess(obj): session object
+		API args:
+			none
+		Returns:
+			(dictionary):
+				success(bool): whether the command was successful
+	"""
 	sess.data['user']=False
 	sess.data['email']=False
-	# del sess.data['user']
 	return {"success":True}
-#######################################################
-# prepares the download - converts tags to a plist
-#######################################################
+#end logout
 def prepdown():
+	""" DEPRECATED. Prepares the event download - converts tags to a plist and starts the idevcopy process
+		Args:
+			none
+		API args:
+			event(str): name of the event to download
+			appid(str,optional): id of the app to which to download. default: com.avocatec.Live2BenchNative
+			source(str,optional): download video from this source. default: first source will be used
+		Returns:
+			(dictionary):
+				success(bool): whether the command was successful
+	"""
+
 	io = pu.io
 	event = io.get('event')
 	appid = io.get('appid')
+	sIdx = io.get('source') #e.g. 00hq, 01lq, etc...
 	try:
 		if not event: #event was not specified
 			return _err()
@@ -1038,7 +998,7 @@ def prepdown():
 		for t in tags:
 			# format the tag (get thumbnail image, telestration url, etc.)
 			tag = _tagFormat(event=event,tag=t)
-			xmlOutput+=_xmldict(t,t['id'],1)
+			xmlOutput+=_xmldict(tag,tag['id'],1)
 		# finish the xml
 		xmlOutput += '</dict>\n</plist>'
 		# remove old plist if it exists
@@ -1073,193 +1033,55 @@ def prepdown():
 		if(appid):
 			#make sure appid only contains alphanumerics, dot, and dash
 			if(re.search("[^A-z0-9\-\.]",appid)):
-				appid="" #user probably tried to 'hack' the system, submitted a separate command
+				appid="com.avocatec.Live2BenchNative" #user probably tried to 'hack' the system, submitted a separate command
 			else:
 				appid=" "+appid
 		else:
-			appid=""
-		os.system(c.wwwroot+"_db/idevcopy "+eventFolder+" "+c.wwwroot+eventFolder+appid+" >/dev/null &")
+			appid="com.avocatec.Live2BenchNative"
+
+		# start the download
+		if(not sIdx): #this is for old-style systems
+			# THIS IS A PATCH FOR OLD BUILD! DO NOT RELEASE!!!!! #
+			sIdx = _firstSourceIdx(event)
+			mp4Name = 'main_'+sIdx+'.mp4'
+			cmd = c.wwwroot+"_db/idevcopy -a "+appid+" -e "+eventFolder+" -d "+c.wwwroot+eventFolder+" -f "+mp4Name+" -r main.mp4 -m >/dev/null &"
+			# END PATCH #
+		else:
+			# for description of each parameter, run idevcopy with no arguments
+			cmd = c.wwwroot+"_db/idevcopy -a "+appid+" -e "+eventFolder+" -d "+c.wwwroot+eventFolder+" -f main_"+sIdx+".mp4 -m >/dev/null &"
+		os.system(cmd)
 		return {"success":True}
 	except Exception as e:
 		import sys 
+		_slog(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 #end prepdown
-#######################################################
-# service function - executed every 10 seconds, 
-# runs any service routines required for pxp
-#######################################################
 def _slog(text):
+	""" Logs a string to file
+		Args:
+			text(str): text to record to a log file
+		API args:
+			none
+		Returns:
+			none
+	"""
 	# generate timestamp
 	timestamp = _time()
 	os.system("echo '"+timestamp+": "+text+"' >> "+c.wwwroot+"_db/log.txt")
-
-def service():
-	try:
-		# this will be deprecated
-		return
-		settings = settingsGet()
-		# check if user has upload enabled
-		if(int(settings['uploads']['autoupload']) and not _uploading()):
-			_slog('uploading checked')
-			# make sure autoupload is enabled and there is no upload happening already
-			# check if there are segment files to upload
-			if(pu.io.isweb()):
-				_slog("online")
-				event = "live"
-				# check if there is a live game
-				if(os.path.exists(c.wwwroot+event) and not _stopping(event=event)):
-					_slog("upload tags")
-					# UPLOAD TAGS
-					# check if there are new tags to upload
-					try:
-						lastTagID = int(pu.disk.file_get_contents(c.wwwroot+event+"/lasttag.txt"))
-					except:
-						# no tags were uploaded yet - this happens when event wasn't registered in the cloud - register it
-						try:
-							# get home team, visitor team, league
-							db = pu.db(c.wwwroot+event+'/pxp.db')
-							sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
-							db.qstr(sql)
-							teamHIDs = db.getasc()
-							if (len(teamHIDs)>0): #this will be the case when there is a blank db in the event (encode was not started)
-								teamHIDs = teamHIDs[0]['id'].split(',')
-							if(len(teamHIDs)>2):#in case this is an old event, and the league HID is not listed along with team HIDs (comma-delimeted) in the log table, add empty value for the league
-								leagueHID = teamHIDs[2]
-								del(teamHIDs[2]) #remove league id from the teams list
-							else:
-								leagueHID = ""
-							db.close()
-							# GET TIMESTAMP FROM EVENT, NOT FROM CURRENT TIME!!!
-							# send a request to create a new event in the cloud
-							cfg = _cfgGet()
-							# check if there is internet
-							if pu.io.isweb():
-								url = "http://www.myplayxplay.net/maxdev/eventSet/ajax"
-								params ={   'homeTeam':hmteamHID,
-											'visitorTeam':vsteamHID,
-											'league':leagueHID,
-											'date':timestamp,
-											'season':timestamp[:4], #just the year part of the date
-											'v0':cfg[1], #authentication code
-											'v1':cfg[2] #customer ID
-										}
-								resp = pu.io.send(url,params,jsn=True)
-								if resp and 'success' in resp and resp['success']:
-									# the requrest was successful, get the HID of the new event
-									maxEvtHid = resp['msg']
-									# update it in the local database
-									sql = "UPDATE `events` SET `hid`=? WHERE `hid`=?"
-									db = pu.db(c.wwwroot+"_db/pxp_main.db")
-									db.query(sql,(maxEvtHid,minEvtHid))
-									db.close()
-									evtHid = maxEvtHid
-								#if resp['success']
-								# else:
-								# 	return _err(str(resp))
-							#if isweb
-							lastTagID = 0
-						#end try create new cloud event
-						except:
-							pass
-					#end try get last tag id..except
-
-					# find if there were tags created after the last
-					db = pu.db(c.wwwroot+event+"/pxp.db")
-					sql = "SELECT * FROM `tags` WHERE `id`>? ORDER BY `id`"
-					db.query(sql,(lastTagID,))
-					tags = db.getasc()
-					db.close()
-					##############
-					#exit for now#
-					##############
-					return
-					for tag in tags:
-						# set url parameters
-						# extract meta parameters as individual fields:
-						metaparams = json.loads(tag['meta'])
-						# remove meta field from the tag
-						del tag['meta']
-						# add parameters from meta alongside with all the other params
-						tag.update(metaparams)
-						# set the event name (hid)
-						# tag['event'] = 
-						# url = 'http://myplayxplay.net/mid/ajax/tagset/'+json.dumps(tag)
-						# params = {
-						# 	''
-						# }
-						# create the tag in the cloud
-						# resp = pu.io.send(url, params, jsn=True)
-
-						# record it
-						pu.disk.file_set_contents(c.wwwroot+event+"/lasttag.txt",tag['id'])
-					# UPLOAD VIDEO
-					# get the last uploaded .ts segment:
-					lastUploaded = pu.disk.file_get_contents(c.wwwroot+event+"/lastup.txt")				
-					if(not lastUploaded):
-						response = {}
-						# nothing was uploaded yet, get the first file segment
-						_thumbName(10,results=response,event=event)
-						nextFile = response['firstSegm']
-					else:
-						# the next segment file index
-						nextNum = _exNum(lastUploaded)+1
-						# the string containing prefix before the digit
-						filestr = _exStr(lastUploaded)
-						if(filestr[-3:]=='.ts'):
-							# there are no letters before the digit, file name format: XXtext.ts
-							nextFile = str(nextNum)+filestr
-						else:
-							# there is text before digit, file name format: textXX.ts
-							nextFile = filestr + str(nextNum)+'.ts'
-					#if not lastuploaded...else
-
-					# get contents of the list file in an array
-					listFile = pu.disk.file_get_contents(c.wwwroot+event+"/video/list.m3u8")
-					listArray = listFile.splitlines()
-					# make sure the segment is in the file
-					if(not nextFile in listArray):
-						# file was not found in the list - some weird bug happened
-						return
-					# get the index of the element containing the file (i.e. line number)
-					fileIndex = listArray.index(nextFile)
-					# the line before contains the duration of this segment
-					timeIndex = fileIndex-1
-					# get the duration of the segment file to be uploaded
-					nextTime = _exNum(listArray[timeIndex],floatPoint=True)
-					for idx in range(fileIndex, len(listArray), 2):
-						# after every 8 segments check if user disabled uploading
-						if(idx & 7==7): #will check when last 3 bits are 111, this is faster on CPU than (idx % 7)
-							settings = settingsGet()
-							try:
-								if(not int(settings['uploads']['autoupload'])):
-									break
-							except:
-								break
-
-						# get the file name
-						nextFile = listArray[idx]
-						nextTime = str(_exNum(listArray[idx-1],floatPoint=True))
-						# upload the file
-						result = _uploadFile(c.wwwroot+event+"/video/"+nextFile,event=event,extraData=[nextTime])
-						if(result and 'success' in result and result['success']):
-							lastUploaded = nextFile
-							pu.disk.file_set_contents(c.wwwroot+event+"/lastup.txt",lastUploaded)
-						else: #if upload failed, cancel the cycle, it will resume when service() gets called again
-							break
-					#for idx 
-				#if live and not stopping
-				else:#if there is no live game, upload any unaploaded events
-				# get list of events that are uploaded on the server
-				# check which events exist in the local database that are not on the server yet
-				# upload that event
-					pass
-			#if isweb
-		#if autoupload and not uploading
-	except Exception as e:
-		import sys
-#end service
-# retreives the settings file in json format
 def settingsGet():
+	""" retreives the encoder settings (file is in json format)
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary):
+				tags(dictionary): settings for prerol/postroll
+				sync(dictionary): x-sync settings
+				clips(dictionary): quality settings for MyClip
+				video(dictionary): stream settings
+				uploads(dictionary): cloud upload settings
+	"""
 	from collections import OrderedDict
 	import camera
 	settings = pu.disk.cfgGet(c.pxpConfigFile)
@@ -1354,8 +1176,18 @@ def settingsGet():
 		pass
 	return settings
 #end settingsGet
-# updates the config settings with whatever user selected
 def settingsSet():
+	""" Updates an encoder settings
+		Args:
+			none
+		API args:
+			section(str): name of the section to set
+			setting(str): name of the setting to set
+			value(mixed): the new value to set
+		Returns:
+			(dictionary):
+				success(bool): whether the command was successful
+	"""
 	io = pu.io
 	# get the parameter that user is trying to set
 	secc = io.get("section")
@@ -1375,8 +1207,18 @@ def settingsSet():
 	success = pu.disk.cfgSet(c.pxpConfigFile,section=secc,parameter=sett,value=vals)
 	return {"success":success}
 #end settingsSet
-# returns summary for the month or game
 def sumget():
+	""" returns summary for the month or game
+		Args:
+			none
+		API args:
+			user(str): hid of the user
+			id(str): id of the event
+			type(mixed): type of summary (game or month)
+		Returns:
+			(dictionary):
+				summary(str): summary text (if available)
+	"""
 	try:
 		strParam = pu.uri.segment(3,"{}")
 		jp = json.loads(strParam) #json params
@@ -1399,6 +1241,18 @@ def sumget():
 #end sumget
 # sets summary for month or game
 def sumset():
+	""" Updates (or adds a new) summary
+		Args:
+			none
+		API args:
+			user(str): hid of the user
+			id(str): id of the event
+			type(mixed): type of summary (game or month)
+			summary(str): summary text
+		Returns:
+			(dictionary):
+				success(bool): whether the command was successful
+	"""
 	try:
 		# get the information from url
 		strParam = pu.uri.segment(3,"{}")
@@ -1416,6 +1270,15 @@ def sumset():
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 #end sumset
 def sync2cloud(sess):
+	""" Gets up to date information from the cloud for this customer(teams, leagues, users), updates local database.
+		Args:
+			sess(obj): session object
+		API args:
+			none
+		Returns:
+			(dictionary):
+				success(boolean): whether the command was successful
+	""" 
 	try:
 		if not ('ee' in sess.data and 'ep' in sess.data):
 			return _err("Not logged in")
@@ -1430,18 +1293,34 @@ def sync2cloud(sess):
 		import sys
 		return _err("Error occurred please contact technical support. "+str(e)+' -- '+str(sys.exc_traceback.tb_lineno))
 #end sync2cloud
-# returns synclevel of the current encoder
+# 
 def synclevel():
+	""" Returns sync level of the current encoder (w.r.t cloud)
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			none
+	""" 
 	cfg = _cfgGet()
 	if(len(cfg)>3):
 		level = cfg[3]
 	else:
 		level = 0
 	return {"level":level}
-#######################################################
-#get any new events that happened since the last update (e.g. new tags, removed tags, etc.)
-#######################################################
 def syncme():
+	""" Get any new events that happened since the last update (e.g. new tags, removed tags, etc.)
+		Args:
+			none
+		API args:
+			user(str): see _syncTab description
+			device(str): see _syncTab description
+			event(str): see _syncTab description
+		Returns:
+			(dictionary): see _syncTab description
+	""" 
+
 	try:
 		strParam = pu.uri.segment(3,"{}")
 		jp = json.loads(strParam)
@@ -1460,11 +1339,18 @@ def syncme():
 	except Exception as e:
 		import sys
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
-
-#######################################################
-#return list of teams in the system with team setups
-#######################################################
 def teamsget():
+	""" Return list of teams in the system with team setups
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				leagues(dictionary): a dictionary of leagues with league HIDs as keys
+				teamsetup(dictionary): a dictionary of players and their positions for each team. keys are team HIDs
+				teams(dictionary): a dictionary of teams (includes name and sport), keys are team HIDs
+	""" 
 	try:
 		if(not os.path.exists(c.wwwroot+'_db/pxp_main.db')):
 			return _err("not initialized")
@@ -1513,13 +1399,22 @@ def teamsget():
 		import sys
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 	return result
-
+#end teamsget
 
 def taglive(name,user):
+	""" Create a tag in a live event 'at live'
+		Args:
+			name(str): name of the tag
+			user(str): hid of the user
+		API args:
+			N/A
+		Returns:
+			(dictionary): see _tagFormat description
+	""" 
 	try:
 		# get maximum available time:
 		# get all streams
-		streams, firstStream = _listEvtSources("live",fileMask="*.m3u8")
+		streams, firstStream = _listEvtSources("live")
 		if(not streams): #there are no video sources in this event - do nothing
 			return False
 		# assume there's zero video right now
@@ -1538,10 +1433,17 @@ def taglive(name,user):
 	except Exception, e:
 		result = False
 	return result
-#######################################################
-#modify a tag - set as coachpick, bookmark, etc
-#######################################################
 def tagmod():
+	""" Modify a tag - set as coachpick, bookmark, etc
+		Args:
+			none
+		API args:
+			user(str): hid of the user who is requesting info
+			event(str): hid of the event
+			id(int): tag id
+		Returns:
+			(dictionary): see _tagFormat description
+	""" 
 	try:
 		strParam = pu.uri.segment(3,"{}")
 		# strParam = '{"id":2,"event":"live","user":"blah","bookmark":1}'
@@ -1655,61 +1557,60 @@ def tagmod():
 #end tagmod
 
 #######################################################
-#creates a new tag
-#information that needs to be submitted in json form:
-# {
-# 	'event':'<event>',
-# 	'name':'<tag name>',
-# 	'user':'user_hid',
-# 	'tagtime':'<time of the tag in seconds>',
-# 	'colour':'<tag colour>',
-# 	'period':'<period number>',
-# 	['coachpick':'<0/1>'],
-# 	['type':'<0/1...>'], 
-#	['bookmark':'<0/1>'],
-# 	[<other options may be added>]
-# }
-#tag types:
-#NOTE: odd-numbered tag types do not get thumbnails!!
-
-#default			= 0
-
-#deleted			= 3 - this one shouldn't happen on tagSet
-#telestration 		= 4
-#televideo 			= 40 - same as telestration, except there's a video associated with it instead of an image
-
-#start o-line     	= 1 - hockey
-#stop o-line     	= 2 - hockey
-#start d-line		= 5 - hockey
-#stop  d-line		= 6 - hockey	
-#period start		= 7 - hockey
-#period	stop		= 8 - hockey
-#strength start 	= 9 - hockey
-#strength stop 		= 10- hockey
-#opp. o-line start 	= 11- hockey
-#opp. o-line stop 	= 12- hockey
-#opp. d-line start 	= 13- hockey
-#opp. d-line stop 	= 14- hockey
-
-#zone start 		= 15- soccer
-#zone stop 			= 16- soccer
-#half start 		= 17- soccer
-#half stop 			= 18- soccer
-
-#down start 		= 19- football
-#down stop 			= 20- football
-#quarter start 		= 21- football
-#quarter stop 		= 22- football
-
-#group start 		= 23- football training
-#group stop 		= 24- football training
-
-#event can be a folder name of an event or 'live' for live event
-
-#tagStr - json string with tag info
-#sendSock - send the tag to socket
-#######################################################
 def tagset(tagStr=False, sendSock=True):
+	""" Creates a new tag
+
+		Args:
+			tagStr(str, optional): json string with tag info. if not passed as argument, it must be passed in a URL as last segment. possible parameters: 
+				name(str): name of the tag 
+				time(float): time of the tag in seconds 
+				event(str): HID of the event (or 'live' for live)
+				user(str): user HID 
+				deviceid(str): HID of the device (to be able to end duration tags on per-tablet basis)
+				duration(float,optional): tag duration. default: whatever is set in the settings page for pre-roll and post-roll
+				type(int,optional): type of tag. default:0
+					tag types:
+						0: default				: a generic tag around a certain time (any sport)
+
+						3: deleted				: this one shouldn't happen on tagSet (any sport)
+						4: telestration 		: a regular telestration: still frame with hand drawing on it (any sport)
+						40: televideo 			: same as telestration, except there's a video associated with it instead of an image - you can see the progress of the telestration (any sport)
+
+						1: start o-line     	: hockey - start of offence line
+						2: stop o-line     	 	: hockey - end of offence line
+						5: start d-line		 	: hockey - start of defence line
+						6: stop  d-line		 	: hockey - end of defence line	
+						7: period start		 	: hockey - beginning of period
+						8: period	stop		: hockey - end of period
+						9: strength start 		: hockey - start of a strength tag (e.g. 5vs4)
+						10: strength stop 		: hockey - end of a strength tag (e.g. when 5vs4 goes back to 5vs5)
+						11: opp. o-line start 	: hockey - opposition offence line start
+						12: opp. o-line stop 	: hockey - opposition offence line end
+						13: opp. d-line start 	: hockey - opposition defence line start
+						14: opp. d-line stop 	: hockey - opposition defence line end
+
+						15: zone start 			: soccer - offence zone, defence zone, etc. start
+						16: zone stop 			: soccer - zone end
+						17: half start 			: soccer - half start (same as period in hockey)
+						18: half stop 			: soccer - half end
+
+						19: down start 			: football
+						20: down stop 			: football
+						21: quarter start 		: football
+						22: quarter stop 		: football
+
+						23: group start 		: football training
+						24: group stop 			: football training
+
+						25: half start   		: rugby
+						26: half stop 			: rugby
+				<custom>: any other parameter that is passed will be returned in exactly the same format with syncme, gametags or tagmod
+			sendSock(bool,optional) - send the tag to socket. default: True
+		API args:
+			tagStr(str,optional): must be either passed here as a last url segment or as parameter.
+		Returns:
+			(dictionary): see _tagFormat description
+	""" 
 	import math
 	import json, os, sys
 	try:
@@ -1739,7 +1640,7 @@ def tagset(tagStr=False, sendSock=True):
 		if('requesttime' in t):
 			del t['requesttime'] #this is just to make sure http request does not get cashed
 		# make sure event is not being stopped
-		if(_stopping(eventName)):
+		if(t['event']=='live' and _stopping()):
 			return _stopping(msg=True)
 		if(not os.path.exists(c.wwwroot+eventName+'/video/')):
 			return _err("Event does not exist")
@@ -1763,7 +1664,7 @@ def tagset(tagStr=False, sendSock=True):
 		db.transBegin() #in case we need to roll it back later
 
 		if(not 'time' in t and eventName=='live'):#time was not specified - set it to live
-			t['time'] = _thumbName(0,totalTime=True)
+			t['time'] = _thumbName(totalTime=True)
 
 		if(math.isnan(float(t['time']))):
 			t['time'] = 0
@@ -1911,7 +1812,7 @@ def tagset(tagStr=False, sendSock=True):
 		#create a tag image if it doesn't exist already
 		pathToEvent = c.wwwroot+eventName+'/'
 		# get a list of all streams
-		streams, firstStream = _listEvtSources(eventName,fileMask="*.m3u8")
+		streams, firstStream = _listEvtSources(eventName)
 		if(not streams): #there are no video sources in this event - do nothing
 			return _err("there is no video in the event")
 		oldStyleEvent = os.path.exists(pathToEvent+'/video/main.mp4')
@@ -1984,13 +1885,23 @@ def tagset(tagStr=False, sendSock=True):
 #end tagSet()
 #######################################################
 def teleset():
+	""" Creates a telestration
+		Args:
+			none
+		API args:
+			tag(str): json string, same as tagSet with additional parameter: sidx - index of the stream (e.g. 00hq, 01hq, etc.)
+			file(file): png file with the drawing, passed as a POST form parameter
+		Returns:
+			(dictionary): see _tagFormat description
+	""" 
+
 	import sys, Image
 	io = pu.io
 	try:
 		tagStr = str(io.get("tag"))
 		jsonTag = json.loads(tagStr)
 		event = jsonTag['event']
-		if(_stopping(event)):
+		if(event=='live' and _stopping()):
 			return _stopping(msg=True)
 		# create a tag first
 		t = tagset(tagStr=tagStr,sendSock=False)
@@ -2048,17 +1959,36 @@ def teleset():
 #end teleset
 
 def televid():
+	""" Creates a video telestration
+		Args:
+			none
+		API args:
+			tag(str): see teleset description
+			file(file): mp4 file with the drawing and background, passed as a POST form parameter
+		Returns:
+			(dictionary): see _tagFormat description
+	""" 
 	io = pu.io
 	try:
 		tagStr = str(io.get("tag"))
 		tag = json.loads(tagStr)
 		event = tag['event']
-		if(_stopping(event)):
+		if(event=='live' and _stopping()):
 			return _stopping(msg=True)
 		# create a tag first
 		t = tagset(tagStr=tagStr,sendSock=False)
 		if('success' in t and not t['success']):
 			return t
+		if('sidx' in tag):
+			sIdx = tag['sidx']
+		else:
+			sIdx = _firstSourceIdx(event)
+		if(os.path.exists(c.wwwroot+event+'/video/main.mp4')):
+			#this is an old style event
+			sPrefix = ""
+		else: #this is a new style event
+			sPrefix = sIdx+'_'
+		#upload a file with the tag name
 		#upload a file with the tag name
 		imgID = str(t['id'])
 		vidFile = c.wwwroot+event+"/thumbs/tv"+imgID+".mp4"
@@ -2072,65 +2002,14 @@ def televid():
 	except Exception as e:
 		import sys
 		return _err("No tag info specified (error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
-
 #end televid
 
-#provides a screenshot of the video at a given time - used for televid
-def teleshot():
-	try:
-		tagStr = pu.uri.segment(3)
-		tag = json.loads(tagStr)
-		event = tag['event']
-		if('sidx' in tag):
-			sIdx = tag['sidx']
-			del tag['sidx']
-		else:#source index wasn't specified, get the first available one
-			sIdx = _firstSourceIdx(event)
-		sSuffix = "_"+sIdx
-		sPrefix = sIdx+"_"
-		if(not (os.path.exists(c.wwwroot+event+'/video/main'+sSuffix+'.mp4') or os.path.exists(c.wwwroot+event+'/video/list'+sSuffix+'.m3u8'))):
-			# this is an old style event
-			sIdx = ""
-			sSuffix = ""
-			sPrefix = ""
-		imgName = sPrefix+"cap"+str(tag['time'])+".jpg"
-		imgFile = c.wwwroot+event+"/thumbs/"+imgName
-		while(not os.path.exists(imgFile)):
-			vidFile = c.wwwroot+event+"/video/main"+sSuffix+".mp4"
-			if(event=='live' or not os.path.exists(vidFile)):
-				# for live events the thumbnail must be extracted from a .TS file (or if the main.mp4 doesn't exist for some reason)
-				# get the name of the .ts segment containing the right time				
-				# res = {}
-				# vidSegmfileName = _thumbName(tag['time'],event=event,results=res)
-				# vidFile = c.wwwroot+event+"/video/"+str(vidSegmfileName)
-				res = _mkThumbPrep(event,float(tag['time']), sIdx=sIdx)
-				vidFile = res['file']
-				sec = res['time']
-				tempvid = True
-			else:			
-				# for past events with existing main.mp4, the thumbnail can be extracted from the main.mp4
-				tempvid = False
-				sec = tag['time']
-			_mkThumb(vidFile, imgFile, sec, width=0)
-			if(tempvid):
-				# delete the temporary ts file after image extraction
-				try:
-					os.remove(vidFile)
-				except:
-					pass
-		#end while no image
-		imgurl = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+imgName
-		return {"imgurl":imgurl}
-	except Exception as e:
-		import sys
-		return _err("teleshot error: "+str(sys.exc_traceback.tb_lineno)+' - '+str(e))
-#end teleshot
 def thumbcheck(dataStr=False):
 	""" Verifies that a thumbnail was created, if it wasn't attempts to re-create it.
 		Args:
 			dataStr(str, optional): json string containing the url to the thumbnail. If unspecified, the function will attempt to extract it from the url itself. e.g.: {"url":"http://192.168.1.111/events/live/video/01hq_tn3.jpg"}. default: False
 		Returns:
-			dict: a dictionary with "success" set to either True (if thumbnail exists or was successfully created) and False if could not re-create thumbnail. e.g.: {"success":True}
+			(dictionary): a dictionary with "success" set to either True (if thumbnail exists or was successfully created) and False if could not re-create thumbnail. e.g.: {"success":True}
 	"""
 	try:
 		# get image 
@@ -2185,28 +2064,35 @@ def thumbcheck(dataStr=False):
 		return {"success":os.path.exists(imgFile)}
 	except Exception, e:
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+' '+dataStr)
-# update server script
-def upgrader():
-	currentVersion = version
-	# get the update for the current version
-	# os.system("curl -#Lo "+c.wwwroot+"_db/update.tar.gz http://myplayxplay.net/.assets/min/update"+currentVersion+".tar.gz")
-	# os.system('tar -xf '+c.wwwroot+'_db/update.tar.gz')
-	# os.system("")
-	# run each update file
-#end updateEnc
+
 def version():
+	""" Retreives server version
+		Args:
+			none
+		API args:
+			none
+		Returns:
+			(dictionary): 
+				version(str): server version
+	""" 
 	return {"version":c.ver}
 ###############################################
 ##	           utility functions             ##
 ###############################################
-#######################################################
-# XORs config file (simple 'encryption') to prevent tampering
-#######################################################
 def _cfgGet(cfgDir=c.wwwroot+"_db/"):
+	""" Retrieves server initliaziation config file
+		Args:
+			cfgDir(str,optional): path to the config file (if custom).
+		API args:
+			N/A
+		Returns:
+			(list): each element is a line from the config file
+	""" 
+	# this function uses a simple string exclusive OR to 'encrypt' the file
 	cfgFile = cfgDir+".cfg"
 	saltedKey = "3b2b2bcfee23d8377a3828fe3c155a868377a38"
 	# remove last 7 characters from the key
-	# this is in case someone disassembles the python 
+	# this is in case someone disassembles the python and finds the key
 	# and tries to use the key string as they key to the config file
 	key = saltedKey[:-7]
 	# check if file exists
@@ -2223,11 +2109,16 @@ def _cfgGet(cfgDir=c.wwwroot+"_db/"):
 		return decLines
 	return ""
 
-#######################################################
-# XORs config file (simple 'encryption') to prevent tampering
-#######################################################
-def _cfgSet(cfgDir,lines):
-	# parameters are in this function so that user can't view them with dir() function
+def _cfgSet(lines=[],cfgDir=c.wwwroot+"_db/"):
+	""" Sets the lines in the config file
+		Args:
+			lines(list,optional): each element is a single line that will be stored to the config file. default:[]
+			cfgDir(str,optional): see _cfgSet description
+		API args:
+			N/A
+		Returns:
+			(bool): whether the operation was successful
+	""" 
 	cfgFile = cfgDir+".cfg"
 	saltedKey = "3b2b2bcfee23d8377a3828fe3c155a868377a38"
 	key = saltedKey[:-7] #leave last 7 characters of the key out - if someone disassembles the code and gets this code won't be able to use it
@@ -2245,10 +2136,15 @@ def _cfgSet(cfgDir,lines):
 		return True
 	except Exception as e:
 		return False
-#######################################################
-#cleans a string for sqlite query (doubles " quotes)
-#######################################################
 def _cln(text):
+	""" Cleans a string for sqlite query (doubles " quotes)
+		Args:
+			text(str): text to clean
+		API args:
+			N/A
+		Returns:
+			(str): sanitized text
+	""" 
 	import string
 	return string.replace(text,'"','""')
 #end cln	
@@ -2256,12 +2152,16 @@ def _dbgLog(msg, timestamp=True, level=0):
     """ Output debug info 
 
 	    Args:
-			msg (str): message to display
-			timestamp (bool,optional): display timestamp before the message. default: True
+			msg(str): message to display
+			timestamp(bool,optional): display timestamp before the message. default: True
 			level (int, optional): debug level (default - 0):
 				0 - info
 				1 - warning
 				2 - error
+		API args:
+			N/A
+		Returns:
+			none
     """
     try:
         debugLevel = 0 #the highest level to output
@@ -2276,11 +2176,31 @@ def _dbgLog(msg, timestamp=True, level=0):
     except Exception as e:
         pass
 
-# returns true if there is a delete process happening (will need to figure out later how to check what exactly is being deleted)
 def _deleting():
+	""" Checks if there is a delete process happening (will need to figure out later how to check what exactly is being deleted)
+		Args:
+			none
+		API args:
+			N/A
+		Returns:
+			(bool): whether there is a delete operation in progress
+	""" 
 	return pu.disk.psOn("rm -rf") or pu.disk.psOn("-exec rm {}")
 #list all available mounted disks
 def _diskStat( humanReadable=True, path="/"):
+	""" Retrieves disk information
+		Args:
+			humanReadable(bool,optional): whether to return human readable sizes (e.g. Mib, Gib, etc.)
+			path(str,optional): path to the mount point of the disk. default: /
+		API args:
+			N/A
+		Returns:
+			(dictionary): 
+				total(str): total bytes on disk
+				free(str): total bytes available on disk
+				used(str): total bytes used on disk
+				percent(str): percentage of total space used
+	""" 
 	import os
 	st = os.statvfs(path)
 	diskFree = st.f_bavail * st.f_frsize
@@ -2290,14 +2210,18 @@ def _diskStat( humanReadable=True, path="/"):
 	if(humanReadable):
  		return {"total":pu.disk.sizeFmt(diskTotal),"free":pu.disk.sizeFmt(diskFree),"used":pu.disk.sizeFmt(diskUsed),"percent":str(diskPrct)}
  	return {"total":diskTotal,"free":diskFree,"used":diskUsed,"percent":str(diskPrct)}
-#######################################################
-#returns encoder state (0 - off, 1 - live, 2 - paused)
-#######################################################
-def _encState():
-	# using file as means to transfer status works better than sockets as there are no timeouts with these
-	return int(pu.disk.file_get_contents("/tmp/pxpstreamstatus")) #int(pu.disk.sockRead(udpPort=2224,timeout=0.5))
-#end encState
 def _err( msgText=""):
+	""" Creates a dictionary with an error message
+		Args:
+			msgText(str,optional): error message text. default: blank
+		API args:
+			N/A
+		Returns:
+			(dictionary): 
+				success(bool): false
+				msg(str): msgText
+				action(str): popup - this is used for javascript on encoder home page
+	""" 
 	return {"success":False,"msg":msgText,"action":"popup"}
 def _exNum( text, floatPoint=False, startAtIdx=0):
 	""" Extract first number from the string
@@ -2307,7 +2231,7 @@ def _exNum( text, floatPoint=False, startAtIdx=0):
 			floatPoint (bool, optional): whether to extract a floating point number or integer. default: False
 			startAtIdx (int, optional): start searching in the text starting at this index. default: 0
 		Return:
-			mixed: either float or int based on what was requested. if a number is not found, returns 0.
+			(mixed): either float or int based on what was requested. if a number is not found, returns 0.
 	"""
 	import re
 	try:
@@ -2318,22 +2242,17 @@ def _exNum( text, floatPoint=False, startAtIdx=0):
 	except:
 		return 0
 #end exNum
-#######################################################
-# extract text from a string before any number
-# returns blank string if only numbers are present
-#######################################################
-def _exStr(text):
-	import re
-	try:
-		# regular expression to search string for anything but digits
-		return re.search('[^0-9]+', text).group()
-	except:
-		return ""
-#end exStr
-#######################################################
-# extracts video clip and saves it as mp4 file (for bookmarks)
-#######################################################
 def _extractclip( tagid, event, sIdx=""):
+	""" Extracts video clip and saves it as mp4 file (for bookmarks)
+		Args:
+			tagid(int): id of the tag to exctract as a clip
+			event(str): name of the event
+			sIdx(str,optional): index of the source (i.e. camera 'angle' from which to get the clip). default: use first available one
+		API args:
+			N/A
+		Returns:
+			(bool): whether the command was successful
+	""" 
 	from random import randrange
 	import glob
 	# the process is as follows:
@@ -2428,6 +2347,14 @@ def _extractclip( tagid, event, sIdx=""):
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 #end extractClip
 def _firstSourceIdx(event):
+	""" Retrieves the index of the first available video source from an event
+		Args:
+			event(str): name of the event
+		API args:
+			N/A
+		Returns:
+			(str): index of the source (e.g. '01hq')
+	""" 
 	try:
 		sources, firstSource = _listEvtSources(event)
 		keys = sources.keys()
@@ -2437,18 +2364,17 @@ def _firstSourceIdx(event):
 		sIdx = ""
 	return sIdx
 #######################################################
-# returns info about teradeks (if there are any)
-#######################################################
-def _getTeradeks():
-	terainfo = json.loads(pu.disk.file_get_contents(c.wwwroot+"_db/.infenc"))
-	if(type(terainfo) is dict):
-		return terainfo
-	return {}
-#end getTeradeks
-#######################################################
 #return salted hash sha256 of the password
 #######################################################
-def _hash( password):
+def _hash(password):
+	""" Computes a salted sha256 hash of a string
+		Args:
+			password(str): text to hash
+		API args:
+			N/A
+		Returns:
+			(str): hashed string
+	""" 
 	import hashlib
 	s = hashlib.sha256(password+"azucar")
 	return s.hexdigest()
@@ -2458,6 +2384,15 @@ def _hash( password):
 #initializes the encoder
 #######################################################
 def _init( email, password):
+	""" Performs initial setup of the encoder: authenticates with cloud, gets all the information, performs first sync, downloads needed files.
+		Args:
+			email(str): plain text user's email
+			password(str): plain text user's password
+		API args:
+			N/A
+		Returns:
+			(mixed): TRUE/FALSE whether sync was successful or not, in the event of an error, error message will be returned
+	""" 
 	import platform
 	from uuid import getnode as mymac
 	import subprocess
@@ -2478,13 +2413,13 @@ def _init( email, password):
 			#create all the necessary directories
 			pu.disk.mkdir(c.wwwroot+"_db")
 			#save the config info
-			_cfgSet(c.wwwroot+"_db/",[resp['authorization'],resp['customer'],"0"]) #the lines of the cfg file are: authorization, customer HID, syncLevel
+			_cfgSet([resp['authorization'],resp['customer'],"0"]) #the lines of the cfg file are: authorization, customer HID, syncLevel
 			#download encoder control scripts
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encpause http://myplayxplay.net/.assets/min/encpause")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
-			os.system("curl -#Lo "+c.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy08") #download the rquired version of idevcopy!!
+			os.system("curl -#Lo "+c.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy.v08") #download the rquired version of idevcopy!!
 			#add execution privileges for the scripts
 			os.system("chmod +x "+c.wwwroot+"_db/*")
 			#download the blank database files
@@ -2500,10 +2435,15 @@ def _init( email, password):
 	#either response was not received or it was a 404 or some other unexpected error occurred
 	return 0
 #end init
-#######################################################
-# returns true if this encoder has been initialized
-#######################################################
 def _inited():
+	""" Determines if the encoder has been initialized already
+		Args:
+			none
+		API args:
+			N/A
+		Returns:
+			(bool)
+	""" 
 	# LATER ON: check if server is online. if so, check auth code against the cloud
 	cfg = _cfgGet()
 	return (len(cfg)>1 and cfg[0]=='.min config file')
@@ -2512,6 +2452,14 @@ def _inited():
 #initializes the live directory (creates it and subfolders)
 #######################################################
 def _initLive():
+	""" Creates live directory with required subdirectories
+		Args:
+			none
+		API args:
+			N/A
+		Returns:
+			none
+	""" 
 	pu.disk.mkdir(c.wwwroot+"live/thumbs")
 	pu.disk.mkdir(c.wwwroot+"live/video")
 	if(os.path.exists(c.wwwroot+"live/pxp.db")):
@@ -2521,13 +2469,31 @@ def _initLive():
 	pu.disk.copy(c.wwwroot+'_db/event_template.db', c.wwwroot+'live/pxp.db')
 #end initLive
 #######################################################
-# returns a list of events in the system
-# showDeleted - determines if the list should contain 
-# deleted events
-# onlyDeleted - will only return deleted events when set
-# onlyDeleted supercedes showDeleted
 #######################################################
 def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
+	""" Returns a list of events in the system
+		Args:
+			showDeleted(bool,optional): determines if the list should contain events marked as deleted. default: True
+			onlyDeleted(bool,optional): will only return deleted events. this option supercedes showDeleted. default: False
+			showSizes(bool,optional): show event sizes. default: True
+		API args:
+			N/A
+		Returns:
+			(list): each element is a dictioanry:
+				league(str): abbreviated league name
+				dateFmt(str): unformatted date
+				name(str): full event name (including date and HID)
+				vid(str, deprecated): url to the first available source
+				vid_2(dict): dictionary of all video sources.
+				deleted(bool): whether the event is marked as deleted
+				homeTeam(str): name of the home team
+				visitTeam(str): name of the visitor team
+				datapath(str): name of the folder where event is located on the disk (relative to the events/ folder).
+				date(str): formatted date and time
+				sport(str): name of the sport (or event type)
+				md5(str): md5 hash of the database file
+				size(int): (approximate) size of all the video files for this event in bytes
+	""" 
 	import hashlib
 	try:
 		# list all all events in the local DB
@@ -2583,22 +2549,20 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 			# check if there is a streaming file (playlist) exists
 			# add any stream playlists to the sources in this format:
 
-			if (pu.uri.host):
-				# find all cameras and qualities and add them to the array of streaming sources
-				sources, firstSrc = _listEvtSources(evtName,fileMask='*.m3u8')
-				if(sources):
-					result[i]['vid'] = firstSrc
-					result[i]['vid_2'] = sources
-				# find all mp4 files and add them to the list of downloadable files
-				sources, firstSrc = _listEvtSources(evtName,fileMask='main*.mp4')
-				if(sources):
-					result[i]['mp4'] = firstSrc
-					result[i]['mp4_2'] = sources
-			#end if uri.host
+			# find all cameras and qualities and add them to the array of streaming sources
+			sources, firstSrc = _listEvtSources(evtName)
+			if(sources):
+				result[i]['vid'] = firstSrc
+				result[i]['vid_2'] = sources
+			# find all mp4 files and add them to the list of downloadable files
+			sources, firstSrc = _listEvtSources(evtName,srcType='main')
+			if(sources):
+				result[i]['mp4'] = firstSrc
+				result[i]['mp4_2'] = sources
 
 			# check if this is a live event
-			if((evtName==liveName) and (pu.uri.host)):
-				sources, firstSrc = _listEvtSources('live',fileMask='*.m3u8')
+			if(evtName==liveName):
+				sources, firstSrc = _listEvtSources('live')
 				if(sources):
 					result[i]['live'] = firstSrc
 					result[i]['live_2'] = sources
@@ -2610,12 +2574,18 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 				# result[i]['size'] = pu.disk.dirSize(evtDir)
 				# is this(although only approximate):
 				# get all mp4 files, double their size and that will be the size of the event (approximately)
-				result[i]['size'] = pu.disk.quickEvtSize(result[i]['mp4_2'])
-				result[i]['size_fmt'] = pu.disk.sizeFmt(result[i]['size'])
+				if('mp4_2' in result[i]):
+					result[i]['size'] = pu.disk.quickEvtSize(result[i]['mp4_2'])
+					result[i]['size_fmt'] = pu.disk.sizeFmt(result[i]['size'])
+				else:
+					result[i]['size'] = 0
+					result[i]['size_fmt'] = 'n/a'
+			else:
+				result[i]['size'] = 0
+			if(os.path.exists(evtDir+'/pxp.db')):
 				# get md5 checksum of the data file
 				result[i]['md5'] = hashlib.md5(open(evtDir+'/pxp.db', 'rb').read()).hexdigest()
 			else:
-				result[i]['size'] = 0
 				result[i]['md5'] = ''
 			i+=1
 		#end for row in result
@@ -2623,21 +2593,47 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 		return result
 	except Exception as e:
 		import sys
+		print "listeevents--------------------------------------------------------\n\n\n\n\n\n"
+		print e,sys.exc_traceback
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvents")
 #end listevents
 #######################################################
-# gets a list of video sources for an event
-# puts the sources in the 'vid' element of the 'output'
-# @param (str) output - dictionary that will contain the 'vid' parameter
-# video files can have a suffix containing source index and quality, e.g. list_00hq.m3u8
 #######################################################
-def _listEvtSources(evtName, fileMask='*.m3u8'):
+def _listEvtSources(evtName, srcType='list'):
+	""" Gets a list of video sources for an event, puts the sources in the 'vid' element of the 'output' - for old style app; new apps will use vid_2 and mp4_2. Video files can have a suffix containing source index and quality, e.g. list_00hq.m3u8
+		Args:
+			evtName(str): name of the event
+			srcType(str,optional): the kind of sources to list (list or main). list: m3u8 files, main: mp4 files
+		API args:
+			N/A
+		Returns:
+			(tuple): 
+				[0]: list of sources
+				[1]: first source
+	""" 
 	try:
-		vidfiles = glob.glob(c.wwwroot+evtName+'/video/'+fileMask)
-		if(len(vidfiles)<1): #there are no sources in this folder matching the search pattern
-			return (False, "no files")
+		# [1] this is one way to get all sources (it may fail if there is a source with index > c.maxSources, but it's much faster than [2] )
+		if(srcType=='list'): #looking for list*.m3u8 files			
+			fName = 'list_'
+			fExt = 'm3u8'
+		elif(srcType=='main'): #looking for main*.mp4 files
+			fName = 'main_'
+			fExt = 'mp4'
+		# generate a list of possible file names that may contain video:
+		# this will generate names like list_00hq.m3u8, list_01lq.m3u8, etc...
+		fileNames = map(lambda x: fName+str(x).zfill(2)+'hq.'+fExt,range(0,c.maxSources))+map(lambda x: fName+str(x).zfill(2)+'lq.'+fExt,range(0,c.maxSources))
+		# go through each file and see if it exists, if it does, that'll be a video source
+		vidfiles = []
+		for fn in fileNames:
+			if(os.path.exists(c.wwwroot+evtName+'/video/'+fn)):
+				vidfiles.append(fn)
+		# [2] this method is 100% reliable for finding correct files (*.m3u8 or *.mp4) but it's waaaaay too slow for cgi python - basically unusable without proper timeouts in the URL requests
+		# vidfiles = glob.glob(c.wwwroot+evtName+'/video/*.m3u8')
+		# if(len(vidfiles)<1): #there are no sources in this folder matching the search pattern
+		# 	return (False, "no files")
+		# return (False, "no files")
 		sources = { }
-		lowestIndex = 999 #this is lowest index of the stream. (e.g. if there's 00, 01, 02, it'll be set to 00)
+		lowestIndex = 999 #this is lowest index of the stream. (e.g. if there's 00, 01, 02, it'll be set to 00 after the loop)
 		firstSource = ""
 		for vid in vidfiles:
 			vid = vid[vid.rfind('/')+1:]
@@ -2675,45 +2671,20 @@ def _listEvtSources(evtName, fileMask='*.m3u8'):
 	except Exception as e:
 		return (False, _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvtSources"))
 #end listEvtSources
-#######################################################
-#returns a list of teams in the system
-#######################################################
-def _listLeagues():
-	sql = "SELECT * FROM `leagues` ORDER BY `name` ASC"
-	if(not os.path.exists(c.wwwroot+"_db/pxp_main.db")):
-		return []
-	db = pu.db(c.wwwroot+"_db/pxp_main.db")
-	db.qstr(sql)
-	result = db.getasc()
-	db.close()
-	return result
-#end _listLeagues
-#######################################################
-#returns a list of teams in the system
-#######################################################
-def _listTeams():
-	sql = "SELECT * FROM `teams` ORDER BY `name` ASC"
-	if(not os.path.exists(c.wwwroot+"_db/pxp_main.db")):
-		return []
-	db = pu.db(c.wwwroot+"_db/pxp_main.db")
-	db.qstr(sql)
-	result = db.getasc()
-	db.close()
-	return result
-#end listTeams
-def _log(string):
-	print(string)
-	os.system("echo '"+string+"' >>"+c.wwwroot+"convert.txt")
-#######################################################
-#logs an entry in the sqlite database
-# ltype = log type
-# lid   = log id (e.g. device id, tag id, etc.)
-# uid   = user id
-# dbfile= db file to open. if this is not specified, then DB must be specified
-# db    = database resoucre (opened databse)
-# ms    = milliseconds - used for timestamping the log entry, if omitted, current time is used
-#######################################################
 def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):
+	""" Logs an entry in the sqlite database for the event (or global)
+		Args:
+			ltype(str): type of event to log (e.g. enc_start, sync_tablet, etc.)
+			lid(int,optional): log id (e.g. device id, tag id, etc.). default: 0
+			uid(str,optional): user's hid. default: 0
+			dbfile(str,optional): path to the database file. default: "". NB: one of dbfile or db must be specified
+			db(obj,optional): reference to the open database object. default: False. NB: one of dbfile or db must be specified
+			ms(bool,optional): whether to log time in milliseconds. default: False
+		API args:
+			N/A
+		Returns:
+			(bool): whether the command was successful
+	""" 
 	import os
 	try:
 		if db:
@@ -2739,11 +2710,19 @@ def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):
 	except Exception as e:
 		return False
 #end logSql
-#######################################################
-#creates a thumbnail from 'videoFile' at 'seconds' 
-#and puts it in 'outputFile' using ffmpeg
-#######################################################
 def _mkThumb( videoFile, outputFile, seconds, width=190, height=106):
+	""" Creates a thumbnail from 'videoFile' at 'seconds' and puts it in 'outputFile' using ffmpeg
+		Args:
+			videoFile(str): full path to the video file
+			outputFile(str): full path to the output file that will contain the image
+			seconds(float): time in seconds at which to extract the image
+			width(int,optional): width of the generated image in pixels. default: 190
+			height(int,optional): height of the generated image in pixels. default: 106
+		API args:
+			N/A
+		Returns:
+			none
+	""" 
 	import os
 	if not os.path.exists(videoFile):
 		#there is no video for this event
@@ -2775,14 +2754,20 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 			event (str): name of the event (path, relative to the events/ directory).
 			seconds (float): absolute time in the event.
 			sPrefix (mixed): stream prefix - contains index of the stream (if any). used for multicam. if unspecified, the function assumes single camera. default: empty string.
-		Return:
-			dict:
-				{
-					"file": the name of the video file containing the requested time,
-					"time": relative time to the required frame - time from the beginning of this video file
-				}
+		API args:
+			N/A
+		Returns:
+			(dictionary):
+				file(str): the name of the video file containing the requested time,
+				time(float): relative time to the required frame - time from the beginning of this video file
 	"""
-	tmBuffer = 5
+	tmBuffer = 7 #how many seconds of video to grab on each side of the specified time to extract a frame
+	# get length of the video (to make sure not trying to tag at the very end of segments (won't be enough video))
+	liveTime = _thumbName(totalTime=True,sIdx=sIdx,maxOnFail=True)
+	if(liveTime-(seconds+tmBuffer)<2): #too close to live - the thumbnail will be garbled - wait for 2 seconds
+		sleep(2)
+		# seconds = max(0,seconds-2)
+
 	strTime = seconds-tmBuffer
 	if(strTime<0): 
 		strTime=0
@@ -2793,9 +2778,9 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 	bigTsFile = c.wwwroot+event+"/video/"+sPrefix+"v_"+str(seconds)+".ts"
 	endTime = seconds+tmBuffer
 	res = {}
-	# print "thumbprep:",sIdx, seconds, "start,stop:",strTime,endTime
 	strFile = _thumbName(strTime, number=True, event=event, results=res, sIdx = sIdx,maxOnFail=True) #index of the starting .ts file
 	endFile = _thumbName(endTime, number=True, event=event, sIdx = sIdx,maxOnFail=True) #index of the ending .ts file
+
 	if(strFile==endFile):
 		strFile = max(int(strFile)-5,0)
 		res['startTime']=2
@@ -2818,29 +2803,15 @@ def _mkThumbPrep(event,seconds,sIdx=""):
 	# the required frame will be 4 seconds into the file
 	return {"file":bigTsFile,"time":seconds-trueStartTime}
 #end mkThumbPrep
-#######################################################
-#sets ports in /tmp/pxpports file
-#######################################################
-def _portSet( hls=2222, ffm=2223, chk=2224):
-	pu.disk.file_set_contents("/tmp/pxpports","HLS="+str(hls)+"\nFFM="+str(ffm)+"\nCHK="+str(chk))
-#end portSet
-#returns true if all ports are set to 65535 (all ports are set to 65535 when video is 'paused')
-def _portSame( portCheckValue=65535):
-	equalports = True
-	portLines = (pu.disk.file_get_contents("/tmp/pxpports"))
-	if not portLines:
-		return False
-	portLines = portLines.split("\n")
-	for line in portLines:
-		parts = line.split("=")
-		if len(parts)>1:
-			equalports = equalports and parts[1]==str(portCheckValue)
-	return equalports
-#end portSame
-#######################################################
-#renames directories
-#######################################################
 def _postProcess():
+	""" Renames live directory to its proper event name. this is done after encode has stopped
+		Args:
+			none
+		API args:
+			N/A
+		Returns:
+			none
+	""" 
 	try:
 		# get the name of what the new directory should be called
 		event = pu.disk.file_get_contents(c.wwwroot+"live/evt.txt").strip()
@@ -2855,10 +2826,19 @@ def _postProcess():
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end postProcess
 
-# sends tag (or other data) to a pxpservice 
-# tag - sends this tag to the service
-# data - if no tag is specified, sends this raw data
 def _sockData(event="live",tag=False,gameEvents=[{}],data=False,db=False):
+	""" Sends (tag) data to a pxpservice socket. 
+		Args:
+			event(str,optionanl): event name. default: live
+			tag(dictionary,optional): tag dictionray to send. overrides data argument. default: False
+			gameEvents(list,optional): any events that happened in the game (enc_pause, enc_start, etc.). default: []
+			data(str,optional): raw data to send to socket. if tag was not specified, this value will be sent.
+			db(obj,optional): reference to the open database object from which to get the event data. default: False
+		API args:
+			N/A
+		Returns:
+			none
+	""" 
 	if(tag):
 		# tag was specified - send it to the service
 		if(not db):
@@ -2894,9 +2874,17 @@ def _sockData(event="live",tag=False,gameEvents=[{}],data=False,db=False):
 		# tag was not specified - send the raw data
 		pu.disk.sockSend(data)
 #end sockData
-# returns true if the event is being stopped
-def _stopping( event="live", msg=False):
+def _stopping(msg=False):
+	""" Checks if the live event is being stopped
+		Args:
+			msg(bool,optional): when True, just returns a message "Event is being stopped", otherwise checks if event is stopping and returns boolean
+		API args:
+			N/A
+		Returns:
+			(mixed): boolean if msg is False, string otherwise.
+	""" 
 	import psutil
+	event = 'live'
 	if(not msg):
 		# return True
 		# TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:
@@ -2924,10 +2912,19 @@ def _stopping( event="live", msg=False):
 		return False
 	#end if not msg
 	return _err("Event is being stopped")
-#######################################################
-#adds tags to an event during the sync procedure (gets called once for each event)
-#######################################################
-def _syncAddTags( path,tagrow,del_arr,add_arr):
+#end stopping
+def _syncAddTags(path,tagrow,del_arr,add_arr):
+	""" Adds tags to an event during the sync procedure (gets called once for each event)
+		Args:
+			path(str): full path to the event (including event directory)
+			tagrow(dictionary): dictionary with keys as field names from tags table and values as values to insert for the tag - this is used for field names and for values for single tag addition
+			del_arr(list): list of WHERE clause entries to delete from tags table (e.g. ['id=3','id=5','id=7'])
+			add_arr(list): when adding multiple tags, this will contain the values for each row. field names come from tagrow.
+		API args:
+			N/A
+		Returns:
+			none
+	""" 
 	if(not os.path.exists(path+'/pxp.db')):
 		# event directory does not exist yet
 		# create it recursively (default mode is 0777)
@@ -2952,10 +2949,17 @@ def _syncAddTags( path,tagrow,del_arr,add_arr):
 	# disconnect from the db
 	db.close()
 #end syncAddTags
-#######################################################
-#syncs encoder to cloud
-#######################################################
 def _syncEnc( encEmail="none",encPassw="none"):
+	""" Syncs local encoder to cloud
+		Args:
+			encEmail(str,optional): hashed email. default: "none"
+			encPassw(str,optional): hashed,salted pass. default: "none"
+		API args:
+			N/A
+		Returns:
+			(dictionary): 
+				success(bool): whether the sync was successful
+	""" 
 	try:
 		db = pu.db()
 		#open the main database (where everything except tags is stored)
@@ -2986,10 +2990,14 @@ def _syncEnc( encEmail="none",encPassw="none"):
 			return _err(resp['msg'])
 		# get sync level in the cloud ()
 		try:
-			resp = json.loads(pu.io.url("http://myplayxplay.net/max/synclevel/ajax",params,jsn=True))
-		except:
-			resp['level']=1
-		syncLevel = resp['level']
+			syncData = {"level":1} #in case getting syncLevel fails
+			syncData = pu.io.send("http://myplayxplay.net/max/synclevel/ajax",params,jsn=True)
+			# resp = json.loads(resp)
+		except Exception as e:
+			pass
+
+		syncLevel = syncData['level']
+
 		tables = ['users','leagues','teams','events', 'teamsetup']
 
 		# here we go through every table, delete all the old data and add new data
@@ -3077,23 +3085,34 @@ def _syncEnc( encEmail="none",encPassw="none"):
 			#last add/delete query will be run after all the tags were parsed:
 			_syncAddTags(eventDir+event,lastTagRow,del_arr,add_arr)
 		# update the sync level on the local encoder to the level in the cloud
-		_cfgSet(c.wwwroot+"_db/",[cfg[1],cfg[2],str(syncLevel)])
+		_cfgSet([cfg[1],cfg[2],str(syncLevel)])
 		return {"success":True}
 	except Exception as e:
 		import sys
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end syncEnc
 #######################################################
-# syncs
-#######################################################
-def _syncEncUp(encMail="",encPassw=""):
-	pass
-#end syncEncUp
-#######################################################
-#syncs tablet with ecnoder (sends any tag modifications 
-#that were created in a specific event since the last sync)
+#
+#
 #######################################################
 def _syncTab( user, device, event, allData=False):
+	""" Syncs tablet with local ecnoder (sends any tag modifications that were created in a specific event since the last sync). This also creates a sync_tab entry in the log table
+		Args:
+			user(str): hid of the user who is requesting info
+			event(str): hid of the event
+			device(str): hid of the device that is requesting info
+			allData(bool): whether to retreive all data, regardless of the last sync
+		API args:
+			N/A
+		Returns:
+			(dictionary): 
+				tags(dict): a dictionary of tags for the current game, keys are tag IDs. if !allData, then since last sync, otherwise all of them. for individual tag description see _tagFormat
+				status(str): text status of the encoder 
+				events(dict): dictionary of that happened in this game (e.g. enc_start, enc_pause, etc.)
+				teams(list): list of teams in this event
+				league(str): hid of the league to which this event belongs
+				
+	""" 
 	from collections import OrderedDict
 	##get the user's ip
 	##userIP = os.environ['REMOTE_ADDR']
@@ -3155,7 +3174,7 @@ def _syncTab( user, device, event, allData=False):
 			leagueHID = ""
 		#close the database (so that log can use it)
 		db.close();
-		# evts.append({"camera":encoderstatus()})
+		
 		outJSON = {
 			'tags':tagsOut,
 			'status':encoderstatus(),
@@ -3175,17 +3194,46 @@ def _syncTab( user, device, event, allData=False):
 		return _err(str(e)+' '+str(sys.exc_traceback.tb_lineno))
 #end syncTab()
 #######################################################
-# formats the tag in a proper json format and returns it as json dictionary
-# if db is not specified, the default db from the specified 'event' will be opened
-# @event  	: event name
-# @user 	: user id
-# @tagID 	: the ID of the tag that user wants outputted
-# @tag   	: the tag details (tagID is irrelevant in this case)
-# @db 		: if tag is not specified, the db needs to be 
-# @checkImg : when true, the function will create the thumbnail if it does not exist
-# @sockSend : whether to send the data to a socket or not
 #######################################################
 def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, checkImg=True, sockSend=False):
+	""" Formats the tag in a proper json format and returns it as json dictionary if db is not specified, the default db from the specified 'event' will be opened
+		Args:
+			event(str,optional): event name. must specify this or tag. default: False
+			user(str,optional): user hid. default: False
+			tagID(int, optional): id of the tag to retreive from the database. must specify this or tag. default: False
+			tag(dictionary, optional): dictionary, containing tag info to format. must specify this or tagID. default: False
+			db(obj,optional): reference to the open database object. must specify this or event. default: False
+			checkImg(bool,optional): whether to verify that the thumbnail exists. default: True
+			sockSend(bool,optional): send the formatted tag to socket as well as return it
+		API args:
+			N/A
+		Returns:
+			(dictionary): 
+				comment(str): any comments associated with this tag
+				rating(int): tag rating
+				own(bool): whether this is the user's own tag (whoever sent this request)
+				duration(float): tag duration in seconds
+				homeTeam(str): name of the home team
+				visitTeam(str): name of the visitor team
+				event(str): event name
+				url_2(dictionary): dictionary of URLs of thumbnails for each video source
+				telefull_2(dictionary): dictionary of URLs of full size screenshots (if applicable)
+				vidurl_2(dictionary): dictionary of URLs for bookmarked clips (if applicable)
+				teleurl_2(dictionary):dictionary of URLs for telestrations (if applicable)
+				id(int): tag id
+				type(int): tag type
+				deleted(bool): whether this tag was marked as deleted
+				user(str): user HID
+				islive(bool): whether this tag is from a live event
+				name(str): tag name
+				displaytime(str): formatted in-game time (to display on the thumbnail)
+				url(str,deprecated): URL of the screenshot of the first source available (used in old app builds)
+				colour(str): tagging user's colour
+				deviceid(str): authorization ID for the device (given during initialization)
+				starttime(float): start time of the tag in seconds from the beginning of video
+				time(float): time at which the tag button was pressed, in seconds from the beginning of video
+				success(bool): whether the request was successful
+	""" 
 	import os, datetime
 	try:
 		outDict = {}
@@ -3244,7 +3292,7 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		#time to show on the thumbnail
 		tag['displaytime'] = str(datetime.timedelta(seconds=round(float(tag['time']))))
 
-		streams, firstStream = _listEvtSources(event,fileMask="*.m3u8")
+		streams, firstStream = _listEvtSources(event)
 		if(not streams):
 			return _err(firstStream)
 		oldStyleEvent = os.path.exists(c.wwwroot+event+'/video/main.mp4')
@@ -3299,18 +3347,12 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 			if('id' in meta): #delete 'id' from meta field - confusing with 'id' from the fields
 				del meta['id']
 			tag.update(meta) #join 2 dictionaries
-		# go through each field in the tag and format it properly
-		for field in tag:
-			field = field.replace("_"," ") #replace all _ with spaces in the field names
-			if(tag[field]== None):
-				tag[field] = ''
-			else:
-				outDict[field]=tag[field]
 		# send the data to the socket (broadcast for everyone)
-		outDict['url_2'] = {}
-		outDict['teleurl_2'] = {}
-		outDict['telefull_2'] = {}
-		outDict['vidurl_2'] = {}
+		tag['url_2'] = {}
+		tag['teleurl_2'] = {}
+		tag['telefull_2'] = {}
+		tag['vidurl_2'] = {}
+		newFields = ['url_2', 'teleurl_2', 'telefull_2', 'vidurl_2']
 		# for old app version, use first source for everything (thumbnail, playback, clips, etc)
 		lowestIndex = 999
 		for s in streams:
@@ -3318,36 +3360,49 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 			sIdx = s.split('_')[1]+q
 			if(not oldStyleEvent):
 				sPrefix = sIdx+'_'
-			tnPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tn'+str(outDict['id'])+'.jpg' #thumbnail image
-			tlPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tl'+str(outDict['id'])+'.png' #telestration drawing
-			tfPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tf'+str(outDict['id'])+'.jpg' #full size screenshot (for telestration)
-			tvPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tv'+str(outDict['id'])+'.mp4' #video telestration
-			vuPath = 'http://'+pu.uri.host+'/events/'+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4'#extracted mp4 clip
+			tnPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tn'+str(tag['id'])+'.jpg' #thumbnail image
+			tlPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tl'+str(tag['id'])+'.png' #telestration drawing
+			tfPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tf'+str(tag['id'])+'.jpg' #full size screenshot (for telestration)
+			tvPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tv'+str(tag['id'])+'.mp4' #video telestration
+			vuPath = 'http://'+pu.uri.host+'/events/'+event+'/video/'+sPrefix+'vid_'+str(tag['id'])+'.mp4'#extracted mp4 clip
 
-			outDict['url_2'][s] = tnPath
+			tag['url_2'][s] = tnPath
 
-			if(int(outDict['type'])==4): #static telestration - add teleurl only for these tags
-				outDict['teleurl_2'][s]=tlPath
-				outDict['telfeull_2'][s]=tfPath
+			if(int(tag['type'])==4): #static telestration - add teleurl only for these tags
+				tag['teleurl_2'][s]=tlPath
+				tag['telfeull_2'][s]=tfPath
 
-			if(int(outDict['type'])==40): #video telestration - add televid only for these tags
-				outDict['televid_2'][s]=tvPath
+			if(int(tag['type'])==40): #video telestration - add televid only for these tags
+				tag['televid_2'][s]=tvPath
 
-			if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4')): #there's a bookmark associated with this tag already
-				outDict['vidurl_2'][s]=vuPath
+			if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(tag['id'])+'.mp4')): #there's a bookmark associated with this tag already
+				tag['vidurl_2'][s]=vuPath
 			
 			# set old-app style parameters
 			if(int(s.split('_')[1])<lowestIndex):
 				lowestIndex=int(s.split('_')[1])
-				outDict['url'] = tnPath #thumbnail path
-				if(int(outDict['type'])==4): #static telestration - add teleurl only for these tags
-					outDict['teleurl']=tlPath
-					outDict['telefull']=tfPath
-				if(int(outDict['type'])==40): #video telestration - add televid only for these tags
-					outDict['televid']=tvPath
-				if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(outDict['id'])+'.mp4')): #there's a bookmark associated with this tag already
-					outDict['vidurl']=vuPath
+				tag['url'] = tnPath #thumbnail path
+				if(int(tag['type'])==4): #static telestration - add teleurl only for these tags
+					tag['teleurl']=tlPath
+					tag['telefull']=tfPath
+				if(int(tag['type'])==40): #video telestration - add televid only for these tags
+					tag['televid']=tvPath
+				if(os.path.exists(c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(tag['id'])+'.mp4')): #there's a bookmark associated with this tag already
+					tag['vidurl']=vuPath
+					#--- THIS IS A PATCH FOR OLD BUILDS! REMOVE ASAP!!! --- #
+					os.system('ln -s '+c.wwwroot+event+'/video/'+sPrefix+'vid_'+str(tag['id'])+'.mp4'+' '+c.wwwroot+event+'/video/vid_'+str(tag['id'])+'.mp4')
+					tag['vidurl']='http://'+pu.uri.host+'/events/'+event+'/video/vid_'+str(tag['id'])+'.mp4'
+					#--- end patch --- #
+
 			#end if sIdx<lowestIndex
+		# go through each field in the tag and format it properly
+		for field in tag:
+			if(not field in newFields):
+				field = field.replace("_"," ") #replace all _ with spaces in the field names
+			if(tag[field]== None):
+				tag[field] = ''
+			else:
+				outDict[field]=tag[field]
 
 		outDict['islive']=event=='live'
 		if(sockSend):
@@ -3357,18 +3412,24 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 		import sys
 		return _err(str(sys.exc_traceback.tb_lineno)+' '+str(e))
 #end tagFormat
-# returns timestamp formatted as specified
 def _time(format='%Y-%m-%d %H:%M:%S',timeStamp=False):
+	""" Returns timestamp formatted as specified
+		Args:
+			format(str,optional): hashed email. default: "none"
+			timeStamp(bool,optional): return only timestamp in seco
+		API args:
+			N/A
+		Returns:
+			(dictionary): 
+				success(bool): whether the sync was successful
+	""" 
+
 	from time import time as tm
 	if (timeStamp):
 		return str(int(tm()*1000))
 	from datetime import datetime as dt
 	return dt.fromtimestamp(tm()).strftime(format)
 #end time
-#######################################################
-#returns file name for the video that contains appropriate time 
-#if totalTime is set to True, returns the length of the event in seconds
-#######################################################
 def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,sIdx="",maxOnFail=False):
 	""" Looks through an m3u8 playlist looking for the segment with the desired time.
 		Args:
@@ -3376,7 +3437,7 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 			number(bool,optional): return only the number of the segment (not the actual file name). default: False
 			event(str,optional): event folder name. default: "live"
 			results(dict,optional): if passed, this will contain remainder, number, firstSegm, lastSegm, startTime
-			totalTime(bool,optional): return total time of the playlist. default: False
+			totalTime(bool,optional): causes function to return total time of the playlist (not segment name). default: False
 			sIdx(str,optional): source index. default: ""
 			maxOnFail(bool,optional): if could not find desired time (i.e. seekTo > totalTime), return maximum possible time from the playlist. default:False
 		Returns:
@@ -3448,70 +3509,18 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 		results['number']=_exNum(fileName,startAtIdx=len(sSuffix))
 		return results['number']
 	return fileName
-#end calcThumb
-
-#######################################################
-# uploads a file to the server
-# fileToUpload - full path to the file to upload
-# event - event name
-# destination - where to upload the file: 
-# extradata - array of strings that will be added to the url: ...upload/video/eventid/extra/params/here
-# (video) ./event/video, (thumbs) ./event/thumbs or (root) ./event/
-#######################################################
-def _uploadFile(fileToUpload,event="live",destination="video",extraData=[]):
-	from poster.encode import multipart_encode
-	from poster.streaminghttp import register_openers
-	import urllib2
-	try:
-		if (not os.path.exists(fileToUpload)):
-			return False
-		pu.disk.file_set_contents(c.wwwroot+event+"/uploading","1")
-		# get the id of the event
-		evtHid = pu.disk.file_get_contents(c.wwwroot+event+"/eventid.txt")
-		# upload the file
-		# Register the streaming http handlers with urllib2
-		register_openers()
-		
-
-		# Start the multipart/form-data encoding of the file "DSC0001.jpg"
-		# "image1" is the name of the parameter, which is normally set
-		# via the "name" parameter of the HTML <input> tag.
-
-		# headers contains the necessary Content-Type and Content-Length
-		# datagen is a generator object that yields the encoded parameters
-		datagen, headers = multipart_encode({"qqfile": open(fileToUpload, "rb")})
-
-		# Create the Request object
-		urladdr = "http://myplayxplay.net/maxdev/upload/"+destination+"/"+evtHid+"/"+("/".join(extraData))+"?timestamp="+_time(timeStamp=True)
-		request = urllib2.Request(urladdr, datagen, headers)
-		# Actually do the request, and get the response
-		response = urllib2.urlopen(request).read()
-		if(os.path.exists(c.wwwroot+event+"/uploading")):
-			os.remove(c.wwwroot+event+"/uploading")
-		try:
-			# try to return json-formatted response if it was json
-			return json.loads(response)
-		except:
-			# if the response wasn't json, just return it as is
-			return response
-	except Exception as e:
-		if(os.path.exists(c.wwwroot+event+"/uploading")):
-			os.remove(c.wwwroot+event+"/uploading")
-		return False
-#end uploadFile
-# returns true if there are files being uploaded at the moment
-def _uploading(event="live"):
-	return os.path.exists(c.wwwroot+event+"/uploading")
-# shortcut for outputting text to the screen
-def _x(txt):
-	pu.sstr.pout(txt)
+#end thumbname
 
 def _xmldict(data,key="",depth=0):
-	""" Convert a dictionary to xml
+	""" Convert a dictionary or list to xml
 		Args:
 			data(dict): dictionary to parse (or any other object type)
 			key(str,optional): dictionary key (required when passing dictionary, ignored otherwise)
-			depth(int,optional): level within a dictionary (translates to how many tabs to put before the string) NB: this function will parse the ENTIRE 'data', this is used only for formatting the
+			depth(int,optional): current level within a dictionary (translates to how many tabs to put before the string) NB: the function will parse the ENTIRE 'data', this parameter is used only for formatting the XML output
+		API args:
+			N/A
+		Returns:
+			(str): formatted XML output
 	"""
 	xmlOutput = ""
 	try:
@@ -3553,7 +3562,14 @@ def _xmldict(data,key="",depth=0):
 	return xmlOutput	
 #end xmldict
 def _xmltype(variable):
-	""" detect variable type (used for xml parsing)"""
+	""" Determine variable type (used for xml parsing) and return it as string
+		Args:
+			variable(mixed): variable whose type needs to be determined
+		API args:
+			N/A
+		Returns:
+			(str): name of type
+	"""
 	varType = type(variable)
 	if(varType is int or varType is long):
 		return "integer"

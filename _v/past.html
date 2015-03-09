@@ -270,15 +270,15 @@ function processQueue(itemDone, itemError) {
 	  data: {'event':evt},
 	  success: function(data, textStatus, xhr){
 	  	console.log(data);
-		$.ajax({
-		  url: 'dlstart.php',
-		  data: {'event':evt},
-		  success: function(data, textStatus, xhr){
+		// $.ajax({
+		//   url: 'dlstart.php',
+		//   data: {'event':evt},
+		//   success: function(data, textStatus, xhr){
 
-		    //called when successful - start checking for progress after 1 second
-		    setTimeout(getProgress,1000);
-		  }
-		});
+		//     //called when successful - start checking for progress after 1 second
+	    setTimeout(getProgress,2000);
+		//   }
+		// });
 	  }
 	});
 }//end processQueue

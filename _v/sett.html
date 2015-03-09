@@ -79,6 +79,31 @@ def iff(cond,if_true,if_false=""):
 		</section>
 	</div>
 @end
+@if 'uploads' in settings:
+	<div class="row">
+		<section name="uploads"> 
+			<div class="col_2">
+				Automatically upload past events to cloud
+			</div> 
+			<div class="col_10">
+				<input type="checkbox" name="autoupload" @iff(int(settings['uploads']['autoupload']),'checked','')/>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+	</div>
+	<div class="row">
+		<section name="uploads"> 
+			<div class="col_2">
+				Automatically upload live event to cloud
+			</div> 
+			<div class="col_10">
+				<input type="checkbox" name="liveupload" @iff(int(settings['uploads']['liveupload']),'checked','')/>
+				<ajaxSpin></ajaxSpin>
+			</div>
+		</section>
+	</div>
+
+@end
 </div>
 
 <script type="text/javascript">

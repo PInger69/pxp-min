@@ -1,5 +1,5 @@
 # app version
-ver 					= "1.1.3"
+ver 					= "1.1.5"
 # where application executables are
 approot 				= "/var/www/html/min/"
 # where events and config files are stores
@@ -24,5 +24,7 @@ sessdir 				= wwwroot+"session/"
 logFile					= wwwroot+"_db/pxpservicelog.txt"
 maxLogSize 				= 50 * 1024 * 1024 #50 Mb
 
-#1.0.11
-# -backup functionality
+# maximum number of video sources in the system
+maxSources				= 10
+
+cloud					= "http://myplayxplay.net/maxdev/"

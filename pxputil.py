@@ -14,15 +14,28 @@ import StringIO
 import pybonjour
 import select
 import psutil
-#sqlite database management class
 class c_sqdb:
+	"""Sqlite database management class"""
 	con = None
 	c   = None
 	autocommit = True
 	def __init__(self, dbpath=False):
+		""" Instantiate the class
+			Args:
+				dbpath(str,optional): path to the .db file. if specified, it will automatically open. default: False
+			Returns:
+				none
+		"""
+
 		if dbpath:
 			self.open(dbpath)
 	def close(self):
+		""" Close the db connection
+			Args:
+				none
+			Returns:
+				none
+		"""
 		self.autocommit = True
 		try:
 			if self.c:
@@ -34,6 +47,12 @@ class c_sqdb:
 			pass
 	#end close()
 	def commit(self):
+		""" Commit a transaction
+			Args:
+				none
+			Returns:
+				none
+		"""
 		try:
 			autoBack = self.autocommit #save the original state of the autocommit 
 			self.autocommit = True
@@ -44,8 +63,13 @@ class c_sqdb:
 			pass
 	#end commit()
    
-	#returns all rows of a query as a dictionary (associative array)
 	def getasc(self):
+		""" Returns all rows of a query as a dictionary (associative array)
+			Args:
+				none
+			Returns:
+				(dictionary)
+		"""
 		try:
 			rows = []
 			cols = []
@@ -67,36 +91,61 @@ class c_sqdb:
 		return rows
 	#end getasc()
    
-	#returns one row from the query
 	def getrow(self):
+		""" Returns one row from the query (as list) 
+			Args:
+				none
+			Returns:
+				(list)
+		"""
 		if self.c:
 			return self.c.fetchone()
 		return ()
 	#end getrow()
    
-	#returns all the query rows as an array
 	def getrows(self):
+		""" Returns all the query rows as an array
+			Args:
+				none
+			Returns:
+				(list)
+		"""
 		if self.c:
 			return self.c.fetchall()
 		return []
 	#end getrows()
    
-	#returns ID of the last inserted entry
 	def lastID(self):
+		""" Returns ID of the last inserted entry
+			Args:
+				none
+			Returns:
+				(str)
+		"""
 		if self.c:
 			return self.c.lastrowid
 		return False
 	#end lastID()
 
-	#returns number of rows
 	def numrows(self):
+		""" returns number of rows from the last query 
+			Args:
+				none
+			Returns:
+				(int)
+		"""
 		if self.c:
 			return self.c.rowcount
 		return 0
 	#end numrows()
    
-	#creates connection to the database
 	def open(self, dbpath):
+		""" Creates connection to the database (if it wasn't opened during the init())
+			Args:
+				none
+			Returns:
+				(bool): whether the command was successful
+		"""
 		#open the connection:
 		try:
 			if self.con:#if a database connection is already open - close it
@@ -123,8 +172,15 @@ class c_sqdb:
 		return success
 	#end open()
 	
-	#executes an sql query
 	def query(self, sql, data, autocommit=True):
+		""" Executes an sql query
+			Args:
+				sql(str): sql query to execute
+				data(tuple): data to pass to the query
+				autocommit(bool,optional): Whether to commit the query automatically once it executes. default: True
+			Returns:
+				(bool): whether the query executed successfully
+		"""
 		error = False
 		try:#to prevent sql errors from interrupting the script
 			self.c.execute(sql,data)#run the query
@@ -135,8 +191,14 @@ class c_sqdb:
 		#success when there was at least 1 row affected
 		return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
 	#end query()
-   	#executes a query string
 	def qstr(self, query, multiple=False):
+		""" Executes a query string
+			Args:
+				query(str): query to execute
+				multiple(bool,optional): indicates whether query contains multiple queries (semicolon-delimeted). default: False
+			Returns:
+				(bool): whether the query executed successfully
+		"""
 		error = False
 		try:#to prevent sql errors from interrupting the script
 			if(multiple):
@@ -150,6 +212,12 @@ class c_sqdb:
 		#success when there was at least 1 row affected
 		return (not error) or (self.con.total_changes >= 1) #no need to do (changes>1) AND (not error): if changes >1 then error will be false
 	def rollback(self):
+		""" Roll back the last transaction
+			Args:
+				none
+			Returns:
+				none
+		"""
 		try:
 			self.autocommit = True
 			if self.con:
@@ -157,16 +225,30 @@ class c_sqdb:
 		except:
 			pass
 	#end commit()
-	#begin transaction - user must commit or rollback manually
 	def transBegin(self):
+		""" Begin transaction - user must commit or rollback manually
+			Args:
+				none
+			Returns:
+				none
+		"""
 		self.autocommit = False
 	#end transBegin
 #end c_sqdb
 	#disk operations class
 
-#disk utilities class
 class c_disk:
+	""" disk utilities class """
 	def cfgGet(self, cfgfile=c.pxpConfigFile, section=False, parameter=False):
+		""" Load configuration from the config file.
+			Args:
+				cfgfile(str,optional): path to the config file.
+				section(str,optional): whether to return only a specfic section from the file. if unspecified, entire configuration will be returned default: False
+				parameter(str,optional): name of the parameter from the section to retun. default: False
+			Returns:
+				(mixed): returns a string if it's only a specific parameter, a dictionary of the section or entire file otherwise
+		"""
+
 		import json
 		try:#load all the settings
 			settings = json.loads(self.file_get_contents(cfgfile))
@@ -178,7 +260,7 @@ class c_disk:
 					if(parameter in settings[section]): #parameter exists in this section - return it
 						return settings[section][parameter]
 					else:#parameter was not found in this section
-						return {}
+						return False
 				else:#parameter was not specified, return entire section
 					return settings[section]
 			else: #specified section does not exist
@@ -186,15 +268,24 @@ class c_disk:
 		else: #section was not specified
 			return settings #return all the settings
 	#end cfgGet
-	#assigns a config file (either entire thing or a section, based on input)
 	def cfgSet(self, cfgfile=c.pxpConfigFile, section=False, parameter=False, value=False, jsonData=False):
+		""" Save a config file (either entire thing or a section, based on input)
+			Args:
+				cfgfile(str,optional): path to the config file.
+				section(str,optional): whether to return only a specfic section from the file. if unspecified, entire configuration will be returned default: False
+				parameter(str,optional): name of the parameter from the section to retun. default: False
+				value(str,optional): value of the parameter to set. default: False
+				jsonData(dictionary,optional): all of the settings are specified in here, not just a single section. NB: THIS WILL OVERWRITE THE ENTIRE SETTINGS FILE!
+			Returns:
+				(bool): True
+		"""
 		import json
 		try: #load all the settings (to make sure nothing gets overwritten)
 			settings = json.loads(self.file_get_contents(cfgfile))
 		except:
 			#could not load settings - probably error with the file or file doesn't exist
 			settings = {}
-		if(jsonData): #all of the settings are specified here - just overwrit the file WATCH OUT!!!!!
+		if(jsonData): #all of the settings are specified here - just overwrite the file WATCH OUT!!!!!
 			self.file_set_contents(cfgfile, json.dumps(jsonData))
 		# setting a specific section
 		if(not section):
@@ -213,10 +304,22 @@ class c_disk:
 		return True
 	#end cfgSet
 	def copy(self, src, dst):
+		""" Copy file
+			Args:
+				src(str): full path of file to copy
+				dst(str): full path of destination
+			Returns:
+				none
+		"""
 		import shutil
 		shutil.copy(src,dst)
-	# returns size of a directory in bytes
 	def dirSize(self,path):
+		""" Recursively calculates size of a directory in bytes
+			Args:
+				path(str): full path to the directory
+			Returns:
+				(int): size in bytes or 0 if the directory does not exist
+		"""
 		if((path.lower().find('.ds_store')>=0) or (not os.path.exists(path))):
 			return 0
 		if(os.path.isfile(path)):
@@ -226,8 +329,13 @@ class c_disk:
 		for dirname in os.listdir(path):
 			total_size += self.dirSize(path+'/'+dirname)
 		return total_size
-	#retrieves file contents as a string
 	def file_get_contents(self, filename):
+		""" Reads an entire file
+			Args:
+				filename(str): file to read
+			Returns:
+				(str): content of the file
+		"""
 		import os
 		if(not os.path.exists(filename)):
 			return False
@@ -236,10 +344,24 @@ class c_disk:
 			contents = f.read()
 		return contents
 	def file_set_contents(self, filename,text):
+		""" Writes a file with the specified contents
+			Args:
+				filename(str): file to write
+				text(str): new contents of the file
+			Returns:
+				none
+		"""
 		f = open(filename,"w")
 		f.write(text)
 		f.close()	
 	def getCPU(self,pgid=0,pid=0):
+		""" Get cpu usage of a process
+			Args:
+				pgid(int,optional): process group id
+				pid(int, optional): process id. one of PID or PGID must be specified
+			Returns:
+				(int)
+		"""
 		totalcpu = 0
 		if(pgid):
 			#list of all processes in the system
@@ -268,7 +390,12 @@ class c_disk:
 	#end getCPU
 
 	def list(self):
-		""" lists all attached devices """
+		""" Lists all attached strage devices
+			Args:
+				none
+			Returns:
+				(list)
+		"""
 		drives = []
 		try:
 			if(osi.name=='mac'):
@@ -314,6 +441,13 @@ class c_disk:
 		return drives
 	#end disklist
 	def mkdir(self, dirpath, perm=0777):
+		""" Creates a directory
+			Args:
+				dirpath(str): full path to the directory
+				perm(int,optional): permissions for the new directory. default: 0777
+			Returns:
+				(bool) whether command was successful
+		"""
 		import os
 		try:
 			os.makedirs(dirpath,perm)
@@ -322,8 +456,11 @@ class c_disk:
 			return False
 	#end mkdir
 	def psGet(self,procSearch):
-		""" returns a list of PIDs of all processes matching the procSearch string
-		@param (str) procSearch - string to search for in a list of processes
+		""" Returns a list of PIDs of all processes matching the procSearch string
+			Args:
+				procSearch(str): string to search for in a list of processes
+			Returns:
+				(list)
 		"""
 		found = []
 		try:		
@@ -343,9 +480,13 @@ class c_disk:
 		except Exception as e:
 			print "[---]psGet:",e,sys.exc_traceback.tb_lineno
 		return found
-	#returns true if there is a specified process running
-	#checks if process is on (By name)
 	def psOn(self,process):
+		""" Returns true if there is a specified process running. Checks if process is on (by name)
+			Args:
+				process(str): process name
+			Returns:
+				(bool)
+		"""
 		if (osi.name=='windows'):	#system can be Linux, Darwin
 			#get all the processes for windows matching the specified one:
 			cmd = "tasklist | findstr /I "+process
@@ -367,7 +508,7 @@ class c_disk:
 				continue #skip processes that do not exist/zombie/invalid/etc.
 		return False
 	def quickEvtSize(self,mp4List):
-		""" does a quick estimate for event size based on the list of mp4 files in that event
+		""" Does a quick estimate for event size based on the list of mp4 files in that event
 			Args:
 				mp4List(dict): a dictionary containing URLs to the mp4 files (same as mp4_2 entry in each event from ajax/getpastevents call)
 			Returns:
@@ -398,21 +539,17 @@ class c_disk:
 		return totalSize
 	# end quickEvtSize
 
-	# def psOn(self, process):
-	# 	import platform, os
-	# 	if (platform.system()=="Windows"):
-	# 		#get all the processes for windows matching the specified one:
-	# 		cmd = "tasklist | findstr /I "+process
-	# 	else:
-	# 		#system can be Linux, Darwin
-	# 		#get all the processess matching the specified one:
-	# 		cmd = "ps -ef | grep \""+process+"\" | grep -v grep > /dev/null" #"ps -A | pgrep "+process+" > /dev/null"
-	# 	#result of the cmd is 0 if it was successful (i.e. the process exists)
-	# 	return os.system(cmd)==0
-	# #end psOn
-	# finds cpu usage by all processes with the same pgid
-	# reads sizeToRead from a specified udp port
 	def sockRead(self, udpAddr="127.0.0.1", udpPort=2224, timeout=0.5, sizeToRead=1):
+		""" Reads data from UDP socket
+			Args:
+				udpAddr(str,optional): ip address of the host. default: 127.0.0.1
+				udpPort(int,optional): udp port. default: 2224
+				timeout(float,optional): timeout in seconds. default: 0.5s
+				sizeToRead(int,optional): size in bytes to read from the socket. default: 1
+			Returns:
+				(str): read data
+		"""
+
 		import socket
 		sock = socket.socket(socket.AF_INET, # Internet
 							 socket.SOCK_DGRAM) # UDP
@@ -431,8 +568,16 @@ class c_disk:
 			#probably failed because bind didn't work - no need to worry
 			pass
 		return data
-	# sends msg to the specified socket
 	def sockSend(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True):
+		""" Sends data to the specified socket
+			Args:
+				msg(str): data to send to socket
+				sockHost(str,optional): ip address of the host. default: 127.0.0.1
+				sockPort(int,optional): udp port. default: 2232
+				addnewline(bool,optional): add new line to the end of the message. default: True
+			Returns:
+				none
+		"""
 		import socket
 		sent = 0
 		try:
@@ -452,7 +597,16 @@ class c_disk:
 			return e
 		return sent
 	def sockSendWait(self, msg, sockHost="127.0.0.1", sockPort=2232,addnewline=True,timeout=20):
-		""" sends a message to a socket and waits for a response """
+		""" Sends a message to a socket and waits for a response
+			Args:
+				msg(str): data to send to socket
+				sockHost(str,optional): ip address of the host. default: 127.0.0.1
+				sockPort(int,optional): udp port. default: 2232
+				addnewline(bool,optional): add new line to the end of the message. default: True
+				timeout(int,optional): how long to wait for response in seconds. default: 20s
+			Returns:
+				none
+		"""
 		import socket
 		sent = 0
 		chunkSize = 1024
@@ -479,9 +633,16 @@ class c_disk:
 		return recvd
 	# diskStat
 	def stat(self, humanReadable=True, path="/"):
-		""" returns information about a disk
-		@param (bool) humanReadable - returns sizes in human-friendly form (e.g. Kb Mb, Gb, etc.)
-		@param (str) path - path to the mounted drive
+		""" Returns information about a disk
+			Args:
+				humanReadable(bool): return sizes in human-friendly form (e.g. Kb Mb, Gb, etc.). if false, returns sizes in bytes. default: False
+				path(str): path to the mounted drive. default: /
+			Returns:
+				(dictionary):
+					total: total disk size
+					free: free bytes
+					used: used bys
+					percent: how much of the disk is used
 		"""
 		st = os.statvfs(path)
 		diskFree = st.f_bavail * st.f_frsize
@@ -493,6 +654,12 @@ class c_disk:
 	 	return {"total":diskTotal,"free":diskFree,"used":diskUsed,"percent":str(diskPrct)}
 	 #end stat
 	def sizeFmt(self, size):
+		""" Formats the sizes in bytes in human readable form.
+			Args:
+				size(int): size in bytes
+			Returns:
+				(str)
+		"""
 		s = float(size)
 		#size names
 		sizeSuffix = ['b','KB','MB','GB','TB','PB','EB','ZB','YB']
@@ -504,9 +671,12 @@ class c_disk:
 			s = s / 1024
 		return ""
 	def treeList(self, path, prefix=""):
-		""" returns directory tree (in a linear list) 
-		@param (str) path - full path to the source folder
-		@param (str) prefix - prefix to append to each entry in the returned list
+		""" Returns directory tree (in a linear list) 
+			Args:
+				path(str): full path to the source folder
+				prefix(str,optional): prefix to append to each entry in the returned list
+			Returns:
+				(list)
 		"""
 		tree = []
 		if(not os.path.exists(path)):
@@ -524,19 +694,35 @@ class c_disk:
 	#end treeRead
 #end c_disk class
 
-#encryption/string operations class
 class c_enc:
-	#return sha1 hash of the string
+	"""encryption/string operations class"""
 	def sha(self,string):
+		""" Return sha1 hash of the string
+			Args:
+				string(str): string to hash
+			Returns:
+				(str)
+		"""
 		import hashlib
 		s = hashlib.sha1(string)
 		return s.hexdigest()
-	#repeats the string up to 'length' characters
 	def repeat_str(self, string_to_expand, length):
-	   return (string_to_expand * ((length/len(string_to_expand))+1))[:length]
-	# performs bitwise exclusive or on 2 strings 
-	# must be of equal length, otherwise result will be trimmed to the shortest string
+		""" Repeats the string up to 'length' characters
+			Args:
+				string_to_expand(str): original string
+				length(int): what should be the maximum new length of the string
+			Returns:
+				(str)
+		"""
+		return (string_to_expand * ((length/len(string_to_expand))+1))[:length]
 	def sxor(self, s1,s2):
+		""" Performs bitwise exclusive or on 2 strings. Must be of equal length, otherwise result will be trimmed to the shortest string
+			Args:
+				s1(str):string to compare
+				s2(str):string to compare
+			Returns:
+				(str)
+		"""
 		# convert strings to a list of character pair tuples
 		# go through each tuple, converting them to ASCII code (ord)
 		# perform exclusive or on the ASCII code
@@ -587,11 +773,10 @@ class c_osi:
 			self.SN = serialNum.strip()
 		except Exception as e:
 			print "osi init error: ", e, sys.exc_traceback.tb_lineno
-#web input/output class
 class c_io:
+	"""web input/output class"""
 	frm = None
 	def __init__(self):
-		# import cgitb; cgitb.enable()
 		if (osi.name=='linux'):
 			pass #on linux using flask field storage is managed externally
 		elif (osi.name == 'mac'):
@@ -599,6 +784,12 @@ class c_io:
 			if not self.frm:
 				self.frm = cgi.FieldStorage()
 	def get(self, fieldName):
+		""" Get a POST parameter from the form
+			Args:
+				none
+			Returns:
+				none
+		"""
 		try:
 			if(osi.name=='linux'):
 				return self.frm[fieldName]
@@ -607,8 +798,13 @@ class c_io:
 		except:
 			return False
 	#end get
-	# checks if there is connection to myplayxplay.net website
 	def isweb(self):
+		""" Checks if there is connection to myplayxplay.net website
+			Args:
+				none
+			Returns:
+				(bool)
+		"""
 		import urllib2
 		from time import time as tm				
 		try:
@@ -618,6 +814,12 @@ class c_io:
 		except Exception as e: pass
 		return False
 	def myIP(self,allDevs=False):
+		""" Determines local IP address
+			Args:
+				allDevs(bool,optional): whether to retreive IP addresses of all network adapters. default: False
+			Returns:
+				(mixed): string with IP if allDevs is False, a list with all IPs otherwise
+		"""
 		try:
 			import sys, netifaces as ni
 			ips = []
@@ -643,6 +845,12 @@ class c_io:
 			return ips
 		return ipaddr
 	def myName(self):
+		""" Find local computer name (i.e. hostname)
+			Args:
+				none
+			Returns:
+				(str)
+		"""
 		try:
 			name	= socket.gethostname() #computer name
 			if(name[-6:]=='.local'):# hostname ends with .local, remove it
@@ -654,18 +862,32 @@ class c_io:
 			print "[---]io.myName: ", e, sys.exc_traceback.tb_lineno
 		return ""	
 	def ping(self,host):
+		""" Ping a host 
+			Args:
+				host(str): host address
+			Returns:
+				(bool): whether the host is alive
+		"""
 		try:
 			return os.system("ping -c 1 -W 1000 "+host+" > /dev/null") == 0
 		except:
 			return False
 	def sameSubnet(self, ip1,ip2):
-		"""returns true if both ip addresses belong to the same subnet"""
+		""" Returns true if both ip addresses belong to the same subnet"""
 		try:
 			return ".".join(ip1.split('.')[:3])==".".join(ip2.split('.')[:3])
 		except:
 			return False
 	#end sameSubnet
 	def send(self,url,params,jsn=False):
+		""" Sends a POST request
+			Args:
+				url(str): where to send the request
+				params(dictionary): fields to include in the request
+				jsn(bool,optional): whether to to parse the JSON object in the response. default: False
+			Returns:
+				(mixed): bool(success/fail) if jsn==False, dictionary otherwise
+		"""
 		import httplib, urllib, urlparse, json
 		try:
 			headers = {"Content-type": "application/x-www-form-urlencoded", "Accept": "text/plain"}
@@ -683,6 +905,12 @@ class c_io:
 			return False
 	#end send
 	def upload(self, filePath):
+		""" Upload a file from web interface to this python script
+			Args:
+				filePath(str): where to save the file
+			Returns:
+				(bool): received the file successfully
+		"""
 		form = self.frm
 		# A nested FieldStorage instance holds the file
 		fileitem = form['file']
@@ -699,8 +927,57 @@ class c_io:
 		return False
 		#end fileitem
 	#end upload
-	# creates a url call (i.e. a 'get' request)
+	def uploadCloud(self,url,filePath,params={}):
+		""" Uploads a file to a remote location (via form POST request)
+			Args:
+				url(str): url where to upload the file (e.g. www.server.com/upload.php)
+				filePath(str): full path to the local file to upload
+				params(dict,optional): any additional parameters to send with the file. default: {}.
+			Returns:
+				(mixed): upon successful request, response from the remote server. if request failed or the local file does not exist, will return False
+		"""
+		from poster.encode import multipart_encode
+		from poster.streaminghttp import register_openers
+		import urllib2
+		try:
+			if (not os.path.exists(filePath)):
+				return False
+			# Register the streaming http handlers with urllib2
+			register_openers()
+
+			# Start the multipart/form-data encoding of the file "DSC0001.jpg"
+			# "image1" is the name of the parameter, which is normally set
+			# via the "name" parameter of the HTML <input> tag.
+
+			# headers contains the necessary Content-Type and Content-Length
+			# datagen is a generator object that yields the encoded parameters
+			formFields = params
+			formFields.update({"qqfile": open(filePath, "rb")})
+			datagen, headers = multipart_encode(formFields)
+
+			# Create the Request object
+			request = urllib2.Request(url, datagen, headers)
+			# Actually do the request, and get the response
+			response = urllib2.urlopen(request).read()
+			try:
+				# try to return json-formatted response if it was json
+				return json.loads(response)
+			except:
+				# if the response wasn't json, just return it as is
+				return response
+		except Exception as e:
+			return False
 	def url(self,url,params=False,timeout=60, username=False, password=False):
+		""" Creates a url call (i.e. a 'get' request)
+			Args:
+				url(str): url to request
+				params(dictionary,optional): additional parameters to send along with request. default: False
+				timeout(int, optional): time in seconds to wait before declaring a timeout. default: 60s
+				username(str,optional): username for BASIC authentication. default: False.
+				password(str,optional): password for BASIC authentication. default: False.
+			Returns:
+				(str): response text
+		"""
 		try:
 			if(params):
 				data = urllib.urlencode(params)
@@ -719,8 +996,16 @@ class c_io:
 		except Exception as e:
 			print "[---]urlERR:",e, sys.exc_traceback.tb_lineno, '---url:',url
 			return False
-	# downloads a file form url to dst, does chunked download (in case the file is large)
-	def urlFile(self,url,params=False,timeout=60,dst=False):
+	def urlFile(self,url,params=False,timeout=60,dst="./file"):
+		""" Downloads a file form url to dst, does chunked download (in case the file is large)
+			Args:
+				url(str): link to the remote file
+				params(dictionary,optional): additional parameters to send along with request. default: False
+				timeout(int, optional): time in seconds to wait before declaring a timeout. default: 60s
+				dst(str,optional): where to save the file. default: ./file
+			Returns:
+				(bool): whether the download was successful
+		"""
 		try:
 			if(params):
 				data = urllib.urlencode(params)
@@ -737,11 +1022,18 @@ class c_io:
 					fp.write(chunk)
 				#end while
 			#end with
+			return True
 		except Exception as e:
 			print "[---]urlFile",e,sys.exc_traceback.tb_lineno, url
 			return False
 	#end urlFile
 	def urlexists(self,urlpath):
+		""" Check if the url is responsive
+			Args:
+				urlpath(str): url to check
+			Returns:
+				(bool)
+		"""
 		import httplib
 		# remove the beginning http:// if it's there
 		prefix = "http://"
@@ -763,15 +1055,27 @@ class c_io:
 	#end urlexists
 #end c_io class
 
-#session management class
 class c_session(object):
+	""" Session management class """
 	def close(self):
-		self.data.close()
-	def destroy(self):
+		""" Close the session
+			Args:
+				none
+			Returns:
+				none
+		"""
 		try:
 			self.data.close()
 		except:
 			pass
+	def destroy(self):
+		""" Close session and destroy the session variables
+			Args:
+				none
+			Returns:
+				none
+		"""
+		self.close()
 		try:
 			self.data = None
 		except:
@@ -779,6 +1083,13 @@ class c_session(object):
 	#end close
 	# by default session expires in 1 day
 	def start(self, expires=24*60*60, cookie_path="/"):
+		""" Start a new session
+			Args:
+				expires(int,optional): expiration time in seconds for the session. default: 86400s (1 day)
+				cookie_path(str,optional): where to store cookies with session ID. default: /
+			Returns:
+				none
+		"""
 		try:
 			string_cookie = os.environ.get('HTTP_COOKIE', '')
 			self.cookie = Cookie.SimpleCookie()
@@ -809,6 +1120,13 @@ class c_session(object):
 			print(sys.exc_traceback.tb_lineno, e)
 	#end start
 	def set_expires(self, expires=24*60*60):
+		""" Sets new expiration time for a session
+			Args:
+				expires(int, optional): new expiration time in seconds from current time. default: 1 day
+			Returns:
+				none
+		"""
+
 		if expires == '':
 			self.data['cookie']['expires'] = ''
 		elif isinstance(expires, int):
@@ -870,6 +1188,7 @@ class c_session(object):
 # 		return devices
 
 class c_ssdp:
+	""" ssdp discovery class """
 	# code adapted from https://gist.github.com/dankrause/6000248
 	class SSDPResponse(object): #creates an object out of an SSDP device
 		class _FakeSocket(StringIO.StringIO): #used to extract headers from the SSDP response
@@ -965,43 +1284,50 @@ class c_ssdp:
 				pass
 		return devices
 	
-#string class
 class c_str():
-	#outputs a dictionary as json-formatted response
+	""" String class - used for printing stuff to browser"""
 	def jout(self, dictionary):
+		""" Outputs a dictionary as json-formatted response
+			Args:
+				dictionary(dictionary): what to output to browser
+			Returns:
+				none
+		"""
 		import json
 		print("Content-Type: text/html\n")
 		print(json.dumps(dictionary))
-	#outputs a regular text to screen (with html header)
 	def pout(self, text):
+		""" Outputs a regular text to screen (with html header)
+			Args:
+				text(str): text to output
+			Returns:
+				none
+		"""
 		print("Content-Type: text/html\n")
 		print(text)
 #end string class
 
-##################################################################
-#					   timed thread class						 #
-#																 #
-#  parameters:													 #
-#	callback - function to be called when the timeout expires	#
-#	params - parameters to the callback function				 #
-#	period - how often to call the callback function			 #
-#			 if period is zero, the function will only			 #
-#			 execute once										 #
-#																 #
-#																 #
-#  example usage:												 #
-#  given a function:											 #
-#																 #
-#  def tst(param1,param2)										 #
-#																 #
-#  a = TimedThread(tst,("a",5),3)								 #
-#																 #
-#  this will call tst("a",5) every 3 seconds					 #
-#																 #
-##################################################################
-# timed thread class. 
 class c_tt(Thread):
+	""" Timed thread class. The functions called from this class execute on separate threads. Take care not to have any infinite loops, otherwise the python application will never terminate.
+
+		example usage. Given a function:											
+																	
+		def tst(param1,param2)										
+																	
+		a = TimedThread(tst,("a",5),3)								
+																	
+		this will call tst("a",5) every 3 seconds
+	"""
 	def __init__(self,callback,params=(),period=0, autostart=True):
+		""" Constructor
+			Args:
+				callback(function): to be called when the timeout expires
+				params(tuple,optional): parameters to the callback function. default: ()
+				period(int,optional): how often to call the callback function. if period is zero, the function will only execute once. default: 0
+				autostart(bool,optional): whether to start the function automatically. default: True
+			Returns:
+				none
+		"""
 		super(TimedThread, self).__init__()
 		self.running = True
 		self.timeout = period #how often to run a specified function
@@ -1011,9 +1337,21 @@ class c_tt(Thread):
 		if(autostart):
 			self.start()
 	def stop(self):
+		""" Set the .running property as false
+			Args:
+				none
+			Returns:
+				none
+		"""
 		self.running = False
  
 	def run(self):
+		""" Start the thread
+			Args:
+				none
+			Returns:
+				none
+		"""
 		tm_start = time.time()
 		try: #run the function immediately
 			if(type(self.args) is tuple):
@@ -1050,17 +1388,23 @@ class c_tt(Thread):
 		#end while
 	#end run
 	def kill(self):
+		""" Stop the thread
+			Args:
+				none
+			Returns:
+				none
+		"""
 		try:
 			self.running = False
 			self.stop()
 			self.join()
 		except:
 			pass
+#end timed thread class
 
 
-
-#url utilities class
 class c_uri:
+	"""url utilities class"""
 	uriString = ""
 	host = ""
 	uriList = []
@@ -1102,8 +1446,13 @@ class c_uri:
 			return ifempty
 		return self.uriList[segnum]
 	#end segment
-	#returns query string (if one is present, false otherwise)
 	def query(self):
+		""" Returns query string 
+			Args:
+				none
+			Returns:
+				(mixed): returns the query string if one is present, False otherwise
+		"""
 		if len(self.uriQuery)>0:
 			return self.uriQuery
 		return False
@@ -1111,7 +1460,15 @@ class c_uri:
 #end uri class
 
 class c_bonjour:
+	""" bonjour service class """
 	def discover(self, regtype, callback):
+		""" Discover a device
+			Args:
+				regtype(str): bonjour protocol registration type
+				callback(function): method to call when discovery is complete
+			Returns:
+				none
+		"""
 		# list of devices that are queried on the network, in case there are other matches besides the specified one (internal only)
 		queried  = []
 		# don't bother if a device is unreachable
@@ -1183,8 +1540,13 @@ class c_bonjour:
 		finally:
 			browse_sdRef.close()
 	#end discover
-	# parses txtRecord in VAR=VALUE format into a dictionary
 	def parseRecord(self,txtRecord):
+		""" Parses txtRecord in VAR=VALUE format into a dictionary
+			Args:
+				txtRecord(str): record in VAR=VALUE format
+			Returns:
+				(dictionary)
+		"""
 		if(not txtRecord):
 			return {}
 		length = len(txtRecord)
@@ -1208,6 +1570,15 @@ class c_bonjour:
 		return records
 	#end extractStream
 	def publish(self, regtype, name, port, txtRecord=""):
+		""" Publish the local device on bonjour
+			Args:
+				regtype(str): bonjour registration type
+				name(str): what to name the local computer on the bonjour service list
+				port(str): port that will be identified when this computer is discovered on the network
+				txtRecord(str,optional): additional text record to send along with registration
+			Returns:
+				none
+		"""
 		try:
 			# gets called when bonjour registration is complete
 			def register_callback(sdRef, flags, errorCode, name, regtype, domain):
@@ -1233,9 +1604,9 @@ class c_bonjour:
 		except Exception as e:
 			print "[---]bonjour.publish",e
 			pass
-
 #end bonjour class
-osi = c_osi() #os info
+
+osi = c_osi()
 db = c_sqdb
 disk = c_disk()
 enc = c_enc()

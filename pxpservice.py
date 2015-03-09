@@ -6,7 +6,7 @@ from pxputil import TimedThread
 from urlparse import parse_qsl
 from itertools import izip_longest
 import camera, constants as c, copy, json, os, psutil, pxp, pxputil as pu, signal, socket, subprocess as sb, time
-import sys, shutil, hashlib, re
+import glob, sys, shutil, hashlib, re
 
 # big broadcast queue - queue containing all of the sent messages for every client that it was sent to
 # in this format:
@@ -65,6 +65,7 @@ sockInPort = 2232
 ##########################
 class debugLogger(object):
     """debugLogger class used for printing and logging debug information"""
+    
     #these constants define log levels/groups
     ALL            = 0xFFFFFFFF #32-bit mask
 
@@ -94,9 +95,10 @@ class debugLogger(object):
 
     MN             = 1<<21# main function
 
-    #these properties define which of the above groups will be logged and whether the log file will written
-    LVL            = PCM|KLL|ERR|MN #ALL & ~(SHL|DHL|ECN) #ERR|KLL|MN|TST|PCM|SRC|SRM #print level (32-bit integer)
-    LOG            = 1      #whether to log whatever is being printed to file
+    #this property defines which of the above groups will be logged 
+    LVL            = KLL|ERR|MN|SRC # USE WISELY!! too many groups will cause the log file to grow disproportionately large!
+    #whether to log to file as well as to screen
+    LOG            = 1 #only enable if you suspect there might be a problem, or for debugging
 
     def __init__(self):
         super(debugLogger, self).__init__()      
@@ -107,13 +109,25 @@ class debugLogger(object):
         except Exception, e:
             pass
     def setLog(self,log):
-        """ set whether the log will be written to the file or not"""
+        """ set whether the log will be written to the file or not 
+            Args:
+                log(bool): True - write to file and screen, False - only output to screen
+        """
         try:
             self.LOG = int(log)
-            self.prn(self.DBG,"writing to log file set:")
+            self.prn(self.DBG,"writing to log file set:",self.LOG)
         except Exception, e:
             pass
     def prn(self, kind, *arguments, **keywords):
+        """ Outputs log statements
+            Args:
+                kind(int): bitmask for the type of log statement
+                arguments(list): list of items to print on the same line
+                keywords(dict): named arguments (not used here)
+            Returns:
+                none
+
+        """
         if(not (kind & self.LVL)): #only print one type of event
             return
         # print arguments
@@ -132,7 +146,7 @@ class debugLogger(object):
                 print "[---]prn:",e, sys.exc_traceback.tb_lineno
     #end prn
     def _cmdName(self,cmd):
-        # a command lookup dictionary
+        """ a command lookup dictionary """
         names = {
             self.CMD:"CMD",
             self.ECN:"ECN",
@@ -180,23 +194,52 @@ class backupEvent(object):
     STAT_NOSPC= 1<<6 #no space on any drives
     autoDir = "/pxp-autobackup/"
     manualDir = "/pxp-backup/"
-    def __init__(self, hid, priority, dataOnly=False, auto=False, restore=False, backupPath = False, remoteParams = False):
+    def __init__(self, hid, priority, dataOnly=False, auto=False, restore=False, backupPath = False, cloud=False, remoteParams = {}):
+        """ Constructor for the event that will be backed up
+            Args:
+                hid(str): hid of the event (from the database)
+                priority(int): priority of the backed up event - events of higher priority will be backed up before events of lower priority
+                dataOnly(bool, optional): back up only the metadata (.db file) and thumbnails. default: False
+                auto(bool, optoinal): this is an autobackup event - determines the folder name, where to back up the event. default: False
+                restore(bool, optional): restoring a backed up event. default: False
+                backupPath(str,optional): the path to the backed up event on the backup drive. must be set for restoring events. default: False
+                cloud(bool,optional): whether this is a cloud-x-sync
+                remoteParams(dict,optional): arguments for x-sync (default: {}):
+                    For local network x-sync:
+                        files(list): list of relative paths (to every file) to save - directory structure will be preserved.
+                        url(str): base url (full url to a file will be url+files[i])
+                    For cloud x-sync:
+                        id(int,optional): id of the remote event (if it already exists in the cloud). default: 0
+                        down(bool, optional): whether this is a x-downlink (downloading cloud event to local encoder) or x-uplink (uploading local event to cloud). id must be set x-downlink. default: False
+            Returns:
+                none
+        """
+        # priorities:
+        # manual restore: 10
+        # manual backup: 5
+        # x-sync: 3
+        # cloud-x-sync:2
+        # autobackup: 0
         super(backupEvent, self).__init__()
-        self.hid = hid
-        self.priority = priority
-        self.size = 0
-        self.copied = 0
-        self.total = 1 #in case the status gets requested before copy starts, don't want division by zero
-        self.status = self.STAT_INIT
-        self.kill = False # flag will force-stop a copy
-        self.auto = auto #this is an autobackup
-        self.dataOnly = dataOnly #whether to backup data and video or just data
-        self.currentFile = False
-        self.restore = restore #whether this event is to be restored or backed up
-        self.backupPath = backupPath #the path to the event on the backup drive
-        self.remote = remoteParams
+        try:
+            self.hid = hid
+            self.priority = priority
+            self.size = 0
+            self.copied = 0
+            self.total = 1 #in case the status gets requested before copy starts, don't want division by zero
+            self.status = self.STAT_INIT
+            self.kill = False # flag will force-stop a copy
+            self.auto = auto #this is an autobackup
+            self.dataOnly = dataOnly #whether to backup data and video or just data
+            self.currentFile = False
+            self.restore = restore #whether this event is to be restored or backed up
+            self.backupPath = backupPath #the path to the event on the backup drive
+            self.remote = remoteParams #parameters for x-sync - downloading event files from a remote server
+            self.cloud = cloud #whether this event is going to (or from) cloud
+        except Exception as e:
+            dbg.prn(dbg.BKP|dbg.ERR,"[---]bkp.init:",e,sys.exc_traceback.tb_lineno)
     def cancel(self):
-        # event is still copying - send a kill signal to it
+        """ For an event that is still copying - send a kill signal to it """
         try:
             if(self.status & (self.STAT_START)): #the event didn't finish copying
                 self.kill = True
@@ -206,6 +249,7 @@ class backupEvent(object):
         #end ifself.done
     #end cancel
     def monitor(self):
+        """ Monitors the backup progress, updates total copied bytes """
         lastSize = self.copied
         lastBigSize = 0 #bytes copied of the current file at last check
         currentBigSize = 0
@@ -229,6 +273,7 @@ class backupEvent(object):
             dbg.prn(dbg.BKP|dbg.ERR,"[---]bkp.monitor:",e,sys.exc_traceback.tb_lineno)
     #end monitor
     def onComplete(self):
+        """ event gets called when event is done backing up (or restored) """
         self.currentFile = False
         if(self.copied>=self.total):
             self.status = self.STAT_DONE
@@ -259,18 +304,28 @@ class backupEvent(object):
         dbg.prn(dbg.BKP,"------------done backup-------------")
     #end onComplete
     def start(self):
-        if(self.remote):
-            # this is a remote event, in order to back it up (or 'sync' it), 
-            # the event has to be downloaded and added to the local database (if it doesn't exist yet)
-            self.startRemote()
-        elif(self.restore):
-            self.startRestore()
-        else:
-            self.startBackup()
+        """ Start the copy procress. Based on initialized arguments, this function will start the proper method (i.e. cloud, x-sync, etc) """
+        try:
+            if(self.cloud): #this is a cloud-x-sync
+                if('down' in self.remote and self.remote['down']):
+                    self.startCloudDn() #x-downlink
+                else:
+                    self.startCloudUp() #x-uplink
+            elif(self.remote):
+                # this is a remote event, in order to back it up (or x-sync it), 
+                # the event has to be downloaded and added to the local database (if it doesn't exist yet)
+                self.startRemote()
+            elif(self.restore): #restoring a backed up event
+                self.startRestore()
+            else: #standard run-of-the-mill backup
+                self.startBackup()
+        except Exception as e:
+            dbg.prn(dbg.BKP|dbg.ERR,"[---]bkp.start",e,sys.exc_traceback.tb_lineno)
     def startBackup(self):
+        """ Start local backup - to an attached storage. This is called for automatic or manual backups """
         # get info about the event
         try:
-            dbg.prn(dbg.BKP, "starting local backup?????")
+            dbg.prn(dbg.BKP, "starting local backup")
             self.status = self.STAT_START
             db = pu.db(c.wwwroot+"_db/pxp_main.db")
             sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
@@ -347,13 +402,85 @@ class backupEvent(object):
             dbg.prn(dbg.BKP|dbg.ERR,"[---]bkp.startBackup:",e,sys.exc_traceback.tb_lineno)
             self.status = self.STAT_FAIL
     #end startBackup
+    def startCloudUp(self):
+        """ Start cloud backup """
+        try:
+            dbg.prn(dbg.BKP,"starting cloud backup")
+            remote = {"id":0,"down":False} #defaults for remoteParams
+            remote.update(self.remote)
+            self.status = self.STAT_START
+            # get authentication credentials
+            cfg = pxp._cfgGet()
+            if(not cfg):
+                return False #the encoder is not initalized yet most likely
+            # check if this is an x-uplink
+            # get local event details
+            db = pu.db(c.wwwroot+"_db/pxp_main.db")
+            sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+            db.query(sql,(self.hid,))
+            eventData = db.getasc()
+            db.close()
+            if(len(eventData)<1): #this event doesn't exist - return (could happen if SOMEHOW the folder gets deleted at the exact moment this function gets called)
+                self.status = self.STAT_FAIL | self.STAT_NOEVT
+                return False
+            # get the path 
+            eventPath = c.wwwroot+eventData[0]['datapath']
+            if(not remote['id']): # remote event doesn't exist yet - create it in the cloud
+                # get HIDs of teams and league - they're stored in the log table of the event database
+                sql = "SELECT `id` FROM `logs` WHERE `type` LIKE 'enc_start'"
+                db = pu.db(eventPath + '/pxp.db')
+                db.qstr(sql)
+                hids = db.getrow()
+                db.close()
+                hids = hids[0].split(',')
+                # now hids contains home team [0], visitor team [1] and league [2] hid's
+                # set up a request for creating event in the cloud
+                params = {
+                    "v0":cfg[1],
+                    "v4":cfg[2],
+                    "homeTeam":hids[0],
+                    "visitorTeam":hids[1],
+                    "league":hids[2],
+                    "date":dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S"), #date in YYYY-MM-DD HH:MM:SS format
+                    "hid":self.hid
+                }
+                resp = pu.io.send(c.cloud+"eventSet/ajax",params,jsn=True)
+                dbg.prn(dbg.BKP,"eventset response:",resp)
+                if(not (resp and 'success' in resp and resp['success'] and 'msg' in resp)):
+                    self.status = self.STAT_FAIL
+                    return False
+                remote['id'] = resp['msg'] #the response message contains id of the newly created cloud event
+                self.remote.update(remote) #add passed remote parameters to the default parameters dictionary
+                dbg.prn(dbg.BKP,"remote params:",self.remote)
+            #end if not remote[id]
+            # at this point the event exists in the cloud database
+            # get size of the metadata and thumbnails
+            metaSize = pu.disk.dirSize(eventPath+'/thumbs')+os.path.getsize(eventPath+'/pxp.db')
+            # upload the data file
+
+            if(self.dataOnly): # not uploading segments - move on
+                dbg.prn(dbg.BKP,"starting data only cloud backup")
+                # start uploading thumbnails and data only
+                self.cloudUpCopy(src=eventPath+'/thumbs',cloudID=remote['id'],auth=cfg[1],cust=cfg[2],relPath='/thumbs')
+                self.cloudUpCopy(src=eventPath+'/pxp.db',cloudID=remote['id'],auth=cfg[1],cust=cfg[2],relPath='/')
+            else:# start uploading entire event (.mp4 files will be excluded automatically)
+                dbg.prn(dbg.BKP,"starting full event cloud backup")
+                self.cloudUpCopy(src=eventPath,cloudID=remote['id'],auth=cfg[1],cust=cfg[2])
+
+        except Exception as e:
+            dbg.prn(dbg.BKP|dbg.ERR,"[---]bkp.startCloud:",e,sys.exc_traceback.tb_lineno)
+            self.onComplete()
+            self.status = self.STAT_FAIL
+    #end startCloud
     def startRemote(self):
-        """ start remote sync (copying files from a remote location to local server) """
+        """ Start x-sync: copying files from a remote location on the same network to the local server. """
         # find path to the event.json
         try:
+            if(not 'files' in self.remote): #there is no file list to backup passed in the remote parameter
+                return False
+            dbg.prn(dbg.BKP,"starting remote backup")
             jsonPath = False
             self.status = self.STAT_START
-            dbg.prn(dbg.BKP,"starting remote backup")
             for entry in self.remote['files']:
                 if(entry.find('event.json')>=0):
                     jsonPath = entry
@@ -393,6 +520,7 @@ class backupEvent(object):
             dbg.prn(dbg.BKP|dbg.ERR,"[---]bkp.startRemote:",e,sys.exc_traceback.tb_lineno)
             self.status = self.STAT_FAIL
     def startRestore(self):
+        """ Start restoring a file from a local backup. """
         try:
             self.status = self.STAT_START
             # find event on the backup drive
@@ -438,12 +566,29 @@ class backupEvent(object):
             self.status = self.STAT_FAIL
     #end startRestore
     def statusFull(self):
+        """ Returns list with status and progress of the current item:
+            [0]: status
+            [1]: percent copied
+            Statuses:
+                STAT_INIT = 0    :event initialized
+                STAT_START= 1<<0 :backup started
+                STAT_DONE = 1<<1 :backup done (success)
+                STAT_FAIL = 1<<2 :backup done (fail)
+                STAT_NOEVT= 1<<3 :event doesn't exist
+                STAT_NOBKP= 1<<4 :event was never added to the backup list
+                STAT_NODRV= 1<<5 :no drive available for backup
+                STAT_NOSPC= 1<<6 :no space on any drives
+        """
         return [self.status, self.copied*100/self.total]
     #end statusFull
     def treeCopy(self,src,dst,topLevel = True):
         """ recursively copies a directory tree from src to dst 
-            @param (str) src - full path to the source directory
-            @param (str) dst - full path to the destination directory
+            Args:
+                src(str): full path to the source directory
+                dst(str): full path to the destination directory
+                topLevel(bool,optional): this is for internal use only - this lets recursion know if finished processing top level directory to call onComplete function. MUST NOT OVERRIDE THIS VALUE.
+            Returns:
+                none
         """
         try:
             if(self.kill or (enc.code & enc.STAT_SHUTDOWN)):
@@ -472,12 +617,56 @@ class backupEvent(object):
         if(topLevel):
             self.onComplete()
     # end treeCopy
+    def cloudUpCopy(self,src,cloudID,auth,cust,topLevel = True,relPath = ''):
+        """ Recursively copy a specified directory (and all subdirectories) to the cloud 
+            Args:
+                src(str): path to the local file (or directory) to upload
+                cloudID(int): id of the event in the cloud
+                auth(str): authorization ID
+                cust(str): customer HID
+                topLevel(bool,optional): this is used for determining when the copy is done. NB: SETTINGS THIS TO FALSE MANUALLY WILL CAUSE THE FUNCTION TO STALL
+                relPath(str,optional): Path where to store local file, relative to the current event directory
+            Returns:
+                none
+        """
+        try:
+            resp = False
+            if(self.kill or (enc.code & enc.STAT_SHUTDOWN)):
+                self.onComplete()
+                return
+            if(os.path.isfile(src)): #this is a file
+                if(src[-3:].lower()=='mp4'):
+                    return #skip mp4 files
+                # remove the file name from the relPath
+                relPath = relPath[:relPath.rfind('/')]
+                # upload the file                
+                resp = pu.io.uploadCloud(url=c.cloud+"upload/event/"+str(cloudID)+"/ajax",filePath=src,params={"v0":auth,"v4":cust,"path":relPath})
+                resp = json.loads(resp)
+                if(not('success' in resp and resp['success'])): #upload failed
+                    dbg.prn(dbg.BKP,"cloud upload ", src, "response:",resp)
+                    # try uploading again - might want to put this into a while loop with some sort of fail counter limit
+                    resp = pu.io.uploadCloud(url=c.cloud+"upload/event/"+str(cloudID)+"/ajax",filePath=src,params={"v0":auth,"v4":cust,"path":relPath})                    
+            elif(os.path.isdir(src)): #this is a directory
+                # get the directory list and go through each item, uploading it
+                files = os.listdir(src)
+                for item in files:
+                    if(self.kill or (enc.code & enc.STAT_SHUTDOWN)): #immediately return if force-stop requested
+                        return
+                    if(item=='.' or item=='..' or item=='.DS_Store'):
+                        continue #skip the nonsensical files
+                    self.cloudUpCopy(src+'/'+item, cloudID,auth,cust, topLevel = False,relPath=relPath+'/'+item)
+        except Exception as e:
+            dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpevt.cloudUpCopy src:",src,"resp:",resp, e, sys.exc_traceback.tb_lineno)
+        if(topLevel):
+            self.onComplete()
     def webCopy(self,url,fileList,dst):
-        """ downloads files from the specified url and saves them to the local directory 
+        """ Download files from the specified url and saves them to the local directory
             Args:
                 url(str) : base url of the server where to download files
                 fileList(list) : list of files with their path relative to the 'url'
                 dst(str) : destination directory on the local drive, where to save files
+            Returns:
+                none
         """
         try:
             # this is the directory where the event will be stored
@@ -512,20 +701,29 @@ class backupEvent(object):
         self.onComplete()
     #end webCopy
 class backupManager(object):
-    """ backup events manager backupManager """
+    """ Backup events manager """
     def __init__(self):
         super(backupManager, self).__init__()
-        self.lastActive = int(time.time())
-        self.events = { }  # dictionary of event instances (to be backed up)
-        self.completed = { } #dictionary of events that have been backed up
-        self.priorities = { } #dictionary of lists of events (i.e. all events are grouped by their priority here)
-        self.current = False #hid of the currently executing backup
-        self.archivedEvents = False
-        # start backup manager process
-        tmr['backupmgr'] = TimedThread(self.process,period=3) #
-        tmr['autobackp'] = TimedThread(self.autobackup,period=600) #run auto backup once every 10 minutes
-    def add(self, hid, priority=0, dataOnly=False,auto = False, restore=False, remoteParams = False):
-        """ add an event to the list of events to be backed up """
+        try:
+            dbg.prn(dbg.BKP,"backup Manager initialized")
+            self.lastActive = int(time.time())
+            self.events = { }  # dictionary of event instances (to be backed up)
+            self.completed = { } #dictionary of events that have been backed up
+            self.priorities = { } #dictionary of lists of events (i.e. all events are grouped by their priority here)
+            self.current = False #hid of the currently executing backup
+            self.archivedEvents = False
+            # start backup manager process
+            tmr['backupmgr'] = TimedThread(self.process,period=3) #
+            tmr['autobackp'] = TimedThread(self.autobackup,period=20) #run auto backup once every 10 minutes
+        except Exception, e:
+            dbg.prn(dbg.BKP|dbg.ERR,"bkpmgr.err:",e,sys.exc_traceback.tb_lineno)
+    def add(self, hid, priority=0, dataOnly=False, auto = False, restore=False, cloud=False, remoteParams = {}):
+        """ Add an event to the list of events to be backed up 
+            Args:
+                for arguments description, see backupEvent class constructor
+            Returns:
+                none
+        """
         try:
             if(hid in self.events):
                 return #skip an event that was already added but not processed yet
@@ -536,14 +734,21 @@ class backupManager(object):
                     self.archivedEvents = self.archiveList()
                 if(hid in self.archivedEvents): #check if the event that's being restored is in the list
                     backupPath = self.archivedEvents[hid]['archivePath']
-            self.events[hid] = backupEvent(hid, priority, dataOnly, auto, restore, backupPath, remoteParams)
+            dbg.prn(dbg.BKP,"backing up event:",hid, priority, dataOnly, auto, restore, backupPath, cloud, remoteParams)
+            self.events[hid] = backupEvent(hid, priority, dataOnly, auto, restore, backupPath, cloud, remoteParams)
+            dbg.prn(dbg.BKP,"all events to back up:",self.events)
             if(not (priority in self.priorities)): #there are no events with this priority yet - add the priority
                 self.priorities[priority] = [ ]
             self.priorities[priority].append(hid) #add event to the list of events with the same priority
         except Exception as e:
             dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpmgr.add: ", e,sys.exc_traceback.tb_lineno)
     def archiveList(self):
-        """ get a list of all archived events with their paths """
+        """ Get a list of all archived events with their paths 
+            Args:
+                none
+            Returns:
+                (dictionary)
+        """
         try:
             drives = pu.disk.list()
             if(len(drives)<1): #no drives available
@@ -589,60 +794,151 @@ class backupManager(object):
         except Exception as e:
             dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpmgr.archlist", e, sys.exc_traceback.tb_lineno)
     def autobackup(self):
-        """ automatically backs up all events to the usb drive (or sd card) """
+        """ Automatically back up all events (if there's a drive with pxp-autobackup folder on it)"""
         try:
             if((int(time.time()) - self.lastActive)<10): #has been idle for less than 10 seconds, wait some more
+                dbg.prn(dbg.BKP,"busy... idle for:",(int(time.time())-self.lastActive))
                 # the machine is busy (there's most likely a live game going on) make sure there are no events being backed up right now
                 if(self.current): 
                     self.stop(stopAll = True)
                 return
             # check if there is a live event
-            if(os.path.exists(c.wwwroot+'live')): #there is a live event - wait until it's done in order to start the back up
+            if(enc.busy()): #there is a live event - wait until it's done in order to start the back up
                 self.lastActive = int(time.time())
                 return
             if(len(self.events)>0): #events are being backed up - wait until that's done to check for new events
+                dbg.prn(dbg.BKP,"already backing up...",len(self.events))
                 return
-            # system is idle
+            #######################################
+            # local backup checks
+
             # get the device that has autobackup folder:
             drives = pu.disk.list()
             backupDrive = False
-            # look for which one to back up to
+            # look for which one to use for back up
             for drive in drives:
                 if(not os.path.exists(drive+backupEvent.autoDir)): #this is not the auto-backup for pxp
                     continue
-                backupDrive = drive.decode('UTF-8')
-            if(not backupDrive):
-                return #did not find an auto-backup device
+                backupDrive = drive.decode('UTF-8') #decoding is required for drives that may have odd mount points (e.g. cyrillic letters in the directory name)
+            #########################################
+            # cloud backup checks
+            
+            # get all cloud events
+            settings = pu.disk.cfgGet(section="uploads")
+            if('autoupload' in settings and int(settings['autoupload'])): #automatic cloud upload is enabled
+                cloudList = self.getCloudEvents()
+                dbg.prn(dbg.BKP, "cloud events:",cloudList)
+            else:
+                dbg.prn(dbg.BKP, "cloud upload disabled")
+                cloudList = False #automatic upload is disabled
+                if(not backupDrive): 
+                    return #did not find an auto-backup device - nothing to do if not backing up locally or to cloud
+
             # get all events in the system
             elist = pxp._listEvents(showDeleted=False)
             # go through all events that exist and verify that they're identical on the backup device
             for event in elist:
                 if(not('datapath' in event)):
-                    continue #this event does not have a folder
-                # see if this event exists on the backup device
-                if(os.path.exists(backupDrive+backupEvent.autoDir+event['datapath'])):
-                    # the event was already backed up
-                    # check for differences in video (simple size check - less io operations)
-                    vidSize = pu.disk.dirSize(c.wwwroot+event['datapath']+'/video')
-                    bkpSize = pu.disk.dirSize(backupDrive+backupEvent.autoDir+event['datapath']+'/video')
-                    if(bkpSize!=vidSize): #there's a mismatch in the video - backup the whole event again
+                    continue #this event does not have a folder with video/tags - nothing to do here
+                #### local backup ####
+                if(backupDrive):
+                    # see if this event exists on the backup device
+                    if(os.path.exists(backupDrive+backupEvent.autoDir+event['datapath'])):
+                        # the event was already backed up
+                        # check for differences in video (simple size check - less io operations)
+                        vidSize = pu.disk.dirSize(c.wwwroot+event['datapath']+'/video')
+                        bkpSize = pu.disk.dirSize(backupDrive+backupEvent.autoDir+event['datapath']+'/video')
+                        if(bkpSize!=vidSize): #there's a mismatch in the video - backup the whole event again
+                            self.add(hid=event['hid'],auto=True)
+                        else:
+                            # the video is identical, check data file
+                            oldDb = backupDrive+backupEvent.autoDir+event['datapath']+'/pxp.db'
+                            newDb = c.wwwroot+event['datapath']+'/pxp.db'
+                            md5old = hashlib.md5(open(oldDb, 'rb').read()).hexdigest()
+                            md5new = hashlib.md5(open(newDb, 'rb').read()).hexdigest()
+                            if(md5old!=md5new): #the database is different - back up the new database
+                                self.add(hid=event['hid'],dataOnly=True,auto=True)
+                    else: #this event doesn't exist on the backup drive - back it up
+                        dbg.prn(dbg.BKP,"event doesn't exist", event)
                         self.add(hid=event['hid'],auto=True)
-                    else:
-                        # the video is identical, check data file
-                        oldDb = backupDrive+backupEvent.autoDir+event['datapath']+'/pxp.db'
-                        newDb = c.wwwroot+event['datapath']+'/pxp.db'
-                        md5old = hashlib.md5(open(oldDb, 'rb').read()).hexdigest()
-                        md5new = hashlib.md5(open(newDb, 'rb').read()).hexdigest()
-                        if(md5old!=md5new): #the database is different - back up the new database
-                            self.add(hid=event['hid'],dataOnly=True,auto=True)
-                else: #this event doesn't exist on the backup drive - back it up
-                    dbg.prn(dbg.BKP,"event doesn't exist", event)
-                    self.add(event['hid'],auto=True)
+                #end if backupDrive
+                if(not type(cloudList) is dict):
+                    # could not get cloud events: either no internet connection, 
+                    # or this device is deactivated, or the customer is deactivated
+                    # or uploading to cloud is disabled
+                    continue 
+                #### cloud backup ####
+                # check if this event exists in the cloud
+                if(event['hid'] in cloudList): #the event exists in the cloud, verify its checksum and number of segments (that's what's being uploaded)
+                    # count segments in the local event
+                    segs = len(glob.glob(c.wwwroot+event['name']+'/video/*.ts'))
+                    # get md5 checksum of the local .db
+                    md5local = hashlib.md5(open(c.wwwroot+event['name']+'/pxp.db', 'rb').read()).hexdigest()
+                    cfg = pxp._cfgGet()
+                    if(not cfg): 
+                        return False #the encoder is not initalized yet most likely (???) - if got to this point, the encoder HAS TO BE initialized!!
+                    try:
+                        # get details about remote event
+                        response = pu.io.url(c.cloud+"ajEvent/ajax",params={"v0":cfg[1],"v4":cfg[2],"id":cloudList[event['hid']]['id']})
+                        if(not response): #connection error
+                            dbg.prn(dbg.BKP,"could not get info about cloud event:",cloudList[event['hid']]['id'])
+                            continue
+                        data = json.loads(response)
+                        data = data['entries']
+                        dbg.prn(dbg.BKP,"NUM SEGS>>>>>>> remote:",data['segs'],', local:',segs)
+                        # TODO 
+                        # -add a check to see if each segment's md5 matches
+                        # -add resume: i.e. only upload segments that are partially or not uploaded to cloud. 
+                        #  do not do full re-upload if 1 segment is missing
+                        if(int(data['segs'])!=segs): #number of segments is different - upload the video file
+                            self.add(hid=event['hid'], priority=2, cloud=True, remoteParams={'id':cloudList[event['hid']]['id']})
+                        elif(data['md5']!=md5local): #video is the same, meteadata is different - upload just metadata
+                            self.add(hid=event['hid'], priority=2, cloud=True, remoteParams={'id':cloudList[event['hid']]['id']}, dataOnly=True)
+                    except Exception, e:
+                        dbg.prn(dbg.ERR|dbg.BKP,"[---]autobackup.url:",response,e,sys.exc_traceback.tb_lineno)
+                else: #this event doesn't exist in the cloud yet - upload it (video and metedata)
+                    self.add(hid=event['hid'], priority=2, cloud=True)
+
+            #end for event in elist
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.BKP,"[---]bkpmgr.autobackup",e,sys.exc_traceback.tb_lineno)
+    # get a list of all events in the cloud
+    def getCloudEvents(self):
+        """ Retreive all events from the cloud that this user has access to. 
+            Args:
+                none
+            Returns:
+                (dictionary)
+        """
+        # send a request with authorization id for this customer
+        try:
+            response = False
+            cfg = pxp._cfgGet()
+            if(not cfg):
+                return False #the encoder is not initalized yet most likely - nothing to do here
+            response = pu.io.url(c.cloud+"ajEvents/ajax",params={"v0":cfg[1],"v4":cfg[2]})
+            if(not response):
+                return False #cloud not available
+            data = json.loads(response)
+            if('success' in data and data['success'] and 'entries' in data):
+                # entries contains a list of past events. convert them into hid:{....} format (dictionary)
+                events = {}
+                for evt in data['entries']:
+                    events[evt['hid']]=evt
+                return events
+            dbg.prn(dbg.BKP|dbg.ERR,"bkpmgr.getCloudEvents: corrupt response ", data)
+            return False #response was corrupt
+        except Exception as e:
+            dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpmgr.getCloudEvents: ", e, sys.exc_traceback.tb_lineno, response)
+        return False
+    #end getCloudEvents
+
     def list(self,incomplete=False):
-        """ lists HIDs of all events that are being backed up 
-        @incomplete (bool) - when true, lists all events (including ones being backed up to this encoder, i.e. remote backups and restores)
+        """ List HIDs of all events that are being backed up currently. Does not include events being copied to cloud or remote backups or restores, unless specified otherwise.
+            Args:
+                incomplete(bool): when true, lists all events (including ones being backed up to this encoder, i.e. remote backups and restores, cloud uploads)
+            Returns:
+                (list): HIDs of events that are in the backup/restore queue
         """
         try:
             result = []
@@ -655,6 +951,7 @@ class backupManager(object):
         return result
 
     def process(self):
+        """ Process the queue - start a backup according to priority, if there's nothing backed up at the moment, remove completed backups """
         try:
             if(len(self.priorities)<=0 or (enc.code & enc.STAT_SHUTDOWN)): 
                 #there are no events in the queue or the server is being shut down
@@ -668,6 +965,7 @@ class backupManager(object):
             if (not self.current): #there is no event being processed right now
                 # get the next available event and start backing it up
                 self.current = self.priorities[maxPriority][0]
+                dbg.prn(dbg.BKP,"current:",self.events[self.current])
                 self.events[self.current].start()
             # if got here, means there are events to back up (or being backed up)
             # check to see if the event is done copying
@@ -681,6 +979,16 @@ class backupManager(object):
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.BKP, "[---]bkpmgr.process",e,sys.exc_traceback.tb_lineno)
     def status(self,hid):
+        """ Returns list with current event status
+            Args:
+                hid(str): HID of the event whose status to check
+            Returns:
+                (list):
+                    if event is in the list, result is same as statusFull()
+                    if event is not in the list:
+                        [0]: whether the event backup failed
+                        [1]: 0
+        """
         try:
             if(hid and hid in self.events):
                 return self.events[hid].statusFull()
@@ -692,8 +1000,11 @@ class backupManager(object):
         dbg.prn(dbg.ERR,"no status for ", hid)
         return [backupEvent.STAT_FAIL|backupEvent.STAT_NOBKP,0]
     def stop(self, stopAll = False):
-        """ stop copying current event 
-            @param bool stopAll - stop copying current event and clear the queue (no other events will be copied)
+        """ Stop copying current event
+            Args:
+                stopAll(bool): stop copying current event and clear the queue (no other events will be copied)
+            Returns:
+                none
         """
         try:
             hid = self.current
@@ -717,6 +1028,9 @@ rmFiles     = []
 rmDirs      = []
 FNULL       = open(os.devnull,"w") #for dumping all cmd output using Popen()
 def deleteFiles():
+    """ Deletes folders and files from the rmDirs and rmFiles lists.
+        TODO: convert this into its own class instead of a function with a global variable.
+    """
     try:
         dbg.prn(dbg.ECN,"deleteFiles called")
         # if there is a deletion in progress - let it finish
@@ -757,6 +1071,7 @@ def deleteFiles():
 
 # deleting old events
 def removeOldEvents():
+    """ Goes through events that were marked as deleted and adds them to the list of paths to be removed by deleteFiles() """
     dbg.prn(dbg.ECN,"removeOldEvents called")
     if(len(rmDirs)>0 or not (enc.code & (enc.STAT_READY | enc.STAT_NOCAM))):
         #either already deleting some events or encoder is being shut down
@@ -787,6 +1102,7 @@ def removeOldEvents():
 ## end delete files ##
 ######################
 def oldLiveCleanup():
+    """ In some cases (loss of power, abrupt disconnect, or a fatal crash) a live folder may still exist even if there is no live event. This function will perform some post-live cleanup to ensure everything is ready for a new live event. """
     try:
         if(os.path.exists(c.wwwroot+'live')): #there was a live event that didn't stop properly, maybe due to a powerloss
             pxp.encstop() #stop that event and rename the folder according to the event standards
@@ -802,7 +1118,7 @@ def oldLiveCleanup():
 ##################################
 
 class commander:
-    """ server command manager """
+    """ Server command manager """
     q = [] #queue of the commands to be executed
     status = 0 # 0 - ready, 1 - busy
     def __init__(self):
@@ -816,9 +1132,10 @@ class commander:
             dbg.prn(dbg.CMD|dbg.ERR,"[---]commander init fail??????? ", e)
     def enq(self, cmd, sync=True, bypass=False):
         """ adds a command to the queue 
-            @param cmd - command to add. command is vertical bar-delimeted with parameters
-            @param sync(True) - whether the command is synchronous or not. ASYNC commands will have to reset commander.status manually
-            @param bypass(False) - when True, the command will be executed immediately bypassing the queue
+            Args:
+                cmd(str) - command to add. command is vertical bar-delimeted with parameters
+                sync(bool,optional) - whether the command is synchronous or not. ASYNC commands will have to reset commander status manually. default: True
+                bypass(bool,optional) - when True, the command will be executed immediately bypassing the queue. default: False
         """
         statAfter = 0 if sync else 1
         if(bypass):#execute command right away, bypassing the queue
@@ -830,7 +1147,7 @@ class commander:
             self.q.append(cmd+'|'+str(statAfter))
     #end enq
     def _deq(self):
-        """ removes the next command form the queue and executes it """
+        """ Removes the next command form the queue and executes it """
         if(len(self.q)>0):
             self.status = 1 #set status to busy (to make sure only 1 command is executing at a time)
             cmd = self.q[0] #get the command
@@ -841,7 +1158,7 @@ class commander:
             self.status = int(cmd.split('|')[-1]) #set the status to 0 (ready) if it's a synchronous command
     #end deq
     def _exc(self,cmd):
-        """ executes a given command """
+        """ Executes a given command """
         try:
             dbg.prn(dbg.CMD,"executing: ", cmd)
             dataParts = cmd.split('|')
@@ -860,16 +1177,20 @@ class commander:
             if(dataParts[0]=='BTR' and len(dataParts)>3): #change bitrate
                 # data is in format BTR|<bitrate>|<camID>
                 srcMgr.setBitrate(dataParts[1],dataParts[2])
-            if(dataParts[0]=='BKP'): #backup event
+            if(dataParts[0]=='BKP'): #manual backup event
                 backuper.add(hid=dataParts[1],priority=5)
             if(dataParts[0]=='RRE'): #restore event 
                 backuper.add(hid=dataParts[1],priority=10,restore=True) #restoring events have higher priority over backups (to prevent restore-backup of the same event)
+            if(dataParts[0]=='LVL'): # set log level
+                dbg.setLogLevel(dataParts[1])
+            if(dataParts[0]=='LOG'): # set logging to file on/off
+                dbg.setLog(dataParts[1])
         except Exception as e:
             dbg.prn(dbg.CMD|dbg.ERR,"[---]cmd._exc", e, sys.exc_traceback.tb_lineno)
             return False
     #end exc
     def _mgr(self):
-        """ status manager - periodically checks if the commander status is ready, runs .deq when it is """
+        """ Status manager - periodically checks if the commander status is ready, runs .deq when it is """
         if(self.status):
             return
         # commander is not busy
@@ -878,8 +1199,7 @@ class commander:
 #end commander
 
 class encoderStatus:
-    """
-    encoder status/configuration class
+    """ Encoder status management class
     """
     code = 0 #encoder status code
     status = 'unknown'
@@ -902,17 +1222,14 @@ class encoderStatus:
     def busy(self):
         """ returns true when encoder is busy (i.e. live, starting a live event or still stopping a live event) """
         return self.code & (self.STAT_LIVE | self.STAT_START | self.STAT_STOP | self.STAT_PAUSED)
-    def statusRead(self):
-        """ reads status from the disk into a json dictionary """
-        txtStatus = pu.disk.file_get_contents(c.encStatFile)
-        jsonStatus = json.loads(txtStatus)
-        # self.
-    #end statusRead
     def statusSet(self,statusBit,autoWrite=True, overwrite=True):
         """Set a new encoder status code and appropriate status text 
-        statusBit - new status of the encoder to set (add or overwrite)
-        autoWrite - (optional) write the status to disk right away (default=True)
-        overwrite - (optional) overwrite the current status with the new one, if False, status will be added (all statuses are bit-shifted)
+            Args:
+                statusBit(int): new status of the encoder to set (add or overwrite)
+                autoWrite(bool,optional): write the status to disk right away. default: True
+                overwrite(bool,optional): overwrite the current status with the new one, if False, status will be added (bitwise OR). default: True
+            Returns:
+                none
         """
         try:
             import inspect
@@ -930,7 +1247,12 @@ class encoderStatus:
             dbg.prn(dbg.ERR|dbg.ENC,"[---]enc.statusSet",e, sys.exc_traceback.tb_lineno)
     #end status
     def statusTxt(self, statusCode):
-        """ return the text corresponding to the status code """
+        """ Get the text corresponding to the status code 
+            Args:
+                statusCode(int): status code to convert to text
+            Returns:
+                (str): text status
+        """
         if(statusCode & self.STAT_SHUTDOWN):
             return 'shutting down'
         if(statusCode & self.STAT_INIT):
@@ -954,8 +1276,11 @@ class encoderStatus:
 
     def statusUnset(self,statusBit, autoWrite = True):
         """Resets the status bit 
-        statusBit - which bit to unset (set to 0)
-        autoWrite - (optional) write the status to disk right away (default=True)
+            Args:
+                statusBit(int): which bit to unset (set to 0)
+                autoWrite(bool, optional): write the status to disk right away. default:True
+            Returns:
+                none
         """
         try:
             self.code = self.code & ~statusBit
@@ -967,7 +1292,7 @@ class encoderStatus:
             dbg.prn(dbg.ERR|dbg.ENC,"[---]enc.statusUnset",e, sys.exc_traceback.tb_lineno)
     #end statusUnset
     def statusWrite(self):
-        """ writes out current status to disk """
+        """ Write current status to disk in json format. """
         # this function is executed automatically (initialized at the bottom of this file), simply records current pxp status in a file
         # the text status is saved simply as 'status' and the numeric status code is saved as 'statuscode'
         # replace() is to make sure that if status has \ or ', it won't break the command and give invalid status
@@ -988,10 +1313,11 @@ class encoderStatus:
 ##############################
 
 class encDevice(object):
-    """ base class for an encoder"""
+    """ Template class for an encoder device. """
     def __init__(self, ip):
         """ initialize the class 
-        @param (str) ip - ip address of the device. used to set/retreive its parameters
+            Args:
+                ip(str): ip address of the device. used to set/retreive its parameters
         """
         self.bitrate        = "n/a"
         self.ccBitrate      = False # can change bitrate
@@ -1012,32 +1338,46 @@ class encDevice(object):
         self._almCoolTime   = 10    # constant - maximum alarm cooldown period in seconds
     def __repr__(self):
         return "<encDevice> ip:{ip} fr:{framerate} br:{bitrate} url:{rtspURL} init:{initialized} on:{isOn}".format(**self.__dict__)
-    # determine if this camera has alarm triggered
     def alarmChk(self):
+        """ to implement in device-specific class """
         pass
-    # create ffmpeg command that captures the rtsp stream
     def buildCapCmd(self, camURL, chkPRT, camMP4, camHLS):
+        """ Create ffmpeg command that will capture the rtsp stream and redirect it accordingly. Can override in device-specific class
+            Args:
+                camURL(str): URL to the rtsp stream of the camera
+                chkPRT(int): port used for monitoring the video - H.264 packets are sent here
+                camMP4(int): ffmpeg that records mp4 file is listening on this port
+                camHLS(int): mediastreamsegmenter listens on this port (ffmpeg will forward MPEG-TS packets here)
+            Returns:
+                (str): the full command
+        """
         # if ther's a problem, try adding -rtsp_transport udp before -i
-        # liquid image EGO camerea requires -fflags +genpts otherwise you get "first pts value must be set" error
+        # liquid image EGO camerea requires -fflags +genpts (to generate its own pts) otherwise you get "first pts value must be set" error
         # return c.ffbin+" -fflags +genpts -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
-        return c.ffbin+" -rtsp_transport udp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+str(chkPRT)+" -codec copy -f mpegts udp://127.0.0.1:"+str(camMP4)+" -codec copy -f mpegts udp://127.0.0.1:"+str(camHLS)
+        return c.ffbin+" -fflags +igndts -rtsp_transport udp -i "+camURL+" -fflags +igndts -codec copy -f h264 udp://127.0.0.1:"+str(chkPRT)+" -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:"+str(camMP4)+" -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:"+str(camHLS)
     #end encBuildCmd
     def discover(self):
+        """ To implement in device-specific class """
         pass
     def setBitrate(self, bitrate):
+        """ To implement in device-specific class """
         pass
     def setResolution(self, resolution):
+        """ To implement in device-specific class """
         pass
     def setFramerate(self, framerate):
+        """ To implement in device-specific class """
         pass
     def monitor(self):
+        """ To implement in device-specific class """
         pass
     def update(self):
+        """ To implement in device-specific class """
         pass
 #end encDevice class
 
 class encTeradek(encDevice):
-    """ teradek device management class """
+    """ Teradek device management class """
     def __init__(self, ip=False):
         if(ip):
             super(encTeradek,self).__init__(ip)
@@ -1046,7 +1386,12 @@ class encTeradek(encDevice):
             self.ccResolution   = True # can change resolution
             self.tdSession      = None # reference to the login session on the teradek
     def discover(self, callback):
-        """ find any new devices. callback is called when a device is found """
+        """ Find any new devices using bonjour protocol. 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+        """
         def discovered(results):
             recs = pu.bonjour.parseRecord(results['txtRecord'])
             output = {}
@@ -1055,6 +1400,10 @@ class encTeradek(encDevice):
             # ipAddr - ip address of the encoder (e.g. 192.168.1.100)
             # strport - port of the stream (e.g. 554)
             # 'sn' - stream name (e.g. stream1)
+            if(recs['sm']=='TDS'): #teradek direct streaming - proprietary protocol, ignore it
+                return
+            if(not 'sn' in recs): #this happens for Teradek Clip
+                recs['sn']='stream1'
             streamURL = recs['sm'].lower()+'://'+results['ip']+":"+str(results['port'])+'/'+recs['sn']
             # check if this is a preview or a full rez stream
             if(recs['sn'].lower().find('quickview')>=0):# this is a preview stream
@@ -1071,10 +1420,16 @@ class encTeradek(encDevice):
         pu.bonjour.discover(regtype="_tdstream._tcp",callback=discovered)
     #end discover
     def getParam(self, response,parameter):
-        """ extracts a specified paramater from the response string and gets its value.
-            function assumes response in this format:
-            VideoInput.Info.1.resolution = 720p60
-            VideoEncoder.Settings.1.framerate = 30
+        """ Extracts a specified paramater from the response string and gets its value.
+            Args:
+                response(str): text response from a request
+                    function assumes response in this format:
+                    VideoInput.Info.1.resolution = 720p60
+                    VideoEncoder.Settings.1.framerate = 30
+                parameter(str): property name to extract (e.g. 'resolution')
+            Returns:
+                (str): value of the property
+
         """
         try:
             lines = response.split("\n")
@@ -1100,7 +1455,12 @@ class encTeradek(encDevice):
             return False
     #end tdGetParam
     def login(self):
-        """ login to the device and save session """
+        """ Login to the TD device and save session 
+            Args:
+                none
+            Returns:
+                (bool): whether the command was succssful
+        """
         url = "http://"+self.ip+"/cgi-bin/api.cgi"
         #attempt to login
         response = pu.io.url(url+"?command=login&user=admin&passwd=admin",timeout=15)
@@ -1110,11 +1470,18 @@ class encTeradek(encDevice):
         response = response.strip().split('=')
         if(response[0].strip().lower()=='session' and len(response)>1):#login successful
             self.tdSession = response[1].strip() #extract the id
-        else:#could not log in - probably someone changed username/password
-            return False
+            return True
+        # else:#could not log in - probably someone changed username/password
+        return False
+
     #end login
     def setBitrate(self, bitrate):
-        """ bitrate is in kbps """
+        """ Set teradek bitrate is in kbps 
+            Args:
+                bitrate(int): new bitrate in kbps
+            Returns:
+                none
+        """
         try:
             dbg.prn(dbg.TDK,"tdSetBitrate")
             url = "http://"+self.ip+"/cgi-bin/api.cgi"
@@ -1151,6 +1518,12 @@ class encTeradek(encDevice):
             dbg.prn(dbg.TDK|dbg.ERR,"[---]encTeradek.setBitrate:", e, sys.exc_traceback.tb_lineno)
     #end setBitrate
     def setFramerate(self, framerate):
+        """ Set teradek frame rate is in fps
+            Args:
+                framerate(int): new frame rate in fps
+            Returns:
+                (bool): whether the command was successful
+        """
         try:
             url = "http://"+self.ip+"/cgi-bin/api.cgi"
             if(not self.tdSession):
@@ -1211,7 +1584,7 @@ class encTeradek(encDevice):
         return False
     #end setFramerate
     def update(self):
-        """ checks parameters of the teradek cube """
+        """ Requests encoding parameters of the teradek cube and updates local class properties"""
         try:
             if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
                 return
@@ -1250,16 +1623,20 @@ class encTeradek(encDevice):
 #end encTeradek class
 
 class encMatrox(encDevice):
-    """ matrox device management class """
+    """ Matrox device management class """
     def __init__(self, ip=False):
         if(ip):
             super(encMatrox,self).__init__(ip)
     def discover(self, callback):
-        """ find any new devices. callback is called when a device is found """
+        """ Find any new devices using SSDP. 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+        """
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
-            #the Search Target for monarch is:
             #to find ALL ssdp devices simply enter ssdp:all as the target
             monarchs  = pu.ssdp.discover(text="monarch",case=False,field='st')
             if(len(monarchs)>0):
@@ -1290,7 +1667,7 @@ class encMatrox(encDevice):
         except Exception as e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]encMatrox.discover",e, sys.exc_traceback.tb_lineno)
     def getParams(self,ip=False):
-        """ gets parameters from a matrox monarch device (using the status page for now, until they release the API)
+        """ Gets parameters from a matrox monarch device (using the status page for now, until they release the API)
         """
         params = {
             "rtsp_url"          : False,
@@ -1453,7 +1830,7 @@ class encMatrox(encDevice):
         dbg.prn(dbg.MTX,params)
         return params
     def parseURI(self,url):
-        """extracts ip address and port from a uri.
+        """ Extracts ip address and port from a uri.
         the url is usually in this format: "http://X.X.X.X:PORT/"
         e.g. from http://192.168.1.103:5953/
         will return 192.168.1.103 and 5953
@@ -1477,6 +1854,13 @@ class encMatrox(encDevice):
             port = False
         return ip, port
     def update(self):
+        """ Get new device parameters, or set them as false if request fails
+            Args:
+                none
+            Returns:
+                none
+        """
+
         params = self.getParams()
         dbg.prn(dbg.MTX, params, "mt.update")
         if(params and params['connection']):
@@ -1496,12 +1880,17 @@ class encMatrox(encDevice):
 #end encMatrox
 
 class encPivothead(encDevice):
-    """ pivothead glasses encoder management class """
+    """ Pivothead glasses encoder management class """
     def __init__(self, ip=False):
         if(ip):
             super(encPivothead,self).__init__(ip)
     def discover(self, callback):
-        """ find any new devices. callback is called when a device is found """
+        """ Find any new devices using bonjour protocol. 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+        """
         def discovered(results):
             recs = pu.bonjour.parseRecord(results['txtRecord'])
             output = {}
@@ -1520,6 +1909,12 @@ class encPivothead(encDevice):
         #end discovered
         pu.bonjour.discover(regtype="_pxpglass._udp",callback=discovered)
     def update(self):
+        """ Ping the device (to ensure it's still on the network)
+            Args:
+                none
+            Returns:
+                none
+        """
         self.isOn = pu.io.ping(self.ip)
         self.isCamera = self.isOn #when the device is found, assume glasses are present - need to make a more robust verification (change pxpinit.py on the glasses pi)
 #end encPivothead
@@ -1531,6 +1926,7 @@ class encSonySNC(encDevice):
             super(encSonySNC,self).__init__(ip)
             self.ccBitrate      = True # can change bitrate
     def alarmChk(self):
+        """ Determine if this camera has alarm triggered """
         try:
             if(time.time()<self.almCooldown):
                 dbg.prn(dbg.SNC,"alarm cooling down",(self.almCooldown-time.time()),"s left")
@@ -1541,6 +1937,7 @@ class encSonySNC(encDevice):
             if(not response):
                 self.alarm = False
                 return
+            # parse response in the URL format: name0=value&name1=value&name2=value
             params = dict(parse_qsl(response))
             self.alarm = ('PresenceSensorStatus' in params) and (int(params['PresenceSensorStatus']))
             if(self.alarm):
@@ -1555,7 +1952,12 @@ class encSonySNC(encDevice):
             dbg.prn(dbg.ERR|dbg.SNC,"[---]snc.alarmChk:", e, sys.exc_traceback.tb_lineno, "( resp : ",response,')')
         
     def discover(self, callback):
-        """ find any new devices. callback is called when a device is found """
+        """ Find any new devices using bonjour protocol. 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+        """
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
@@ -1589,7 +1991,11 @@ class encSonySNC(encDevice):
         except Exception as e:
             dbg.prn(dbg.SNC|dbg.ERR,"[---]encSonySNC.discover",e, sys.exc_traceback.tb_lineno)
     def getParams(self,ip=False):
-        """ gets parameters from a SNC device
+        """ Gets new parameters from a SNC device
+            Args:
+                ip(str): ip address of the device (if using on a class without instantiating)
+            Returns:
+                (dictionary): any parameters that were acquired
         """
         params = {
             "rtsp_url"          : False,
@@ -1652,6 +2058,12 @@ class encSonySNC(encDevice):
             port = False
         return ip, port
     def setBitrate(self,bitrate):
+        """ Set device bitrate is in kbps 
+            Args:
+                bitrate(int): new bitrate in kbps
+            Returns:
+                (str): response from the url request
+        """
         try:
             result = False
             dbg.prn(dbg.SNC,"snc.setbitrate:",bitrate, self.ip)
@@ -1662,6 +2074,12 @@ class encSonySNC(encDevice):
             dbg.prn(dbg.ERR|dbg.SNC,"[---]snc.setBitrate:", e, sys.exc_traceback.tb_lineno)
         return result
     def setFramerate(self,framerate):
+        """ Set device frame rate is in fps 
+            Args:
+                framerate(int): new frame rate in fps
+            Returns:
+                (str): response from the url request
+        """
         try:
             result = False
             dbg.prn(dbg.SNC,"snc.setframerate:",framerate, self.ip)
@@ -1671,9 +2089,8 @@ class encSonySNC(encDevice):
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SNC,"[---]snc.setFramerate:", e, sys.exc_traceback.tb_lineno)
         return result
-    def setResolution(self):
-        pass
     def update(self):
+        """ Requests encoding parameters of the device and updates local class properties"""
         # get the device parameters
         params = self.getParams()
         # dbg.prn(dbg.SNC, params, "snc.update")
@@ -1695,18 +2112,24 @@ class encSonySNC(encDevice):
 #end encSonySNC
 
 class encDebug(encDevice):
-    """ a test device class at the moment used for Liquid Image EGO"""
+    """ A test device class: at the moment used for Liquid Image EGO"""
     def __init__(self, ip=False):
         if(ip):
             super(encDebug,self).__init__(ip)
-    def buildCapCmd(self, camURL, chkPRT, camMP4, camHLS): #override the function for the EGO camera
+    def buildCapCmd(self, camURL, chkPRT, camMP4, camHLS): 
+        """ Overrides encDevice's method: EGO produces inconsistent PTS, so it requires ffmpeg to generate its own PTS """
         # if ther's a problem, try adding -rtsp_transport udp before -i
         # liquid image EGO camerea requires -fflags +genpts otherwise you get "first pts value must be set" error and won't start ffmpeg
-        return c.ffbin+" -fflags +genpts -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f mpegts udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
+        return c.ffbin+" -fflags +genpts+igndts -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f mpegts udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
         # return c.ffbin+" -rtsp_transport tcp -i "+camURL+" -codec copy -f h264 udp://127.0.0.1:"+chkPRT+" -codec copy -f h264 udp://127.0.0.1:"+camMP4+" -codec copy -f mpegts udp://127.0.0.1:"+camHLS
     #end encBuildCmd
     def discover(self, callback):
-        """ find any new devices. callback is called when a device is found """
+        """ Find any new devices using bonjour protocol. 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+        """
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
@@ -1726,6 +2149,7 @@ class encDebug(encDevice):
         except Exception as e:
             dbg.prn(dbg.TST|dbg.ERR,"[---]encDebug.discover",e, sys.exc_traceback.tb_lineno)
     def update(self):
+        """ Requests encoding parameters of the device and updates local class properties, sets them to false if unable to retreive the parameters """
         devIP = "192.168.42.1"
         response = pu.io.url("http://"+devIP+"/setting/cgi-bin/fd_control_client?func=fd_get_camera_info",timeout=5)
         if(response and response.find('EGO')>0): 
@@ -1746,7 +2170,7 @@ class encDebug(encDevice):
 
 
 class source:
-    """ a wrapper for a video source (this contains the reference to the video device itself)"""
+    """ A wrapper for a video source (this contains the reference to the video device instance) """
     def __init__(self,ip, encType, ports={}, url=False, preview=False, devClass=False):
         """ create a new video source
             Args:
@@ -1773,6 +2197,7 @@ class source:
                 return False
             self.device = devClass(ip)
             self.urlFilePath = "/tmp/pxp-url-"+str(self.device.ip) #this file will contain the url to the proxied RTSP (after running live555proxy)
+            self.listFile = False #this will contain the name of the .m3u8 file (not full path)
             if(url):
                 self.device.rtspURL = url #this is a private url used for getting the video directly form the device
             if(preview):
@@ -1785,6 +2210,7 @@ class source:
             tmr['src'][str(self.id)+'alarm'] = TimedThread(self.device.alarmChk,period=2)
             # monitor device parameters
             tmr['src'][str(self.id)+'param'] = TimedThread(self.device.update,period=5)
+
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC, "[---]source.init", e, sys.exc_traceback.tb_lineno)
     #end init
@@ -1792,7 +2218,7 @@ class source:
         # prints a string representation of the class object)
         return "<source> url:{rtspURL} type:{type} dev:{device}".format(**self.__dict__)
     def buildCapCmd(self):
-        # creates an ffmpeg capture command for this source
+        """ creates an ffmpeg capture command for this source using device's buildCapCmd method """
         return self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
     def camPortMon(self):
         """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
@@ -1816,7 +2242,7 @@ class source:
             sIN.settimeout(0.5)
             timeStart = time.time()
             while ((enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED)) and self.isEncoding):
-                try:   
+                try:
                     if((enc.code & enc.STAT_PAUSED)): #the encoder is paused - do not check anything
                         time.sleep(0.2) #reduce the cpu load
                         continue
@@ -1828,13 +2254,17 @@ class source:
                         enc.statusSet(enc.STAT_LIVE,autoWrite=False)
                 except socket.error, msg:
                     # only gets here if the connection is refused or interrupted
-                    sys.stdout.write('.')
+                    # sys.stdout.write('.')
+                    print '^.^'
                     try:
                         timeStart = time.time()
                         if(enc.code & enc.STAT_LIVE):
                             # only set encoder status if there is a live event 
                             # to make sure the monitor runs an RTSP check on the stream
                             self.device.isOn=False
+                            # start file monitor to add EXT-X-DISCONTINUITY
+                            if(not(str(self.id)+'_filemon' in tmr['src'])):
+                                tmr['src'][str(self.id)+'_filemon'] = TimedThread(self.fileSegMon)
                         time.sleep(1) #wait for a second before trying to receive data again
                     except Exception as e:
                         pass
@@ -1843,14 +2273,48 @@ class source:
             #end while
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon err: ", e, sys.exc_traceback.tb_lineno)
-    def encStart(self):
-        pass
-    def encStop(self):
-        pass
-    def encPause(self):
-        pass
-    def encResume(self):
-        pass
+    def fileSegMon(self):
+        """ monitors m3u8 file when video stopped unexpectedly. once the video resumes, it'll add the EXT-X-DISCONTINUITY flag """
+        def getLastSeg(fPath):
+            try:
+                # get last few lines of the file (no need to iterate through the entire file)
+                p = sb.Popen(['tail', fPath], stdout=sb.PIPE, stderr=sb.PIPE)
+                lines, err = p.communicate()
+                lastNum = 0
+                lastLine = 'zz'
+                # print lines, err
+                # go through the last few lines of the file and get the number of the last segment
+                for line in lines.split("\n"):
+                    if (re.search('segm',line) and re.search('[0-9]+', line)):
+                        lastLine = line
+                        try:
+                            # this line contains the segment name
+                            lastNum = int(re.search('[0-9]+', line[3:]).group())
+                        except Exception as e:#could not extract number from the line (something wrong???)
+                            pass
+                #end for line in lines.split
+                return lastNum
+            except Exception as e:
+                return 0
+        try:
+            # set the path to the playlist (m3u8 file)
+            listPath = c.wwwroot+'live/video/'+self.listFile
+            dbg.prn(dbg.SRC,"^^^^^^FILE SEG MON^^^^^^ file:",listPath,' exists?',os.path.exists(listPath))
+            if(not os.path.exists(listPath)):#the file does not exist - can happen here if the camera got disconnected before any segments came in
+                dbg.prn(dbg.SRC,"no listPath????????")
+                return 
+
+            lastNum = getLastSeg(listPath)
+            dbg.prn(dbg.SRC,"last seg:",lastNum)
+            while(lastNum==getLastSeg(listPath) and not (enc.code & enc.STAT_SHUTDOWN)): #wait until the file changes (means the video resumed)
+                time.sleep(0.4)
+            dbg.prn(dbg.SRC,"got new segment!")
+            os.system("echo '#EXT-X-DISCONTINUITY' >> "+listPath)
+            tmr['src'][str(self.id)+'_filemon'].kill()
+            del tmr['src'][str(self.id)+'_filemon']
+        except Exception as e:
+            print "------fileSegMon:",e,sys.exc_traceback
+    #end fileSegMon
     def monitor(self):
         """ monitors the (actual) device parameters and sets source (i.e. wrapper) parameters accordingly """
         try:
@@ -1921,12 +2385,13 @@ class source:
                 except:
                     #probably failed because couldn't connect to the rtsp server - no need to worry, this error will be handled in the next step
                     pass
+                # dbg.prn(dbg.SRC,"RTSP check for ",self.rtspURL,":",data[:200])
                 strdata = data[:2048].lower().strip()
                 if(strdata.find('host is down')>-1 or strdata.find('no route to host')>-1):
                     # found a "ghost": this device recently disconnected from the network
                     dbg.prn(dbg.SRC,"RTSP ghost found - device is disconnected")
                     pass
-                if(strdata.find('timed out')>-1): #the connection is down (maybe temporarily?), the isOn is already set to false - that's how we got into this IF statement in the first place!
+                if(strdata.find('timed out')>-1): #the connection is down (maybe temporarily?)
                     dbg.prn(dbg.SRC,"RTSP timeout - temporarily unreachable?")
                     pass
                 #a device is not available (either just connected or it's removed from the system)
@@ -1956,6 +2421,7 @@ class source:
         return True
     #end monitor
     def setRTSPurl(self):
+        """ Sets local rtsp url by getting it from the live555 proxy """
         try:
             if(os.path.exists(self.urlFilePath)): #should always exist!!!!
                 # in the modified version of live555 the proxied rtsp stream url is stored in a text file, get it
@@ -1965,6 +2431,7 @@ class source:
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]source.setRTSPurl", e, sys.exc_traceback.tb_lineno)
     def startProxy(self):
+        """ Starts the live555  RTSP proxy for this source """
         try:
             dbg.prn(dbg.SRC,"adding live555 for ", self.device.ip, self.type)
             #start live555 process for this device
@@ -1974,6 +2441,7 @@ class source:
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]source.startProxy", e, sys.exc_traceback.tb_lineno)
     def stopMonitor(self):
+        """ Stop monitor and RTSP proxy""" 
         try:
             # stop the monitor
             dbg.prn(dbg.SRC,"stop monitor thread (and other related threads)")
@@ -1995,7 +2463,7 @@ class source:
 #end source class
 
 class sourceManager:
-    """ discovers, monitors and managers all the video sources (or wrappers for devices) """
+    """ Discovers, monitors and managers all the video sources (a.k.a. wrappers for devices) """
     def __init__(self,devList):
         """ Initializes the source manager
             Args:
@@ -2013,7 +2481,12 @@ class sourceManager:
         tmr['srcmgr']['mgrmon'] = TimedThread(self.monitor, period=3)
         tmr['srcmgr']['discvr'] = TimedThread(self.discovererManage, period=3)
     def alarms(self):
-        # return an array of devices that have alarms set off
+        """ return an array of devices that have alarms set off 
+            Args:
+                none
+            Returns:
+                (list): names of sources that have alarms triggered.
+        """
         sources = copy.deepcopy(self.sources)
         alarms = []
         idx = 0
@@ -2036,6 +2509,8 @@ class sourceManager:
         """
         try:
             if((enc.code & enc.STAT_SHUTDOWN) or enc.busy()):#do not add new cameras during live event
+                return False
+            if(len(self.sources)>c.maxSources): #do not add more than maximum allowed sources in the system
                 return False
             sources = copy.deepcopy(self.sources)
             if(not((('url' in inputs) or ('preview' in inputs)) and ('ip' in inputs))):
@@ -2096,7 +2571,7 @@ class sourceManager:
                     for s in devs:
                         dbg.prn(dbg.SRM, "trying to remove",s)
                         tmr['srcmgr']['devs'][s].kill()
-                        del tmr['srcmgr'][s]
+                        del tmr['srcmgr']['devs'][s]
                     #remove the devices dictionary
                     del tmr['srcmgr']['devs']
                 #end if devs in srcmgr
@@ -2118,15 +2593,17 @@ class sourceManager:
             dbg.prn(dbg.ERR|dbg.SRM, "[---]srcMgr.discover: ",e, sys.exc_traceback.tb_lineno)
     #end discover
     def encCapPause(self):
+        """ Pause a live stream """
         if(enc.code & enc.STAT_LIVE):
             enc.statusSet(enc.STAT_PAUSED)
             procMan.pstop(name='capture',remove=False)
     def encCapResume(self):
+        """ Resume a paused live stream """
         if(enc.code & enc.STAT_PAUSED):
             procMan.pstart(name='capture')
             enc.statusSet(enc.STAT_LIVE)
     def encCapStart(self):
-        """ start encode capture """
+        """ Start live stream """
         dbg.prn(dbg.SRM, "cap start")
         try:
             if(not (enc.code & enc.STAT_READY)): #tried to start a stream that's already started or when there are no cameras
@@ -2157,6 +2634,8 @@ class sourceManager:
                 if(idx>=len(self.sources)): #would only go here if number of sources changed during iteration. there are checks to prevent this
                     break
                 src = self.sources[idx]
+                if(not(src.device.isCamera and src.device.isOn)):#skip devices that do not have a video stream available
+                    continue
                 # # each camera has its own ffmpeg running it, otherwise if 1 camera goes down, all go down with it
                 # if('format' in cameras[devID] and 'devID'=='blackmagic'): #format is explicitly specified for this camera (usually for blackmagic)
                 #   ffstreamIn = c.ffbin+" -y -f "+cameras[devID]['format']+" -i "+cameras[devID]['url']
@@ -2168,7 +2647,7 @@ class sourceManager:
                 camMP4  = str(src.ports['mp4']) #ffmpeg captures rtsp from camera and outputs h.264 stream to this port
                 camHLS  = str(src.ports['hls']) #ffmpeg captures rtsp form camera and outputs MPEG-TS to this port
                 chkPRT  = str(src.ports['chk']) #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
-                ffmp4Ins +=" -i udp://127.0.0.1:"+camMP4
+                ffmp4Ins +=" -fflags +igndts -i udp://127.0.0.1:"+camMP4
                 # if(len(self.sources)<2):
                 #     listSuffix = ""
                 #     # there is only one camera - no need to set camIdx for file names
@@ -2181,22 +2660,20 @@ class sourceManager:
                 if(oldSupportSuffix<1):
                     oldSupportSuffix = listSuffix
 
+                self.sources[idx].listFile = 'list'+listSuffix+'.m3u8'
                 # TODO: add a lq stream for devices with preview
-                ffmp4Out +=" -map "+camIdx+" -codec copy -bsf:a aac_adtstoasc "+c.wwwroot+"live/video/main"+listSuffix+".mp4"
+                ffmp4Out +=" -map "+camIdx+" -fflags +igndts -codec copy -bsf:a aac_adtstoasc "+c.wwwroot+"live/video/main"+listSuffix+".mp4"
                 # this is HLS capture (segmenter)
                 if (pu.osi.name=='mac'): #mac os
-                    segmenters[src.device.ip] = c.segbin+" -p -t 1s -S 1 -B "+filePrefix+"segm_ -i list"+listSuffix+".m3u8 -f "+c.wwwroot+"live/video 127.0.0.1:"+camHLS
+                    segmenters[src.device.ip] = c.segbin+" -p -t 1s -S 1 -B "+filePrefix+"segm_ -i "+self.sources[idx].listFile+" -f "+c.wwwroot+"live/video 127.0.0.1:"+camHLS
                 elif(pu.osi.name=='linux'): #linux
                     os.chdir(c.wwwroot+"live/video")
                     segmenters[src.device.ip] = c.segbin+" -d 1 -p "+filePrefix+"segm_ -m list"+filePrefix+".m3u8 -i udp://127.0.0.1:"+camHLS+" -u ./"
 
-                # if(quality=='low' and 'preview' in cameras[src.device.ip]):
-                #     camURL = cameras[src.device.ip]['preview']
-                # else:
                 # this ffmpeg instance captures stream from camera and redirects to mp4 capture and to hls capture
                 dbg.prn(dbg.SRM, "capcmd:",src.rtspURL, chkPRT, camMP4, camHLS)
                 ffcaps[src.device.ip] = src.buildCapCmd()
-                # each camera also needs its own port forwarder
+                self.sources[idx].isEncoding = True
             #end for device in cameras
             # this command will start a single ffmpeg instance to record to multiple mp4 files from multiple sources
             ffMP4recorder = ffmp4Ins+ffmp4Out
@@ -2208,7 +2685,8 @@ class sourceManager:
                 if(idx>=len(self.sources)):
                     break
                 src = self.sources[idx]
-                self.sources[idx].isEncoding = True
+                if(not src.isEncoding):
+                    continue
                 # segmenter
                 startSuccess = startSuccess and procMan.padd(name="segment",devID=src.device.ip,cmd=segmenters[src.device.ip],forceKill=True)
                 # ffmpeg RTSP capture
@@ -2229,7 +2707,7 @@ class sourceManager:
             enc.statusSet(enc.STAT_READY)
     #end encCapStart
     def encCapStop(self,force=False):
-        """stops the capture, kills all ffmpeg's and segmenters
+        """ Stops live stream, kill all ffmpeg's and segmenters
             Args:
                 force (bool,optional) : force-kill all the processes - makes stopping process faster
         """
@@ -2253,6 +2731,8 @@ class sourceManager:
                 if(idx>=len(self.sources)):
                     break
                 src = self.sources[idx]
+                if(not src.isEncoding):
+                    continue
                 self.sources[idx].isEncoding = False
                 ffBlue += " -r 30 -vcodec libx264 -an -f mpegts udp://127.0.0.1:"+str(src.ports['mp4'])
             #end while
@@ -2301,7 +2781,7 @@ class sourceManager:
             enc.statusSet(enc.STAT_READY)
     #end encStopCap
     def exists(self, ip):
-        """ check if a device with this IP exists already 
+        """ Check if a device with this IP exists already 
             Args:
                 ip (str) :   ip address of the device to lookup
             Returns:
@@ -2319,6 +2799,7 @@ class sourceManager:
         return -1
     #end exists
     def monitor(self):
+        """ Monitor the source to make sure it starts properly or gets removed from the list if it can't. """
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return False
@@ -2365,7 +2846,7 @@ class sourceManager:
             dbg.prn(dbg.ERR|dbg.SRM, "[---]srcmgr.monitor:",e, sys.exc_traceback.tb_lineno)
     #end monitor
     def nextIdx(self):
-        """ finds next available camera index """
+        """ Finds next available camera index """
         if(len(self.sources)<1): #there are no sources yet - first index will be zero
             return 0 
         sources = self.sources[:] #copy of list
@@ -2387,9 +2868,12 @@ class sourceManager:
             found = indecies[-1]+1
         return found
     def setBitrate(self, bitrate, camID=-1):
-        """ change camera/encoder bitrate
-        @param (int) bitrate - new bitrate to set
-        @param (int) camID - (optional) id of the encoder/camera. if not specified, the bitrate will be set for all cameras
+        """ Change camera/encoder bitrate
+            Args:
+                bitrate(int): new bitrate to set
+                camID(int, optional): id of the encoder/camera. if not specified, the bitrate will be set for all cameras
+            Returns:
+                none
         """
         try:
             sources = copy.deepcopy(self.sources)
@@ -2401,8 +2885,11 @@ class sourceManager:
             dbg.prn(dbg.ERR|dbg.SRM, "[---]mgr.setBitrate",e,sys.exc_traceback.tb_lineno)
     #end setBitrate
     def toJSON(self):
-        """ creates a dictionary of all the sources 
-        @param (bool) autosave - (optional) saves the dictionary in json format to a pre-defined file (default=True)
+        """ Creates a dictionary of all the sources and returns it
+            Args:
+                autosave(bool,optional): saves the dictionary in json format to a pre-defined file.default:True
+            Return:
+                (dictionary): indecies are camera IPs.
         """
         try:
             sources = copy.deepcopy(self.sources)
@@ -2426,23 +2913,12 @@ class sourceManager:
     #end toJSON
 #end sourceManager class
 
-############################
-## tag-management classes ##
-############################
-# class Tagger(object):
-#     """Class provides tag-related functionality"""
-#     def __init__(self, arg):
-#         super(Tagger, self).__init__()
-#         self.arg = arg
-#     def tagSet():
-#         pass
-
 ##########################
 ## network sync classes ##
 ##########################
 
 class SyncSrv(object):
-    """ a server object that can be synced """
+    """ A server object that can be synced """
     enabledUp = False #sync up enabled on this server
     enabledDn = False #sync down enabled - this is irrelevant here, all servers pull events, no pushing needed
     ip        = False
@@ -2456,7 +2932,7 @@ class SyncSrv(object):
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SSV,"[---]syncsrv.init:", e, sys.exc_traceback.tb_lineno)
     def cancel(self):
-        """ stop the sync """
+        """ TO IMPLEMENT: stop the sync """
         pass
     def doneCopy(self):
         """ gets called when download finished """
@@ -2465,7 +2941,7 @@ class SyncSrv(object):
         """ monitors sync progress """
         pass
     def syncUp(self):
-        """ syncs events from this server to the local server """
+        """ Syncs events from this instance of (remote) server to the local server """
         try:
             cfg = pxp._cfgGet(c.wwwroot+"_db/")
             dbg.prn(dbg.SSV,"trying sync")
@@ -2530,7 +3006,7 @@ class SyncSrv(object):
                     # self.urlListDn(baseurl="http://"+self.ip,fileList = resp['entries'], dest=c.wwwroot+evt['datapath'])
                     # network sync has lower priority than user-initiated sync's, but higher than local backup
                     # in order for sync to complete before automatic backup kicks in and tries to back up an event that wasn't synced yet
-                    backuper.add(hid=hid,priority=1,remoteParams={"url":"http://"+self.ip,"files": resp['entries']})
+                    backuper.add(hid=hid,priority=3,remoteParams={"url":"http://"+self.ip,"files": resp['entries']})
                     toSync +=1
                 else:
                     dbg.prn(dbg.SSV,"invalid response from ",self.ip,": ",resp)
@@ -2540,12 +3016,13 @@ class SyncSrv(object):
     def statusTxt(self):
         pass
     def stopMon(self):
+        """ Stops the monitor """
         try:
             tmr['srvsync'][self.ip].kill()
         except:
             pass
     def updateInfo(self):
-        # determine whether this server allows sync
+        """ Determine whether this server allows sync - reads the settings file and updates local properties """
         try:
             resp = pu.io.url("http://"+self.ip+"/min/ajax/serverinfo",timeout=4) #if it takes more than 10 seconds to get the server info, the connection is too slow for backup anyway
             if(not resp): #the server must have gone dark
@@ -2569,7 +3046,7 @@ class SyncSrv(object):
 #end SyncSrv
 
 class SyncManager(object):
-    """ manages networked servers: finds pxp servers, checks their options, syncs the events between them """
+    """ Manages networked servers: finds pxp servers, checks their options, syncs the events between them """
     servers = {} #dictionary of syncable servers
     enabledUp = False #this is irrelevant for current server, it will pull new info from other servers, not push anything
     enabledDn = False
@@ -2584,7 +3061,7 @@ class SyncManager(object):
         tmr['srvsync']['mon'] = TimedThread(self.monitor,period=5)
         self.startTime = time.time()
     def arbitrate(self):
-        """ based on all discovered devices makes a decision on whether this server will be master or not """
+        """ Based on all discovered devices makes a decision on whether this server will be master or not """
         try:
             if(enc.code & (enc.STAT_START | enc.STAT_LIVE | enc.STAT_PAUSED)): 
                 # there is a live event on this encoder - it must be master already
@@ -2607,7 +3084,7 @@ class SyncManager(object):
         except Exception as e:
             dbg.prn(dbg.SMG|dbg.ERR, "[---]syncmgr.arbitrate:", e, sys.exc_traceback.tb_lineno)
     def compareVersion(self,ver1,ver2="1.0.13"):
-        """ compares two versions (in dot-delimeted string format)
+        """ Compares two versions (in dot-delimeted string format)
 
         Args:
             ver1 (str): version number to compare. e.g. 1.0.9
@@ -2647,13 +3124,14 @@ class SyncManager(object):
     #end compareVersion
 
     def discover(self):
-        """ discovers any pxp servers on the network """
+        """ Discovers any pxp servers on the network using bonjour protocol. """
         if(enc.code & enc.STAT_SHUTDOWN):
-            return
+            return False
         # get customer ID for authentication
         cfg = pxp._cfgGet()
         if(not cfg): 
-            return _err("not initialized")
+            dbg.prn(dbg.SMG|dbg.ERR,"syncmgr.discover: not initialized")
+            return False
         customerID = cfg[2]
         self.discoveredRunning = False
         def discovered(result):
@@ -2711,6 +3189,12 @@ class SyncManager(object):
     #end discover
     # monitors encoders
     def monitor(self):
+        """ Monitor the servers and remove dead ones
+            Args:
+                none
+            Returns:
+                none
+        """
         try:
             servers = self.servers.keys() #list of remote servers
             for srvIP in servers:
@@ -2725,7 +3209,7 @@ class SyncManager(object):
             dbg.prn(dbg.ERR|dbg.SMG,"[---]syncmgr.monitor",e,sys.exc_traceback.tb_lineno)
     #end monitor
     def syncAll(self):
-        """ syncs all servers to self """
+        """ Syncs all remote servers to self """
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
@@ -2747,12 +3231,21 @@ class SyncManager(object):
 ## utility functions ##
 #######################
 def serverInfo():
+    """ Gets basic server info
+        Args:
+            none
+        Returns:
+            (dictionary): 
+                master(bool): whether this server is master
+                alarms(list): list of device names that triggered an alarm
+    """
     return {"master":syncMgr.isMaster,"alarms":srcMgr.alarms()}
 def speak(msg):
+    """ speaks passed text (only on 192.168.3.100 ip address)"""
     if(pu.io.myIP()=='192.168.3.100'):
         os.system("say -v Veena "+str(msg))
-#recursively kills threads in the ttObj
 def pxpTTKiller(ttObj={},name=False):
+    """ Recursively kills threads in the ttObj """
     dbg.prn(dbg.KLL,"pxpkill: ",name,"...")
     if(type(ttObj) is dict): #the object is a dictionary - go through each element (thread) and kill it
         if(len(ttObj)<1):
@@ -2774,6 +3267,7 @@ def pxpTTKiller(ttObj={},name=False):
         return
 
 def pxpCleanup(signal=False, frame=False):
+    """ Stops all threads and removes them prior to stopping the pxpservice """
     global procMan
     try:
         dbg.prn(dbg.KLL,"terminating services...")
@@ -2797,8 +3291,8 @@ def pxpCleanup(signal=False, frame=False):
         dbg.prn(dbg.KLL|dbg.ERR,"[---]pxpCleanup FAIL?!!!!?!?!", e, sys.exc_traceback.tb_lineno)
 #end pxpCleanup
 
-# kick the watchdog on each tablet (to make sure the socket does not get reset)
 def kickDoge():
+    """ Kick the watchdog on each tablet (to make sure the socket does not get reset) """
     # simply add the message to the queue of each tablet
     BBQcopy = copy.deepcopy(globalBBQ)
     for client in BBQcopy:
@@ -2815,6 +3309,7 @@ def kickDoge():
 
 
 def bbqManage():
+    """ Manages socket message queue """
     global globalBBQ, lastStatus
     # get encoder status
     newStatus = enc.code #int(pu.disk.file_get_contents("/tmp/pxpstreamstatus")) #contains status code
@@ -2866,8 +3361,9 @@ def bbqManage():
 
 
 class proc:
+    """ Processor class - manages a specified process (starts, restarts, stops) """
     def __init__(self,cmd,name,devID,keepAlive=False,killIdle=False,forceKill=False,threshold=0):
-        """ Processor class - manages a specified process (starts, restarts, stops)
+        """ Initializes the process
             Args:
                 cmd(str)        - execute this command to start the process
                 name(str)       - process nickname (e.g. segmenter)
@@ -2899,12 +3395,12 @@ class proc:
     def __repr__(self):
         return "<proc> {name} {dev} ...{cmd}... {keepalive} {forcekill} {killidle}".format(**self.__dict__)
     def start(self):
-        """ starts a process (executes the command assigned to this process) """
+        """ Starts a process (executes the command assigned to this process) """
         try:
             if(self.off): #the process is stopping, it should not restart
                 return False
             # start the process
-            if(self.name=='capture'):#display output in the terminal #DEBUG ONLY#
+            if(self.name=='capturez'):#display output in the terminal #DEBUG ONLY#
                 ps = sb.Popen(self.cmd.split(' '))
             else:#hide output for all other ffmpeg's/processes
                 ps = sb.Popen(self.cmd.split(' '),stderr=FNULL,stdout=FNULL)
@@ -2923,10 +3419,13 @@ class proc:
             dbg.prn(dbg.ERR|dbg.PPC,"[---]proc.start: ",e,sys.exc_traceback.tb_lineno)
             return False
     def stop(self,async=True,force=False,end=False):
-        """ stops the process 
-            @param (bool) async - whether to stop this event in the background (default: True)
-            @param (bool) force - force-stop the process if true
-            @param (bool) end   - permanently end the process (no possibility of restart)
+        """ Stops the running process
+            Args:
+                async(bool,optional): whether to stop this event in the background. default: True
+                force(bool,optional): force-stop the process if true. default: False
+                end(bool,optional): permanently end the process (no possibility of restart). default: False
+            Returns:
+                none
         """
         # dbg.prn(dbg.PPC, "stopping: ", self.name, self.pid, "force:", (force or self.forcekill))
         self.off = end
@@ -2943,10 +3442,11 @@ class proc:
         else:
             self._killer()
     def restart(self):
-        """ stops the process and immediately restarts it """
+        """ Stops the process and immediately restarts it """
         self.stop(async=False) #wait till the command stops
         self.start()
     def _cleanup(self):
+        """ Stops the process and removes any running threads"""
         dbg.prn(dbg.PPC, "proc", self.name, "cleanup")
         for thread in self.threads:
             try:#remove any running threads
@@ -2956,8 +3456,8 @@ class proc:
                 dbg.prn(dbg.ERR|dbg.PPC, "[---]proc._cleanup",self.name, thread,e)
                 pass
     def _monitor(self):
+        """ Monitor the process: get its cpu usage, running state """
         try:
-            # monitor the process health
             self.alive = psOnID(pid=self.pid) #check if the process is alive
             self.cpu = pu.disk.getCPU(pid=self.pid) #get cpu usage
             if(self.cpu>=0.1):
@@ -2970,6 +3470,7 @@ class proc:
         except Exception as e:
             dbg.prn(dbg.PPC|dbg.ERR,"[---]proc._monitor: ",e,sys.exc_traceback.tb_lineno)
     def _manager(self):
+        """ Manage the process: start it if required, restart, stop when idle, etc. """
         if(enc.code & enc.STAT_SHUTDOWN):
             self._cleanup()
         elif(self.run and not self.alive): 
@@ -2983,6 +3484,7 @@ class proc:
             #this process is idle and has to be stopped (but not restarted)
             self.stop()
     def _killer(self):
+        """ Kills the specified process """
         try:
             while psOnID(pid=self.pid):
                 if(self.killcount>2): #the process didn't die after 3 attempts - force kill next time
@@ -3009,7 +3511,7 @@ class proc:
 #end class proc
 
 class procmgr:
-    """ process management class """
+    """ Process management class """
     def __init__(self):
         self.procs = {} #processes in the system
     def dbgprint(self):
@@ -3020,9 +3522,12 @@ class procmgr:
                 dbg.prn(dbg.PCM,procs[idx].name, procs[idx].alive, procs[idx].cpu, procs[idx].pid, procs[idx].keepalive, procs[idx].run, procs[idx].dev)
             dbg.prn(dbg.PCM,"----------------------------------")
     def palive(self,name,devID=False):
-        """ determine whether a process is alive 
-        @param (str) name - name of the process
-        @param (str) devID - id of the device this process belongs to. if unspecified, return the first process matching the name (default: False)
+        """ Determine whether a process is alive 
+            Args:
+                name(str): name of the process
+                devID(str,optional): id of the device this process belongs to. if unspecified, return the first process matching the name (default: False)
+            Returns:
+                (bool): whether the process is alive
         """
         procs = self.procs.copy()
         for idx in procs:
@@ -3033,17 +3538,17 @@ class procmgr:
         return False
     def padd(self,cmd,name,devID,keepAlive=False,killIdle=False,forceKill=False,threshold=0):
         """ Add a new process (command) to the process manager and try to start it
+            Args:
+                cmd (str): command to execute in the terminal
+                name (str): what to name the process for later reference
+                devID (str): associate the process with this device ID (usually IP address)
+                keepAlive (bool,optional): keep the process alive (i.e. if it dies, restart it)
+                killIdle (bool,optional): kill if this process stalls (low cpu usage or gets zombiefied)
+                forceKill (bool,optional): when stopping this process, force-kill it right away. default: False
+                threshol (int,optional): number of seconds to wait before declaring the process as idle
 
-        Args:
-            cmd (str): command to execute in the terminal
-            name (str): what to name the process for later reference
-            devID (str): associate the process with this device ID (usually IP address)
-            keepAlive (bool,optional): keep the process alive (i.e. if it dies, restart it)
-            killIdle (bool,optional): kill if this process stalls (low cpu usage or gets zombiefied)
-            forceKill (bool,optional): when stopping this process, force-kill it right away
-
-        Returns:
-            bool: True if the command was started successfully, False if an error occurred 
+            Returns:
+                bool: True if the command was started successfully, False if an error occurred 
         """
         try:
             idx = 0 #the index of the new process
@@ -3066,7 +3571,6 @@ class procmgr:
     #end padd
     def pexists(self,name,devID=False):
         """ Determine whether a process exists (stopped, idle, but present in the list)
-
         Args:
             name (str): name of the process
             devID (str, optional): id of the device this process belongs to. if unspecified, return the first process matching the name. default: False
@@ -3082,8 +3586,8 @@ class procmgr:
                     return True
         return False
     #end pexists
-    # remove process from the list 
     def premove(self,procidx):
+        """ Remove process from the processes list """
         if(procidx in self.procs):
             del self.procs[procidx]
     #end premove
@@ -3118,8 +3622,8 @@ class procmgr:
                         tmr['killers'].append(TimedThread(self._stopwait,(idx,)))
                 #end if restart...else
             #end if name or devID
-    # start a specified process (usually used for resuming an existing process)
     def pstart(self,name,devID=False):
+        """ Start a specified process (usually used for resuming an existing process) """
         procs = self.procs.copy()
         for idx in procs:
             proc = procs[idx]
@@ -3127,7 +3631,7 @@ class procmgr:
                 if(not devID or proc.dev==devID): #either devID matches or devID wasn't specified - just start all processes matching the name
                     proc.start()
     def _stopwait(self,idx):
-        """ waits until the process is stopped, then removes it"""
+        """ Waits until the process is stopped, then removes it"""
         while(psOnID(self.procs[idx].pid)):
             time.sleep(1)
         del self.procs[idx]
@@ -3153,7 +3657,7 @@ class procmgr:
 #     if(med<arr[med]):
 #         return gap(arr,first,med)
 #     return gap(arr,med+1,last)
-#end gap
+# end gap
 # arr = [0,1,3,5,10]
 # nextGap = gap(arr,0,count(arr)-1)
 
@@ -3203,8 +3707,12 @@ def psKill(pid=0,pgid=0,ref=False,timeout=4,force=False):
     except Exception as e:
         dbg.prn(dbg.PCM|dbg.ERR,"kill err::::::::::::::::::",e,sys.exc_traceback.tb_lineno)
 
-# checks if a process is active based on pid
 def psOnID(pid=0,pgid=0):
+    """ Checks if a process is active based on pid (or gid)
+        Args:
+            pid(int,optional): process id. default: 0. NB: one of pid or pgid must be specified.
+            pgid(int,optional): process group id. default: 0. NB: one of pid or pgid must be specified.
+    """
     try:
         if(pid):
             p = psutil.Process(pid)
@@ -3222,11 +3730,15 @@ def psOnID(pid=0,pgid=0):
     # #result of the cmd is 0 if it was successful (i.e. the process exists)
     # return os.system(cmd)==0
 
-# adds message for a client to the BBQ
-# client - id of the client (ip + port)
-# msg - message to send
-# c - reference to the client variable (used to add them to the queue for the first time)
 def addMsg(client,msg,c=False):
+    """ Adds message for a client to the BBQ
+        Args:
+            client(str): id of the client (ip + port)
+            msg(str): message to send
+            c(obj): reference to the client variable (used to add them to the queue for the first time)
+        Returns:
+            none
+    """    
     global globalBBQ
     # get timestamp for every broadcast
     timestamp = int(time.time()*1000)
@@ -3239,6 +3751,37 @@ def addMsg(client,msg,c=False):
     globalBBQ[client][0][timestamp]={'ACK':0,'timesSent':0,'lastSent':(timestamp-3000),'data':str(timestamp)+"|"+msg}
 
 def DataHandler(data,addr):
+    """ Processs the data received from the socket. Executes the command or passes it to the commander.
+        Commands available so far:
+            RMF - remove file
+            RMD - remove directory
+
+            BKP - backup event (manual request)
+            RRE - restore event 
+            CPS - request status of the backup or restore copy process
+            LBP - list events that are being backed up
+            LBE - list events that were backed up
+
+            LOG - set writing on/off
+            LVL - set log level
+
+            CML - get camera list
+            SNF - get server info
+
+            ACK - command acknowledgement receipt (used for socket communication)
+
+            BTR - change bitrate
+            
+            PSE - pause live encode
+            RSM - resume live encode
+            STP - stop live encode 
+            STR - start live encode
+        Args:
+            data(str): string received from the socket
+            addr(list): client address (ip,port)
+        Returns:
+            (bool): whether the command was processed successfully
+    """
     try:
         # client IP address
         senderIP = str(addr[0])
@@ -3254,7 +3797,7 @@ def DataHandler(data,addr):
             if(senderIP=="127.0.0.1"):
                 nobroadcast = False #local server allows broadcasting
                 # these actions can only be sent from the local server - do not broadcast these
-                if(dataParts[0]=='RMF' or dataParts[0]=='RMD' or dataParts[0]=='BTR' or dataParts[0]=='BKP' or dataParts[0]=='RRE'):
+                if(dataParts[0]=='RMF' or dataParts[0]=='RMD' or dataParts[0]=='BTR' or dataParts[0]=='BKP' or dataParts[0]=='RRE' or dataParts[0]=='LVL' or dataParts[0]=='LOG'):
                     # remove file, remove directory, set bitrate or backup event - these don't need to go to the commander queue - they're non-blocking and independent of one another
                     nobroadcast = True
                     encControl.enq(data,bypass=True)
@@ -3275,10 +3818,6 @@ def DataHandler(data,addr):
                 if(dataParts[0]=='CPS'): # copy status request
                     nobroadcast = True
                     return backuper.status(dataParts[1])
-                if(dataParts[0]=='LVL'): # set log level
-                    dbg.setLogLevel(dataParts[1])
-                if(dataParts[0]=='LOG'): # set logging to file on/off
-                    dbg.setLog(dataParts[1])
             #end if sender=127.0.0.1
             if(dataParts[0]=='ACK'): # acknowledgement of message receipt
                 nobroadcast = True
@@ -3309,6 +3848,7 @@ def DataHandler(data,addr):
     return False
 
 def SockHandler(sock,addr):
+    """ Listens for connections from specified sockets"""
     try:
         while 1:
             data = sock.recv(4096)
@@ -3363,11 +3903,10 @@ devEnabled = {
 }
 tmr = {}
 tmr['misc'] = [] #contains miscellaneous threads (that might have been killed already or still alive but useless)
+# initialize logging class
+dbg = debugLogger()
 if __name__=='__main__': # will enter here only when executing this file (if it is included from another process, this IF condition will be false)
     try:
-        # initialize logging class
-        dbg = debugLogger()
-
         # ensure there's only 1 instance of this script running
         procs = pu.disk.psGet("pxpservice.py")
         enc = False

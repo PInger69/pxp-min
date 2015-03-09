@@ -13,13 +13,17 @@ class Controller:
 		# if (not pu.disk.psOn("pxpStream.app")):
 			# os.system("/usr/bin/open /Applications/pxpStream.app")
 		# to make sure proper file is loaded
+
+		#### -- deprecated --- ####
 		# make sure list monitor is on (checks for discontinuities in the video)
-		if(os.path.exists(c.approot+"pxplistmon.py")):
-			suffix=""
-		else:
-			suffix="c"
+		# if(os.path.exists(c.approot+"pxplistmon.py")):
+		# 	suffix=""
+		# else:
+		# 	suffix="c"
 		# if (not pu.disk.psOn("pxplistmon")):
 			# os.system("/usr/bin/python "+c.approot+"pxplistmon.py"+suffix+" >/dev/null 2>/dev/null &")
+		#### -- end deprecated --- ####
+
 		# make sure socket service is on (for push instead of pull notifications)
 		if(os.path.exists(c.approot+"pxpservice.py")):
 			suffix=""
