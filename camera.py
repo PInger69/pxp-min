@@ -13,7 +13,7 @@ def getOnCams():
 		Args:
 			none
 		Returns:
-			none
+			(dictionary)
 	"""
 	import json, os
 	try:
@@ -35,7 +35,7 @@ def camParam(param,camID=False,getAll=False):
 			camID(str,optional): camera ID from which to get this parameter. if not set, default: False
 			getAll(bool,optional): whether to get a list of values from all cameras
 		Returns:
-			none
+			(str)
 	"""
 	cams = getOnCams()
 	# check if the specified camera exists in the list

@@ -1,5 +1,4 @@
 #!/usr/bin/python
-from tendo import singleton
 from datetime import datetime as dt
 from uuid import getnode as getmac
 from pxputil import TimedThread
@@ -96,7 +95,7 @@ class debugLogger(object):
     MN             = 1<<21# main function
 
     #this property defines which of the above groups will be logged 
-    LVL            = KLL|ERR|MN|SRC # USE WISELY!! too many groups will cause the log file to grow disproportionately large!
+    LVL            = KLL|ERR|MN|SRC|PCM # USE WISELY!! too many groups will cause the log file to grow disproportionately large!
     #whether to log to file as well as to screen
     LOG            = 1 #only enable if you suspect there might be a problem, or for debugging
 
