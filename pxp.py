@@ -2671,6 +2671,35 @@ def _listEvtSources(evtName, srcType='list'):
 	except Exception as e:
 		return (False, _err(str(e)+' '+str(sys.exc_traceback.tb_lineno)+" -- listEvtSources"))
 #end listEvtSources
+#######################################################
+#returns a list of teams in the system
+#######################################################
+def _listLeagues():
+	sql = "SELECT * FROM `leagues` ORDER BY `name` ASC"
+	if(not os.path.exists(c.wwwroot+"_db/pxp_main.db")):
+		return []
+	db = pu.db(c.wwwroot+"_db/pxp_main.db")
+	db.qstr(sql)
+	result = db.getasc()
+	db.close()
+	return result
+#end _listLeagues
+#######################################################
+#returns a list of teams in the system
+#######################################################
+def _listTeams():
+	sql = "SELECT * FROM `teams` ORDER BY `name` ASC"
+	if(not os.path.exists(c.wwwroot+"_db/pxp_main.db")):
+		return []
+	db = pu.db(c.wwwroot+"_db/pxp_main.db")
+	db.qstr(sql)
+	result = db.getasc()
+	db.close()
+	return result
+#end listTeams
+def _log(string):
+	print(string)
+	os.system("echo '"+string+"' >>"+c.wwwroot+"convert.txt")
 def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):
 	""" Logs an entry in the sqlite database for the event (or global)
 		Args:
