@@ -29,9 +29,8 @@ class Controller:
 			suffix=""
 		else:
 			suffix="c"
-		# if (not pu.disk.psOn("pxpservice.py")):
-			# os.system("/usr/bin/python "+c.approot+"pxpservice.py"+suffix+" >/dev/null 2>/dev/null &")
-		# super(Controller, self).__init__()
+		if (not pu.disk.psOn("pxpservice.py")):
+			os.system("/usr/bin/python "+c.approot+"pxpservice.py"+suffix+" >/dev/null 2>/dev/null &")
 		self.d['version']=c.ver
 	#this function is executed first
 	def _run(self):
