@@ -1284,7 +1284,7 @@ def sync2cloud(sess):
 			return _err("Not logged in")
 		#the dict({},**{}) is to combine 2 dictionaries into 1: 
 		#{"success":True/False} and {"action":"reload"})
-		_syncEncUp(sess.data['ee'],sess.data['ep'])
+		#_syncEncUp(sess.data['ee'],sess.data['ep']) #this doesn't work yet - no syncup defined
 		syncResponse = _syncEnc(sess.data['ee'],sess.data['ep'])
 		if ('success' in syncResponse):
 			return syncResponse
