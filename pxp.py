@@ -1284,7 +1284,7 @@ def sync2cloud(sess):
 			return _err("Not logged in")
 		#the dict({},**{}) is to combine 2 dictionaries into 1: 
 		#{"success":True/False} and {"action":"reload"})
-		#_syncEncUp(sess.data['ee'],sess.data['ep']) #this doesn't work yet - no syncup defined
+		_syncEncUp(sess.data['ee'],sess.data['ep'])
 		syncResponse = _syncEnc(sess.data['ee'],sess.data['ep'])
 		if ('success' in syncResponse):
 			return syncResponse
@@ -1640,7 +1640,7 @@ def tagset(tagStr=False, sendSock=True):
 		if('requesttime' in t):
 			del t['requesttime'] #this is just to make sure http request does not get cashed
 		# make sure event is not being stopped
-		if(t['event']=='live' and _stopping()):
+		if(eventName=='live' and _stopping()):
 			return _stopping(msg=True)
 		if(not os.path.exists(c.wwwroot+eventName+'/video/')):
 			return _err("Event does not exist")
@@ -2903,7 +2903,7 @@ def _sockData(event="live",tag=False,gameEvents=[{}],data=False,db=False):
 		# tag was not specified - send the raw data
 		pu.disk.sockSend(data)
 #end sockData
-def _stopping(msg=False):
+def _stopping(event='live',msg=False):
 	""" Checks if the live event is being stopped
 		Args:
 			msg(bool,optional): when True, just returns a message "Event is being stopped", otherwise checks if event is stopping and returns boolean
@@ -2913,7 +2913,7 @@ def _stopping(msg=False):
 			(mixed): boolean if msg is False, string otherwise.
 	""" 
 	import psutil
-	event = 'live'
+	#event = 'live'
 	if(not msg):
 		# return True
 		# TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:TODO:
