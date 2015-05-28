@@ -2419,7 +2419,7 @@ def _init( email, password):
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstart http://myplayxplay.net/.assets/min/encstart")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encstop http://myplayxplay.net/.assets/min/encstop")
 			# os.system("curl -#Lo "+c.wwwroot+"_db/encresume http://myplayxplay.net/.assets/min/encresume")
-			os.system("curl -#Lo "+c.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy.v08") #download the rquired version of idevcopy!!
+			os.system("curl -#Lo "+c.wwwroot+"_db/idevcopy http://myplayxplay.net/.assets/min/idevcopy.v09") #download the rquired version of idevcopy!!
 			#add execution privileges for the scripts
 			os.system("chmod +x "+c.wwwroot+"_db/*")
 			#download the blank database files
@@ -3399,7 +3399,7 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 
 			if(int(tag['type'])==4): #static telestration - add teleurl only for these tags
 				tag['teleurl_2'][s]=tlPath
-				tag['telfeull_2'][s]=tfPath
+				tag['telefull_2'][s]=tfPath
 
 			if(int(tag['type'])==40): #video telestration - add televid only for these tags
 				tag['televid_2'][s]=tvPath
