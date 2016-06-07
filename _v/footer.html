@@ -122,25 +122,27 @@
 		    catch(e){
 		    	result['success'] = false;
 		    }
-		    if (!result['success'] && shuttingDown){
+		    if (result!=null && !result['success'] && shuttingDown){
 		  		shuttingDown = false;
 		  		alert('user permissions do not allow encoder shut down');
 		  		window.location.reload();
 		    }
-	    	switch(result['action']){
-	    		case 'reload': 	
-	    			window.location.reload();
-	    		break;
-	    		case 'popup':
-	    			if(result['msg']){
-		    			alert(result['msg']);
-	    			}
-	    		break;
-	    		default :	    		
-	    		break;
-
+		    if (result!=null)
+		    {
+    	    	switch(result['action']){
+    	    		case 'reload': 	
+    	    			window.location.reload();
+    	    		break;
+    	    		case 'popup':
+    	    			if(result['msg']){
+    		    			alert(result['msg']);
+    	    			}
+    	    		break;
+    	    		default :	    		
+    	    		break;
+    	    	}
 	    	}	    	
-		    if(result['success'] && callback!=false){
+		    if(result!=null && result['success'] && callback!=false){
 		    	callback();
 		    }
 		    if (ajaxbtn){
@@ -166,8 +168,9 @@
 	function ajaxCamStatus(){
 		// check if the camera is connected and set the status accordingly
 		timestamp = new Date();
+                camstat_timeout=4000;
 		$.ajax({
-		  timeout:4000,
+		  timeout:camstat_timeout,
 		  url: 'ajax/getvideoinfo/'+timestamp.getTime(),
 		  complete: function(xhr, textStatus) {
 
@@ -200,7 +203,7 @@
 					}
 				}
 			}
-			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
+			cameraStateTmr = setTimeout(ajaxCamStatus,camstat_timeout); //check camera status continuously
 		  },
 		  error: function(xhr, textStatus, errorThrown) {
 		  	if (shutDownCounter>9){//after a few seconds the encoder should be off 
@@ -212,7 +215,7 @@
 		  	if(shuttingDown){
 		  		shutDownCounter++;
 		  	}
-			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
+			cameraStateTmr = setTimeout(ajaxCamStatus,camstat_timeout); //error occurred - keep checking the status
 
 		  }
 		});

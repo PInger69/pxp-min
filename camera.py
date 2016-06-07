@@ -1,5 +1,6 @@
 #!/usr/bin/python
 import constants as c
+#from pxputil import mdbg as pdbg
 from pxputil import disk as pdisk
 from time import sleep
 
@@ -22,12 +23,11 @@ def getOnCams():
 		cams = json.loads(pdisk.sockSendWait('CML|',addnewline=False,timeout=10))
 		if((type(cams) is dict) and (len(cams)>0)):
 			return cams
-	except:
+	except Exception as e:
+		#pdbg.log("[---] getOnCams:".format(e))
 		pass
 	# no RTSP sources found
 	return {}
-#end getOnCams
-
 def camParam(param,camID=False,getAll=False):
 	""" Returns a camera parameter
 		Args:
@@ -63,7 +63,7 @@ def camParam(param,camID=False,getAll=False):
 #end camParam
 
 # start an encode from all cameras
-def camStart():
+def camStart(evt_hid = ''):
 	""" Sends 'start live event' command to the service 
 		Args:
 			none
@@ -76,13 +76,14 @@ def camStart():
 		cameras = getOnCams()
 		if(len(cameras)<1): #no cameras active - can't start and encode
 			return False
-		pdisk.sockSend('STR|',addnewline=False)
+		cmd = 'STR|'
+		if (len(evt_hid) > 0):
+			cmd = 'STR|' + evt_hid			
+		pdisk.sockSend(cmd, addnewline=False)
 		sleep(3) #wait for 3 seconds before returning result - to make sure streams start up properly
 		return True
 	except:
 		return False
-#end camStart
-# pause cameras
 def camPause(camID = False):
 	""" Sends 'pause live event' command to the service 
 		Args:

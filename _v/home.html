@@ -61,11 +61,13 @@ def iff(cond,if_true,if_false=""):
 					<span class="icon-play"></span> Start
 				</button>
 @end
+
 @if encoder['status']=='live':
 				<button class="medium orange col_3 ajaxbtn" action="encpause">
 					<span class="icon-pause"></span> Pause
 				</button>
 @end
+
 @if encoder['status']=='paused':
 				<button class="medium blue col_3 ajaxbtn" action="encresume">
 					<span class="icon-play"></span> Resume

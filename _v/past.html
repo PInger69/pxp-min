@@ -1,72 +1,212 @@
 @require(events)
-<div class="col_12">
-	<div class="row bold">
-		<div class="col_2">Date</div>
-		<div class="col_2">Home team</div>
-		<div class="col_2">Visitor team</div>
-		<div class="col_2">League</div>
-		<div class="col_1">Video</div>
-		<div class="col_3">
-			<div class="cw_4 right"> 
-				&nbsp;
-			</div>
-			<div class="cw_4 right"> 
-				<button id="download" class="green small cw_12" type="reset">
-					<i class="icon-download-alt"></i>
-				</button>
-			</div>
-			<div class="cw_1 right"> 
-				<input type="checkbox" control="chkAll" class="chkAll">
-			</div>
-			<div class="cw_3" style="float:right;">
-				<button class="removeSel small red cw_12">
-					<i class="icon-remove"></i>
-				</button>
-			</div>
+@# Add multicam index string
+@(
+looplist = ['s_00']
+count = 0
+subcount = 0
+testcount = 0
+color_toggle = False
+row_attr = "row border-top"        
+)
+<div id="alert-message" class="notice success" visible=false>
+    <i class="icon-ok icon-large"></i> 
+    Please make sure to shutdown computer after making backup to unmount the USB drive
+<!--    
+    <div class="cw_3" style="float:right;">
+        <button class="ejectbtn small blue cw_10"><span>Unmount</span></button>
+    </div>
+    <a href="#close" class="icon-remove"></a>
+-->
+</div>
+
+<div style="width:100%;">
+	<div class="row">
+		<div style="width:100%">
+		    <table style="font-size: 16px; font-weight: bold; border: 0px solid black; width:100%; border-bottom: 0px solid black;">
+		        <tr style="display: block; border-bottom:0pt solid black; height: 50px;">
+		            <td style="width:10%; border: 0px solid black; vertical-align: bottom; height: 50px;">
+		              Date
+		            </td>
+		            <td style="width:10%; border: 0px solid black; vertical-align: bottom; height: 50px;">
+		              Home Team
+		            </td>
+                    <td style="width:10%; text-align: center; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                      Visitor Team
+                    </td>
+                    <td style="width:10%; text-align: left; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                      League
+                    </td>
+                    <td style="width:7%; text-align: left; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                      Camera#
+                    </td>
+                    <td style="width:7%; text-align: left; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                      Quality
+                    </td>
+                    <td style="width:4%; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                        &nbsp;
+                    </td>
+                    <td style="width:7%; text-align: left; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                      Video
+                    </td>
+		            <td  style="width:13%; text-align: right; border: 0px solid black; vertical-align: bottom; height: 50px;">
+    		            <input type="checkbox" control="chkAll" class="chkAll">&nbsp;&nbsp;check all</input>
+		            </td>
+		            <!--
+                    <td style="width:8%; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                        <button id="download" class="green small cw_11" type="reset">
+                            <i class="icon-download-alt"></i>
+                        </button>
+                    </td>
+                    -->
+                    <td style="width:8%; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                        <button class="removeSel small red cw_11">
+                            <i class="icon-remove"></i>
+                        </button>
+                    </td>
+		        <tr>
+		    </table>  
+            <!--
+            <div class="cw_3 right">
+                <button class="green small cw_9">
+                    <i class="icon-retweet"></i>
+                </button>
+            </div>
+            -->
 		</div>
 	</div>	
+		
 @for ev in events:
-	<div class="row border-top">
-		<div class="col_2">
-			@ev['date']
-		</div>
-		<div class="col_2 word-break">
-			@ev['homeTeam']
-		</div>
-		<div class="col_2 word-break">
-			@ev['visitTeam']
-		</div>
-		<div class="col_2 word-break">
-			@ev['league']
-		</div>
-		<div class="col_2 vidColumn">
-			@if 'mp4' in ev:
-				<a class="media" href="@ev['mp4']">play</a> (@ev['size_fmt'])
-			@elif 'live' in ev:
-				<a class="media" href="@ev['live']">live</a>
-			@else:
-				n/a
-			@end
-		</div>
-		<div class="col_2">
-			<div class="cw_1 right backup-holder">
-				<a href="#" class="backupEvt large" eventID="@ev['hid']"><i class="icon-save"></i></a>
-			</div>
-			<div class="cw_10 center">
-				@if 'mp4' in ev:
-					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']" download>
-				@elif not 'live' in ev:
-					<input type="checkbox" class="center" event="@ev['name']" eventID="@ev['hid']">
-				@end
-			</div>
-			<div class="cw_1 right">
-				@if not 'live' in ev:
-					<a href="#" class="removeEvt large red" event="@ev['name']" eventID="@ev['hid']"><i class="icon-remove"></i></a>
-				@end
-			</div>
-		</div>
-	</div>
-@end
+@(
+    showUsbBackup = True
+    isLive = False
+    looplist = ['s_00']            
+    if ('num_live' in ev and ev['num_live'] >= 1):    
+        if ('live_2' in ev):
+            looplist=sorted(ev['live_2'].keys())
+            isLive = True                
+    elif ('num_mp4' in ev and ev['num_mp4'] >= 1):    
+        if ('mp4_2' in ev):
+            looplist=sorted(ev['mp4_2'].keys())
+    if (len(looplist)==0):    
+        looplist = ['s_00']     
+
+    if not color_toggle:        
+        row_attr = "row border-top"        
+    else:
+        row_attr = "row2 border-top"        
+    color_toggle = not color_toggle
+)
+    @for s in looplist:
+        @(subcount = 0)    
+        @for vq in {'hq', 'lq'}:
+@(
+            cvq = 'vidsize_'+vq
+            if ('live_2' in ev and not cvq in ev['live_2'][s]):
+                continue
+            elif ('mp4_2' in ev and not cvq in ev['mp4_2'][s]):
+                continue                      
+            count += 1
+            subcount += 1      
+            rowid = "row_" + str(count)
+            
+            #quickly check all number of streams to be displayed. (looplist has 's_00', 's_01', etc...)
+            strm_count = 0
+            if ('mp4_2' in ev):
+                for tmp_s in looplist: 
+                    if ('lq' in ev['mp4_2'][tmp_s]):
+                        strm_count += 2
+                    else:
+                        strm_count += 1
+            if (strm_count==0):
+                strm_count = 1
+            mp4count = str(strm_count)
+)    
+        <div class="@row_attr" id="@rowid">      
+    		<div class="col_2">
+    			(@str(count)) @ev['date']
+    		</div>
+    		<div class="col_2 word-break">
+    			@ev['homeTeam']
+    		</div>
+    		<div class="col_2 word-break">
+    			@ev['visitTeam']
+    		</div>
+    		<div class="col_2 word-break">
+    			@ev['league']
+    		</div>
+    		<div class="col_1 word-break"><!-- S_INDEX (1/n)-->
+                @s
+    		</div>
+    		<div class="col_1 word-break"><!-- VQ -->
+                @vq.upper() 
+    		</div>		
+    		<div class="col_21 vidColumn"><!-- PLAY or LIVE -->
+                @if ('mp4_2' in ev and vq in ev['mp4_2'][s]):
+                    <!--a class="media" href="@ev['mp4_2'][s][vq]" download>play</a> (@ev['mp4_2'][s]['vidsize_'+vq]) -->
+                    <!--button type="submit" onclick="window.open('@ev['mp4_2'][s][vq]','_self');">download</button-->
+                    <!--form method="get" action="@ev['mp4_2'][s][vq]"><button type="submit">download</button></form-->
+                    <a class="media" href="@ev['mp4_2'][s][vq]" data-toggle="tooltip" title="right click to download video file">play</a> (@ev['mp4_2'][s]['vidsize_'+vq])
+                @elif ('live_2' in ev and vq in ev['live_2'][s]):
+                    <a class="media" href="@ev['live_2'][s][vq]">live</a> (@ev['live_2'][s]['vidsize_'+vq])     
+                @elif 'mp4' in ev:
+                    <a class="media" href="@ev['mp4']">play</a> (@ev['size_fmt'])
+                @elif 'live' in ev:
+                    <a class="media" href="@ev['live']">live</a>
+                @else:
+                    n/a
+                @end
+    		</div>
+    		<div class="col_21"><!-- BACKUP/REMOVE/FIX EVT -->
+                <div class="center" style="float: left; width: 20.00%;">
+                    @if not 'live' in ev: #and subcount==1:
+                        @if ('name' in ev):
+                            <a href="#" class="fixEvt large blue" vq="@vq.upper()" sidx="@s" num1_mp4="@mp4count" event="@ev['name']" eventID="@ev['hid']" data-toggle="tooltip" title="Fix this video stream only&#013;Do not refresh the page while it is in operation"><i class="icon-retweet"></i></a>
+                        @else:
+                            <a href="#" class="fixEvt large blue" vq="@vq.upper()" sidx="@s" num1_mp4="@mp4count" event="abcd" eventID="@ev['hid']" data-toggle="tooltip" title="Fix this video stream only&#013;Do not refresh the page while it is in operation"><i class="icon-retweet"></i></a>
+                        @end
+                    @end
+                </div>
+    		    @if (showUsbBackup): # show only once for the first time 
+    		    @(showUsbBackup = False) 
+        			<div class="center"  style="float: left; width: 20.00%;">
+        				@if not 'live' in ev: #and subcount==1:
+                            @if ('name' in ev):
+            					<a href="#" class="removeEvt large red" num1_mp4="@mp4count" event="@ev['name']" eventID="@ev['hid']" data-toggle="tooltip" title="Remove this whole event permanently"><i class="icon-remove"></i></a>
+            				@else:
+                                <a href="#" class="removeEvt large red" num1_mp4="@mp4count" event="abcd" eventID="@ev['hid']" data-toggle="tooltip" title="Remove this whole event permanently"><i class="icon-remove"></i></a>
+            				@end
+        				@end
+        			</div>
+
+                    <div class="center"  style="float: left; width: 20.00%;">
+                        @if not 'live' in ev: #and subcount==1:
+                            @if ('name' in ev):
+                                <a href="#" class="xportEvt large blue" vq="@vq.upper()" sidx="@s" num1_mp4="@mp4count" event="@ev['name']" eventID="@ev['hid']" data-toggle="tooltip" title="Export this event to XML"><i class="icon-cloud-upload"></i></a>
+                            @else:
+                                <a href="#" class="xportEvt large blue" vq="@vq.upper()" sidx="@s" num1_mp4="@mp4count" event="abcd" eventID="@ev['hid']" data-toggle="tooltip" title="Export this event to XML"><i class="icon-cloud-upload"></i></a>
+                            @end
+                        @end
+                    </div>
+
+                    @if (not 'live' in ev): # if live, no need to show checkbox and backup button
+                        <div class="center backup-holder"  style="float: left; width: 30.00%;">
+                            <a href="#" class="backupEvt large" num1_mp4="@mp4count" eventID="@ev['hid']" data-html="true" data-toggle="tooltip" title="Backup this whole event to the USB storage&#013;Do not refresh the page while it is in operation"><i class="icon-save"></i></a>
+                        </div>
+                        <div class="center" style="float: left; width: 10.00%;">
+                            @if ('name' in ev):
+                                <input type="checkbox" control="check_each" class="center" num1_mp4="@mp4count" event="@ev['name']" eventID="@ev['hid']">
+                            @else:
+                                <input type="checkbox" control="check_each" class="center" num1_mp4="@mp4count" event="abcd" eventID="@ev['hid']">
+                            @end
+                        </div>
+                    @end
+
+    			@end
+    		</div>
+    	</div>
+    	@end 
+	@end 
+@end 
 </div>
 <div id="videoWnd" class="wnd-container hide">
 	<div class="wnd">
@@ -77,13 +217,344 @@
 		<a href="#close" class="icon-remove"></a>
 	</div>
 </div>
-
+<div id="usbdrvchecktimer"></div>
 
 
 <link href="css/video-js.css" rel="stylesheet">
 <script src="js/video.js"></script>
 
 <script type="text/javascript">
+// Check always: getCheckingStatus() !!!
+const EVTFIX    = 0x01;
+const EVTBACKUP = 0x02;
+const EVTRMV    = 0x04;
+const USBEJT    = 0x08;
+const USBFINDER = 0x10;
+const DOWNLOAD  = 0x20;
+const EXPORTEVT = 0x40
+var pagecontext = false;
+var fixingCount = 0;
+var exportingCount = 0;
+function ejectDrive(holder) {
+    if (confirm("Eject USB Drive for now") == true) {
+        holder.html('<i>' + 'Ejecting...Please wait' + '</i>');
+    } else {
+        holder.html('<a class="icon-ok green large" href="#"></a>');
+    }
+}
+function mydelay(t) {
+    if (t>0) {
+        var x = setTimeout({}, t);
+        clearTimeout(x);
+    }
+}
+function mapsize(ob) {
+    return Object.keys(ob).length
+}
+function PastPage(params) {
+    this.checkflag = params.checkflag;
+    this.status = params.status;
+    this.op_list = [EVTFIX, EVTBACKUP, EVTRMV, USBEJT, USBFINDER, DOWNLOAD, EXPORTEVT];
+    this.bkp_dict = new Object(); //{};
+    this.fix_dict = new Object(); //{};
+    this.xpt_dict = new Object(); //{};
+    this.usb_plugged = false;
+    return this;
+};
+PastPage.prototype.add_flag = function(flag) {
+    this.checkflag |= flag;
+};
+PastPage.prototype.remove_flag = function(flag) {
+    this.checkflag &= ~flag;
+};
+PastPage.prototype.add_bkp = function(key,bkp) {
+    this.bkp_dict[key] = bkp;
+}
+PastPage.prototype.add_fix = function(key,fix) {
+    this.fix_dict[key] = fix;
+}
+PastPage.prototype.add_xpt = function(key,xpt) {
+    this.xpt_dict[key] = xpt;
+    console.log("key:"+key+" is added successfully!");
+}
+PastPage.prototype.do_bkp_progress = function(status_dict) {
+    try {
+        var v = false;
+        if (typeof(status_dict) != "undefined") {
+            for (v in this.bkp_dict) {
+                if (mapsize(status_dict.status)>0) {
+                    if (v in status_dict.status) {
+                        console.log(status_dict.status[v]);
+                        this.bkp_dict[v].do_progress(status_dict.status[v]);
+                    }
+                }
+            }
+        }
+    }
+    catch(err) {
+        console.log("[---] do_bkp_progress:"+err);
+        return false;
+    }
+    return true;
+}
+PastPage.prototype.do_fix_progress = function(status_dict) {
+    try {
+        var v = false;
+        if (typeof(status_dict) != "undefined") {
+            for (v in this.fix_dict) {
+                if (mapsize(status_dict.status)>0 && v in status_dict.status) {
+                    console.log(status_dict.status[v]);
+                    this.fix_dict[v].do_progress(status_dict.status[v]);
+                }
+            }
+        }
+    }
+    catch(err) {
+        console.log("[---] do_bkp_progress:"+err);
+        return false;
+    }
+    return true;
+}
+PastPage.prototype.do_xpt_progress = function(status_dict) {
+    try {
+        var v = false;
+        if (typeof(status_dict) != "undefined") {
+            for (v in this.xpt_dict) {
+                if (mapsize(status_dict.status)>0 && v in status_dict.status) {
+                    console.log(status_dict.status[v]);
+                    this.xpt_dict[v].do_progress(status_dict.status[v]);
+                }
+            }
+        }
+    }
+    catch(err) {
+        console.log("[---] do_xpt_progress:"+err);
+        return false;
+    }
+    return true;
+}
+PastPage.prototype.clear_dict_hid = function(dest) {
+    try {
+        if (dest=='bkp') {
+            var key_bkp = Object.keys(this.bkp_dict).length;
+            if (key_bkp>0) {
+                this.bkp_dict = {};
+                console.log("clear_dict_hid is called:"+dest);
+            }
+        }
+        if (dest=='fix') {
+            var key_fix = Object.keys(this.fix_dict).length;
+            if (key_fix>0) {
+                this.fix_dict = {};
+                console.log("clear_dict_hid is called:"+dest);
+            }
+        }
+        if (dest=='xpt') {
+            var key_xpt = Object.keys(this.xpt_dict).length;
+            if (key_xpt>0) {
+                this.xpt_dict = {};
+                console.log("clear_dict_hid is called:"+dest);
+            }
+        }
+    }
+    catch(err) {
+        console.log("[---] clear_dict_hid:"+err);
+        return false;
+    }
+    return true;
+}
+PastPage.prototype.get_xpt_hid = function() {
+    try {
+        var xpt_hids = '';
+        var key_len = Object.keys(this.xpt_dict).length;
+        var v = false;
+        var i = 0;
+        for (v in this.xpt_dict) {
+            xpt_hids += v;
+            if (i!=key_len-1)
+                xpt_hids += ',';    
+            i += 1;
+        }
+    }
+    catch(err) {
+        console.log("[---] get_xpt_hid:"+err);
+    }
+    return xpt_hids;
+}
+PastPage.prototype.get_fix_hid = function() {
+    try {
+        var fix_hids = '';
+        var key_len = Object.keys(this.fix_dict).length;
+        var v = false;
+        var i = 0;
+        for (v in this.fix_dict) {
+            fix_hids += v;
+            if (i!=key_len-1)
+                fix_hids += ',';    
+            i += 1;
+        }
+    }
+    catch(err) {
+        console.log("[---] get_fix_hid:"+err);
+    }
+    return fix_hids;
+}
+PastPage.prototype.get_bkp_hid = function() {
+    try {
+        var bkp_hids = '';
+        var key_len = Object.keys(this.bkp_dict).length;
+        var v = false;
+        var i = 0;
+        for (v in this.bkp_dict) {
+            bkp_hids += v;
+            if (i!=key_len-1)
+                bkp_hids += ',';    
+            i += 1;
+        }
+    }
+    catch(err) {
+        console.log("[---] get_bkp_hid:"+err);
+    }
+    return bkp_hids;
+}
+//----------------------------------------------------------------
+function MP4Rebuilder (params) {
+    this.hid = params.hid;
+    this.vq = params.vq;
+    this.sidx = params.sidx;
+    this.holder = params.holder;
+    this.key = params.key;
+    this.status = 0;
+    return this;
+};
+MP4Rebuilder.prototype.start = function() {
+    var self = this;
+    // start the rebuild mp4
+    // mp4rebuild/?event=2016-06-01_11-10-29_ca1a59ffd98847917d80d9a8a60d5c4ca473fa84_local&vq=HQ&sidx=s_00
+    ajaxCall("mp4rebuild/?event="+this.hid+"&vq="+this.vq+"&sidx="+this.sidx,"",
+        function(){ // success callback
+            fixingCount = fixingCount + 1;
+            self.load_anim();
+            //self.progress(); //start getting progress for the fixing event when server sends a response
+        });
+};
+MP4Rebuilder.prototype.load_anim = function() {
+    //display loading animation until copy starts
+    this.holder.html('<img src="css/img/ajax-loader.gif"/>');
+};
+MP4Rebuilder.prototype.update_progressbar = function(prog_value) {
+    try {
+        if (this.holder.find('.backup-meter').length<=0) { 
+            //just started backing up - display progress bar
+            this.holder.html('<div class="meter animate backup-meter"><span style="width: 1%"><span></span></span></div>');
+        }
+        else{
+            // update progress bar to the new progress
+            this.holder.find('.backup-meter > span').animate({ width: prog_value+'%' }, 500);
+        }
+    }
+    catch(err) {
+        console.log("[---] mp4rebuild.update_progressbar:"+err);
+    }
+}
+MP4Rebuilder.prototype.do_progress = function(data) {
+    var self = this;
+    try {
+        console.log("fixing-up status --> key:"+self.key+" "+"status:"+data);
+        self.status = data;
+        self.update_progressbar(data);
+        if (data==100){
+            self.done(data);
+        }
+    }
+    catch(err) {
+        console.log("[---] mp4rebuild.do_progress:"+err);
+        return false;
+    }
+    return true;
+}
+MP4Rebuilder.prototype.done = function(data) {
+    console.log("fixed status " + "key:" + this.key + " done:" + data);
+    if(data>95){
+        this.holder.html('<a id="eject-button" class="icon-ok blue large" href=""></a>');
+        fixingCount = fixingCount - 1;
+        if (fixingCount<0)
+            fixingCount = 0;
+    }
+}
+//----------------------------------------------------------------
+function ExportEvent (params) {
+    this.hid = params.hid;
+    this.vq = params.vq;
+    this.sidx = params.sidx;
+    this.holder = params.holder;
+    this.key = params.key;
+    this.status = 0;
+    this.finished = false;
+    return this;
+};
+ExportEvent.prototype.start = function() {
+    var self = this;
+    // start the Exporting Event
+    // exportevt/?event=2016-06-01_11-10-29_ca1a59ffd98847917d80d9a8a60d5c4ca473fa84_local&vq=HQ&sidx=s_00
+    ajaxCall("exportevt/?event="+this.hid+"&vq="+this.vq+"&sidx="+this.sidx,"",
+        function(){ // success callback
+            exportingCount = exportingCount + 1;
+            self.load_anim();
+            //self.progress(); //start getting progress for the fixing event when server sends a response
+        });
+};
+ExportEvent.prototype.load_anim = function() {
+    //this.holder.html('<img src="css/img/ajax-loader.gif"/>');  //display loading animation until copy starts
+    this.holder.html('<div class="meter animate backup-meter"><span style="width: 5%"><span></span></span></div>');  //display loading animation until copy starts
+};
+ExportEvent.prototype.update_progressbar = function(prog_value) {
+    try {
+        if (prog_value>=100) {
+            prog_value = 100;
+        }
+        if (this.finished) {
+            this.done(prog_value);
+        }
+        var hold_str = this.holder.html();
+        var idx_found = hold_str.indexOf("icon-ok"); // this.holder.find('.backup-meter') isnt working well... 
+        if (idx_found>0) {
+            return;
+        }
+        this.holder.find('.backup-meter > span').animate({ width: prog_value+'%' }, 500);
+        console.log("xpt-key:"+ self.key + " UPDATING:"+prog_value);
+        if (prog_value>=100) {
+            this.done(prog_value);
+        }
+    }
+    catch(err) {
+        console.log("[---] ExportEvent.update_progressbar:"+err);
+    }
+}
+ExportEvent.prototype.do_progress = function(data) {
+    var self = this;
+    try {
+        console.log("ExportEvent.do_progress --> key:"+self.key+" "+"status:"+data);
+        self.status = data;
+        self.update_progressbar(data);
+    }
+    catch(err) {
+        console.log("[---] ExportEvent.do_progress:"+err);
+        return false;
+    }
+    return true;
+}
+ExportEvent.prototype.done = function(data) {
+    console.log("ExportEvent.DONE  ====>" + "key:" + this.key + " XPT-COMPLETED:" + data);
+    if(data>95){
+        this.holder.html('<a id="eject-button" class="icon-ok blue large" href=""></a>');
+        this.finished = true;
+        exportingCount = exportingCount - 1;
+        if (exportingCount<0)
+            exportingCount = 0;
+    }
+}
+//----------------------------------------------------------------
 var dlQueue = []; //queue used for processing multiple downloads
 var rmQueue = []; //queue used for processing multiple deletions
 var rmBtnHtml = "";
@@ -98,6 +569,7 @@ function Backuper (params) {
     // this.STAT_NOEVT= 1<<3 //event doesn't exist
 
 	this.status = 0;
+	this.testCount = 0;
 	return this;
 	// var holder = obj.parents('.backup-holder');
 	// 
@@ -105,7 +577,6 @@ function Backuper (params) {
 	// 	holder.html('<i class="icon-ok green large"></i>')
 	// });
 }
-
 Backuper.prototype.start = function() {
 	var self = this;
 	//display loading animation until copy starts
@@ -116,23 +587,77 @@ Backuper.prototype.start = function() {
 			self.progress(); //start getting progress for the backup when server sends a response
 		});
 };
-
+Backuper.prototype.update_progressbar = function(prog_value) {
+    try {
+        if (this.holder.find('.backup-meter').length<=0) { 
+            //just started backing up - display progress bar
+            this.holder.html('<div class="meter animate backup-meter"><span style="width: 1%"><span></span></span></div>');
+        }
+        else{
+            // update progress bar to the new progress
+            this.holder.find('.backup-meter > span').animate({ width: prog_value+'%' }, 500);
+        }
+    }
+    catch(err) {
+        console.log("[---] update_progressbar:"+err);
+    }
+}
+Backuper.prototype.do_progress = function(data) {
+    var self = this;
+    try {
+        //if (self.testCount<5) {
+        console.log("backing-up status --> hid:"+self.hid+" "+"status:"+data);
+        //}
+        self.status = data[0];
+        if((data[0]^16) && (data[0]&(2|4))){
+            self.done();
+        }
+        else{//still backing up
+            //console.log("backup status (still backing up)--> hid:"+self.hid+" "+"status:"+data);
+            if(data[0]&1){ //backup started
+                self.update_progressbar(data[1]);
+            }
+        }
+    }
+    catch(err) {
+        console.log("[---] backuper.do_progress:"+err);
+        return false;
+    }
+    return true;
+}
 Backuper.prototype.progress = function() {
+
+    
+    return;
+
+
 	var self = this;
 	url = 'ajax/evtbackupstatus/?event='+self.hid+'&r='+Math.random();
-	console.log(url);
+	//console.log(url);
 	$.ajax({
 		url: url,
 		dataType: 'json'
 		// data: {event: self.hid}
 	})
 	.done(function(data) {
+	    self.do_progress(data);
+	    
+        setTimeout(function(){
+            self.progress();
+        },1000);
+        
+	    /*
+	    if (self.testCount<5) {
+	       console.log("backing-up status --> hid:"+self.hid+" "+"status:"+data);
+	    }
 		self.status = data[0];
 		if((data[0]^16) && (data[0]&(2|4))){
 			self.done();
 		}
 		else{//still backing up
+            //console.log("backup status (still backing up)--> hid:"+self.hid+" "+"status:"+data);
 			if(data[0]&1){ //backup started
+			    //self.update_progressbar(data[1]);
 				if(self.holder.find('.backup-meter').length<=0){ //just started backing up - display progress bar
 					self.holder.html('<div class="meter animate backup-meter"><span style="width: 0%"><span></span></span></div>');
 				}
@@ -143,21 +668,30 @@ Backuper.prototype.progress = function() {
 			}
 			setTimeout(function(){
 				self.progress();
-			},1000); 
+			},1000);
 		}
+        */ 
 	})
 	.fail(function(jqxhr) {
-		this.status = -1;
+		self.status = -1;
 	})
 	.always(function() {
+        self.testCount += 1;
 	});
 };
-
 Backuper.prototype.done = function() {
-	console.log(this.status);
+	console.log("backup status " + "hid:" + this.hid + " done:" + this.status);
 	if(this.status==2){
-	    // finished copying
-		this.holder.html('<i class="icon-ok green large"></i>');
+	    //----------------------------------------------------------------------------------
+	    // when finished copying, show eject button on the top
+	    //
+		this.holder.html('<a id="eject-button" class="icon-ok green large" href=""></a>');
+		if (pagecontext.usb_plugged) {
+            $("#alert-message").show();
+        }
+        //$("#eject-button").click(function() {
+        //    $("#eject-button").attr("href", "#");
+        //});		
 	}
 	else{
 		if(this.status & (1<<6)){
@@ -171,6 +705,7 @@ Backuper.prototype.done = function() {
 		}
 	}
 };
+//----------------------------------------------------------------
 
 function getProgress() {
 	// get download progress
@@ -178,7 +713,6 @@ function getProgress() {
 		url: 'ajax/dlprogress',
 		type: 'GET',
 		success: function(data, textStatus, xhr){
-
 			// response received for progress, get the % value
 			data = eval("("+data+")");
 			progress = parseInt(data['progress']);
@@ -198,15 +732,52 @@ function getProgress() {
 function rmQueueNext() {
 	//remove the event that was just deleted
 	deletedEvt = rmQueue.shift(); 
+    
+    var cur_row;
+    if ($(deletedEvt).parents('.row').length>0) {            
+        cur_row = $(deletedEvt).parents('.row');
+    }
+    else cur_row = $(deletedEvt).parents('.row2');
+    var rid = cur_row.attr('id');  
+    var s = "0";
+    idx = rid.indexOf('_');
+    if (idx > 0)
+        s = rid.substring(idx+1);
+    start_idx = parseInt(s,10);
+    num_mp4 = parseInt($(deletedEvt).attr('num1_mp4'),10);
+    if (s>0 && num_mp4>1)
+    {
+        for (i=start_idx; i<start_idx+num_mp4; i++)
+        {
+            $('#row_'+i).hide();
+        }
+    }
+    else
+    {
+        if ($(deletedEvt).parents('.row').length>0) {
+            $(deletedEvt).parents('.row').hide();
+        }
+        else $(deletedEvt).parents('.row2').hide();                       
+    }
+
+    /*
 	// remove event row from the table
-	$(deletedEvt).parents('.row').hide();
+	if ( $(deletedEvt).parents('.row2').length > 0 ) {
+        $(deletedEvt).parents('.row2').hide();
+	}
+	else $(deletedEvt).parents('.row').hide();
+	*/
 	if(rmQueue.length<1){
     	$('.removeSel').html(rmBtnHtml);
 		return;
 	}
 	evtToDelete = rmQueue[0];
 
-	$(evtToDelete).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+    if ($(evtToDelete).parents('.row').length > 0) {
+	   $(evtToDelete).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+	}
+	else $(evtToDelete).parents('.row2').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+	
 	// send the call to delete the event
 	ajaxCall("evtdelete/?name="+$(evtToDelete).attr('event')+"&event="+$(evtToDelete).attr('eventID'),"",rmQueueNext);
 }
@@ -288,14 +859,172 @@ function pbarWidth(obj,width) {
 			width: width+'%'
 		}, 500);
 }
-function fOnLoad (argument) {
 
+////////////////////////////////////////////////////////////////////
+function getCheckingStatus()
+{
+    var s = '';
+    if (pagecontext.checkflag) 
+    {
+        if (pagecontext.checkflag & EVTFIX) {
+            s += 'FIX';
+        }
+        if (pagecontext.checkflag & EVTBACKUP) {
+            s += '+BKP';
+        }
+        if (pagecontext.checkflag & EVTRMV) {
+            s += '+RMV';
+        }
+        if (pagecontext.checkflag & USBEJT) {
+            s += '+EJT';
+        }
+        if (pagecontext.checkflag & USBFINDER) {
+            s += '+USB';
+        }
+        if (pagecontext.checkflag & DOWNLOAD) {
+            s += '+DNL';
+        }
+        if (pagecontext.checkflag & EXPORTEVT) {
+            s += '+XPT';
+        }
+    }
+    return s;
+}
+
+function checkppstatus()
+{
+    var checking_param = getCheckingStatus();
+    if (checking_param!='') {
+        var bkp_hid = pagecontext.get_bkp_hid();
+        var fix_hid = pagecontext.get_fix_hid();
+        var xpt_hid = pagecontext.get_xpt_hid();
+        
+        $.ajax({
+            url: 'ajax/past_check_status?r='+Math.random(),
+            dataType: 'json',
+            data: {"param": checking_param, "bkp_hid": bkp_hid, "fix_hid":fix_hid, "xpt_hid":xpt_hid } // input args for ejtprogress
+        })
+        .done(function(data) {
+            var res = false;
+            //var tx = '{"results": {"status":false, "fix":{"status":{"a000":55, "a001":78}}, "bkp":{"status":{}}}}';
+            //var txp = jQuery.parseJSON(tx);            
+            //var s1 = txp.results.fix.status.a000;
+            
+            var dp = false;        
+            try {
+                dp = jQuery.parseJSON(data); // it looks like this... "{"results": "{\"status\": true}"}
+            }
+            catch(err) {
+                console.log("[---] checkppstatus:"+err);
+            }            
+            if (dp!=false && dp.hasOwnProperty('results'))
+            {
+                if (dp.results.status==true) {
+                    res = true;
+                    console.log("results_live_status------------->"+dp.results.live);
+                    try {
+                        if (mapsize(dp.results.xpt.status)>0) {
+                            pagecontext.do_xpt_progress(dp.results.xpt);
+                        }
+                    }
+                    catch(err) {
+                        console.log("[---] xpt-checkppstatus:"+err);
+                        res &= false;
+                    }
+                    //--------------
+                    try {
+                        //console.log("check_ppstatus fix-->" + fix_ob);
+                        if (mapsize(dp.results.fix.status)>0) {
+                            //console.log(dp.results.fix.status);
+                            pagecontext.do_fix_progress(dp.results.fix);
+                        }
+                    }
+                    catch(err) {
+                        console.log("[---] fix-checkppstatus:"+err);
+                        res &= false;
+                    }
+                    //--------------
+                    try {
+                        var usb_ob = dp.results.usb;
+                        //console.log("check_ppstatus usb-->" + usb_ob);
+                        if (dp.results.usb.status==true) {
+                            $("#alert-message").show();
+                        }
+                        else {
+                            $("#alert-message").hide();
+                        }
+                        pagecontext.usb_plugged = dp.results.usb.status;
+                    }
+                    catch(err) {
+                        console.log("[---] usb-checkppstatus:"+err);
+                        res &= false;
+                    }
+                    //--------------
+                    try {
+                        var bkp_ob = dp.results.bkp;
+                        //console.log("check_ppstatus dp.results.bkp.status-->" + mapsize(dp.results.bkp.status));
+                        if (mapsize(dp.results.bkp.status)>0) {
+                            //console.log(dp.results.bkp); //.status['5e73d906d6a4538f052ce9c5372ccbed1fb90558_local']);
+                            pagecontext.do_bkp_progress(dp.results.bkp);
+                        }
+                    }
+                    catch(err) {
+                        console.log("[---] bkp-checkppstatus:"+err);
+                        res &= false;
+                    }
+                }
+            }
+            return res;      
+        })
+        .fail(function(jqxhr) {
+            console.log("check_ppstatus FAILED!!!");
+            $("#alert-message").hide();
+        })
+        .always(function() {
+        });    
+    }
+    return false;
+}
+var checkppstatus_timer = $.timer(function() { checkppstatus(); });
+
+
+function fOnLoad (argument) {
+    $("#alert-message").hide();
 	// warn user about exiting the page if the download is in progress
 	window.onbeforeunload = function(e){
 		if(dlQueue.length>0){
 		    return 'If you leave this page, not all files may be downloaded and progress will not be updated for the current download.';
 		}
 	}
+	fixingCount = 0;
+    //$('.backupEvt').tooltip({html: true})
+	// EVTFIX|EVTBACKUP|EVTRMV|USBEJT|USBFINDER|DOWNLOAD|EXPORTEVT;
+    var checkflag = EVTFIX|EVTBACKUP|USBFINDER|EXPORTEVT;
+    var status = 0;
+    pagecontext = new PastPage({ checkflag:checkflag, status:status });
+    checkppstatus_timer.set({ time : 2000, autostart : true });
+    checkppstatus_timer.play();
+    	
+	//------------------check eject USB drive stuffs....
+	// hide message bar initially
+    // kick in the usb drive finder timer 
+	//usbfindertimer.set({ time : 2000, autostart : true });
+	//usbfindertimer.play();
+	
+	// eject button is pressed...
+    $('.ejectbtn').click(function (e){
+        if(dlQueue.length<=0)
+        {
+            $("#eject-button").attr("href", "#"); // prevent refresh screen
+            if(confirm("Unmount USB Drive for now ?")==true) {
+                usbfindertimer.stop();
+                ajaxCall("ejectusbdrv/?name=usb","","");
+                ejttimer.set({ time:2000, autostart:true }); 
+            }
+        }
+    });
+    //-------------------------------------------------
+    	
 	// attach a click to the close button on a window
 	$(document).on('click', '.wnd a[href$="close"]', function(e){
 		e.preventDefault();
@@ -328,20 +1057,36 @@ function fOnLoad (argument) {
     	if(dlQueue.length>0 || rmQueue.length>0){ //do not allow download when download or deletion is in progress
     		return;
     	}
+        //usbfindertimer.stop();
+        //ejttimer.stop();
+
     	$(this).attr('disabled','disabled'); //make sure user cannot click download again
     	$(this).html('<img src="css/img/ajax-loader.gif"/>')
     	// go through every checked video (checkbox) and add it to the queue
-    	$('input[download]:checked[control!=chkAll]').each(function (){
-    		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
-    		dlQueue.push($(this).parent('div'));
+    	//$('input[download]:checked[control!="chkAll"]').each(function (){
+    	$('input:checked[control!="chkAll"]').each(function (){
+    	
+    	
+            console.log($(this).parent('div'));  	
+    	
+    	
+//    		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
+//    		dlQueue.push($(this).parent('div'));
+    		
+    		
+    		
     	}).attr('disabled','disabled');
     	console.log(dlQueue.length);
     	// start download
     	processQueue();
     });
     $('.removeSel').click(function (e){
+        if(fixingCount>0){
+            alert("Please wait until mp4 rebuilding process is finished.");
+            return false;
+        }
     	e.preventDefault();
-    	if(dlQueue.length>0 || rmQueue.length>0){
+    	if(dlQueue.length>0 || rmQueue.length>0 || fixingCount>0){
     		return;
     	}
     	// remove selected events
@@ -352,37 +1097,149 @@ function fOnLoad (argument) {
 	    	if(rmQueue.length>0){
 		    	rmBtnHtml = $(this).html();
 		    	$(this).html('<img src="css/img/ajax-loader.gif"/>');
-		    	$(rmQueue[0]).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+		    	if ($(rmQueue[0]).parents('.row').length>0) {		    	
+		           $(rmQueue[0]).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+		    	}
+		    	else $(rmQueue[0]).parents('.row2').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+		    	
 				// send the call to delete the event
 				ajaxCall("evtdelete/?name="+$(rmQueue[0]).attr('event')+"&event="+$(rmQueue[0]).attr('eventID'),"",rmQueueNext);
 			}
     	}//if confirm
     });//removeSel.click
     $('.removeEvt').click(function (e) {
+        if(fixingCount>0){
+            alert("Please wait until mp4 rebuilding process is finished.");
+            return false;
+        }
     	e.preventDefault();
     	if(dlQueue.length>0 || rmQueue.length>0){
-    		return;
+    		return false;
     	}
     	var tableRow = this;
     	if(confirm('This will delete the event and the video. Are you sure?')){
-	    	$(this).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+            //alert($(tableRow).attr('num1_mp4'));
+            if ($(tableRow).parents('.row').length>0) {            
+                cur_row = $(tableRow).parents('.row');
+            }
+            else cur_row = $(tableRow).parents('.row2');
+            
+            //alert(cur_row.attr('id'));
+            rid = cur_row.attr('id');  
+            if ($(this).parents('.row').length>0) {          
+	    	  $(this).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+	    	}
+	    	else $(this).parents('.row2').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+	    	
     		ajaxCall("evtdelete/?name="+$(tableRow).attr('event')+"&event="+$(tableRow).attr('eventID'),"",
-    			function(){
-    				$(tableRow).parents('.row').hide();
+    			function(){                            			    			                 
+    				//$(tableRow).parents('.row').hide();
+                    s = "0";
+    				idx = rid.indexOf('_');
+    				if (idx > 0)
+    				    s = rid.substring(idx+1);
+    				start_idx = parseInt(s,10);
+    				num_mp4 = parseInt($(tableRow).attr('num1_mp4'),10);
+    				if (s>0 && num_mp4>1)
+    				{
+        				for (i=start_idx; i<start_idx+num_mp4; i++)
+        				{
+        				    $('#row_'+i).hide();
+        				}
+    				}
+    				else
+    				{
+    				    if ($(tableRow).parents('.row').length>0) {
+    				        $(tableRow).parents('.row').hide();
+    				    }
+    				    else $(tableRow).parents('.row2').hide();    				    
+    				}
     		});
     		// remove event row from the table
     		// $(this).parents('.row').hide();
     	}
     	return false;
     });//removeEvt.click
+    $('.fixEvt').click(function(event) {
+        if(confirm('This may need to takes few hours. Do you really want to continue ?')){
+            if (!pagecontext.usb_plugged) {
+                try
+                {
+                    if(!confirm("Are you sure to rebuild MP4 files ?")) {
+                        return;
+                    }
+                    var hid = $(this).attr('event');
+                    var vq = $(this).attr('vq');
+                    var sidx = $(this).attr('sidx');
+                    var sidxonly = sidx.split("_",2);
+                    key = hid + "-" + sidxonly[1] + "-" + vq.toLowerCase();
+                    var holder = ($(this).parents('.row').length>0) ? $(this).parents('.row').find('.vidColumn') : $(this).parents('.row2').find('.vidColumn');
+                    var rebuild = new MP4Rebuilder({
+                        hid:hid, vq:vq, sidx:sidx, // hid,vq,sidx
+                        holder:holder, key:key
+                    });
+                    pagecontext.add_fix(key,rebuild);
+                    rebuild.start();
+                }
+                catch(err) {
+                    console.log("[---] fixEvt:"+err);
+                }
+            }
+            else {
+                alert("Please eject the USB drive and try again.");
+                return;        
+            }
+        }
+    });
+            
+    $('.xportEvt').click(function(event) {
+        console.log("Export Event");
+        if(fixingCount>0){
+            alert("Please wait until mp4 rebuilding process is finished.");
+            return false;
+        }
+        if(true) { //confirm('Do you want to continue to export?')){
+            try
+            {
+                var hid = $(this).attr('event');
+                var vq = $(this).attr('vq');
+                var sidx = $(this).attr('sidx');
+                var sidxonly = sidx.split("_",2);
+                key = hid + "-" + sidxonly[1] + "-" + vq.toLowerCase();
+                var holder = ($(this).parents('.row').length>0) ? $(this).parents('.row').find('.vidColumn') : $(this).parents('.row2').find('.vidColumn');
+                console.log("Exporting Event is starting..."+key);
+                var evt_export = new ExportEvent({
+                    hid:hid, vq:vq, sidx:sidx, holder:holder, key:key
+                });
+                pagecontext.add_xpt(key,evt_export);
+                evt_export.start();
+                console.log("Exporting Event Started..."+key);
+            }
+            catch(err) {
+                console.log("[---] exportEvt:"+err);
+            }
+        }
+    });
+    
     $('.backupEvt').click(function(event) {
-    	var hid = $(this).attr('eventID');
-    	var holder = $(this).parents('.row').find('.vidColumn');
-    	var backup = new Backuper({
-    		hid:hid,
-    		holder:holder
-    	});
-    	backup.start();
+        if(fixingCount>0){
+            alert("Please wait until mp4 rebuilding process is finished.");
+            return false;
+        }
+        if (pagecontext.usb_plugged) {
+        	var hid = $(this).attr('eventID');
+        	var holder = ($(this).parents('.row').length>0) ? $(this).parents('.row').find('.vidColumn') : $(this).parents('.row2').find('.vidColumn');
+        	var backup = new Backuper({
+        		hid:hid,
+        		holder:holder
+        	});
+        	pagecontext.add_bkp(hid,backup);
+        	backup.start();
+        	console.log("event backup started: " + hid);
+    	}
+    	else {
+    	   alert("Please check if USB disk is plugged in.");
+    	}
 
     });
     $('.chkAll:checkbox').change(function () {

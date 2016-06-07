@@ -1,6 +1,9 @@
+#import sys;sys.path.append(r'/Applications/eclipse/plugins/org.python.pydev_4.1.0.201505270003/pysrc')
+#import pydevd;
 import pxp, pxputil as pu
 import constants as c
 import sys, inspect
+import pprint as pp
 
 # extend the main MVC class
 class Controller:
@@ -25,14 +28,26 @@ class Controller:
 		#### -- end deprecated --- ####
 
 		# make sure socket service is on (for push instead of pull notifications)
-		if(os.path.exists(c.approot+"pxpservice.py")):
-			suffix=""
-		else:
-			suffix="c"
-		if (not pu.disk.psOn("pxpservice.py")):
-			os.system("/usr/bin/python "+c.approot+"pxpservice.py"+suffix+" >/dev/null 2>/dev/null &")
+		#----------------------------------				
+		if (pu.pxpconfig.auto_start()):
+			if(os.path.exists(c.approot+"pxpservice.py")):
+				suffix=""
+			else:
+				suffix="c"
+			if (not pu.disk.psOn("pxpservice.py")):
+				os.system("/usr/bin/python "+c.approot+"pxpservice.py"+suffix+" >/dev/null 2>/dev/null &")
+		#----------------------------------				
 		self.d['version']=c.ver
 	#this function is executed first
+	def dbg_func(self, fname):
+		if (pu.pxpconfig.check_dbg('ctrl')):				
+			words = pu.pxpconfig.pxp_ctrl_catch()
+			#pu.mdbg.log("-->controller.run-->FOUND:{}|".format(words)) 
+			for w in words.split("|"):
+				if (fname.strip().find(w.strip())==0):
+					#pu.mdbg.log("-->controller.run-->FOUND:{}".format(fname)) 
+					return True													
+		return False
 	def _run(self):
 		import os, sys
 		# get the method name that the user is trying to access
@@ -54,6 +69,7 @@ class Controller:
 				# nobody is logged in
 				self.d['user'] = False
 				self.d['email'] = False
+								
 			# get the name of the function user wants to call
 			functionName = pu.uri.segment(1,"home")
 			# check if there are any command line arguments 
@@ -68,6 +84,11 @@ class Controller:
 			elif (functionName=="ajax"): #call method from the pxp model (ajax mode)
 				# function itself will be in the next parameter: e.g. min/ajax/tagset
 				functionName = pu.uri.segment(2,"")
+				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):	
+					pu.mdbg.log("-->controller.run1-->", functionName)								
+ 				#if (self.dbg_func(functionName)):				
+  				#	pydevd.settrace()								
+								
 				# check if user is running it from command line 
 				if len(sys.argv)>1:
 					# command line argument will be the name of the function
@@ -78,6 +99,10 @@ class Controller:
 				# get address of the function that user is requesting 
 				# the function is either in this class (controller) 
 				# or it's an html page, in which case fn will be false
+				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
+					pu.mdbg.log("-->controller.run2-->", functionName)
+# 				if (self.dbg_func(functionName)):				
+#  					pydevd.settrace()								
 				fn = getattr(self, functionName, None)
 				# check if user is logged in or not
 				if (not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login')):
@@ -104,7 +129,10 @@ class Controller:
 					result = fn(sess)
 				else:
 					# all the other functions can be called without parameters
+# 					if (self.dbg_func(functionName)):				
+# 						pydevd.settrace()													
 					result = fn()
+					#pu.mdbg.log("-->controller.result-->{}".format(pp.pformat(result)))
 				# check if the result of the function is a dictionary and output it
 				if type(result) is dict: 
 					#make sure the result is dictionary (not a string or int) before tyring to assign values to it
@@ -114,10 +142,12 @@ class Controller:
 				pu.sstr.jout(result)
 			else: # the method that user tried to access does not exist 
 				  # try to find an html page with this name
+				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
+					pu.mdbg.log("-->controller.run3-->", functionName)
 				self.page(functionName)
 		except Exception as e:
 			# in an event of unhandled error, output the result
-			pu.sstr.jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.run","url":pu.uri.uriString})
+			pu.sstr.jout({"msg":str(e)+' '+str(sys.exc_info()[-1].tb_lineno),"line":str(sys.exc_info()[-1].tb_lineno),"fct":"c.run","url":pu.uri.uriString})
 	#end run
 	#logs user out
 	def logout(self):
@@ -136,6 +166,8 @@ class Controller:
 			# get encoder status info
 			self.d['encoder']=pxp.encoderstatus(textOnly=False)
 			# home page requires list of leagues and teams
+			if (not pu.pxpconfig.pxp_hide_cmdmsg(page)):
+				pu.mdbg.log("-->controller.page-->", page)
 			if(page=="home"):
 				self.d['leagues']=pxp._listLeagues()
 				self.d['teams']=pxp._listTeams()
@@ -144,10 +176,12 @@ class Controller:
 				self.d['events']=pxp._listEvents(showDeleted=False)
 			if(page=='sett'):
 				self.d['settings']=pxp.settingsGet()
+				self.d['cams']=pxp.settingsRtmpGet()
+				self.d['rtmp']=pxp.getRtmpStat()
 			# output the page
 			self._out(page+'.html',self.d)
 		except Exception as e:
-			pu.sstr.jout({"msg":str(e)+' '+str(sys.exc_traceback.tb_lineno),"line":str(sys.exc_traceback.tb_lineno),"fct":"c.page","url":pu.uri.uriString})
+			pu.sstr.jout({"msg":str(e)+' '+str(sys.exc_info()[-1].tb_lineno),"line":str(sys.exc_info()[-1].tb_lineno),"fct":"c.page","url":pu.uri.uriString})
 			pass
 ######################################
 ##		 internal functions	   		##
@@ -170,11 +204,16 @@ class Controller:
 		template = engine.get_template('header.html')
 		# this is required for proper html output
 		print("Content-Type: text/html\n")
+		
+		#pu.mdbg.log("past_param-->", pp.pformat(params))
+		
 		# output the html header of the page
 		print(template.render(params))
 		try:
 			if(pgName=='egg.html'):
 				print(pxp.egg()) #for the egg function, just output its contents
+			elif (pgName=='ms-player.html' or pgName=='azplayer.html'):	
+				print(pxp.msplayer()) 
 			else:
 				# all the other functions need to go through template engine
 				template = engine.get_template(pgName)

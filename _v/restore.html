@@ -16,10 +16,24 @@
 			</div>
 		</div>
 	</div>
+
+    <div id="alert-message" class="notice success">
+        <i class="icon-ok icon-large"></i> 
+        Please make sure to shutdown computer after making backup to unmount the USB drive
+    <!--    
+        <div class="cw_3" style="float:right;">
+            <button class="ejectbtn small blue cw_10"><span>Unmount</span></button>
+        </div>
+        <a href="#close" class="icon-remove"></a>
+    -->
+    </div>
+
 	<div class="main-data">
 		
 	</div>
 </div>
+
+
 <div class="hide template">
 	<div class="row border-top">
 		<div class="col_2 date">
@@ -153,9 +167,98 @@ function loadEvents() {
 	});
 }
 
+/////////////////////////////////////////////////////////////////////////////////////////////
+function checkusb()
+{
+    $.ajax({
+        url: 'ajax/usbmounted',
+        dataType: 'json'
+    })
+    .done(function(data) {
+        res = false;
+        if(!data.hasOwnProperty('results')) {
+            return res; // there are no results...
+        }
+        var z1 = data.results;
+        //alert(data.results.status);
+        
+        console.log("check_usb-->" + z1.status);
+        if (z1.status==true) {
+                $("#alert-message").show();
+                res = true;
+        }
+        else {
+                $("#alert-message").hide();
+        }
+        //setTimeout(checkusb,2000);
+        return res;      
+    })
+    .fail(function(jqxhr) {
+        console.log("check_usb failed");
+    })
+    .always(function() {
+    });    
+    return false;
+}
+var usbfindertimer = $.timer(function() { checkusb(); });
+
+function getejcstat()
+{
+    console.log("check eject status-->");
+    $.ajax({
+        url: 'ajax/ejtprogress',
+        dataType: 'json',
+        data: {"a1": 'sss', "a2": '4'} // input args for ejtprogress
+    })
+    .done(function(data) {
+        if (!data.hasOwnProperty('results')) {
+            return false;
+        }
+        var d = data.results;
+        if (d!=null || d!=undefined) {
+            console.log(d.msg + " " + d.progress + " " + d.status);
+            if (d.status==1) {
+                $("#alert-message").hide();
+                ejttimer.stop();
+            }
+            else if (d.status==2) {
+                alert('Unmount failed. Please try again.');
+                ejttimer.stop();
+            }
+            return true;
+        }
+    })
+    .fail(function(jqxhr) {
+        console.log("ejecting usb drive failed");
+    })
+    .always(function() {
+    });    
+}
+var ejttimer = $.timer(function() { getejcstat(); });
+
+
 function fOnLoad (argument) {
 
-	loadEvents();
+	
+    //------------------check eject USB drive stuffs....
+    // hide message bar initially
+    $("#alert-message").hide();
+    // kick in the usb drive finder timer 
+    usbfindertimer.set({ time : 2000, autostart : true });
+    // eject button is pressed...
+    $('.ejectbtn').click(function (e){
+        if(true)
+        {
+            $("#eject-button").attr("href", "#"); // prevent refresh screen
+            if(confirm("Unmount USB Drive for now ?")==true) {
+                usbfindertimer.stop();
+                ajaxCall("ejectusbdrv/?name=usb","","");
+                ejttimer.set({ time:2000, autostart:true }); 
+            }
+        }
+    });
+    //-------------------------------------------------
+    loadEvents();
     $('.btn-restore').click(function(event) {
     	$(':checked').each(function() {
     		var r = $(this).parents('.row');
