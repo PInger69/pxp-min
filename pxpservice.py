@@ -4393,10 +4393,7 @@ class sourceManager:
                     if(not src.isEncoding):
                         continue
                     postfix = src.device.vidquality
-                    if (pu.pxpconfig.use_mp4tcp()):
-                        startSuccess = startSuccess and procMan.padd(name="segment_"+postfix, devID=src.device.ip+"."+postfix, cmd=segmenters[src.device.ip+"."+postfix], forceKill=True, modelname=src.device.model, srcidx=src.idx)
-                    else:
-                        startSuccess = startSuccess and procMan.padd(name="segment_"+postfix, devID=src.device.ip+"."+postfix, cmd=segmenters[src.device.ip+"."+postfix], forceKill=True, modelname=src.device.model, srcidx=src.idx)
+                    startSuccess = startSuccess and procMan.padd(name="segment_"+postfix, devID=src.device.ip+"."+postfix, cmd=segmenters[src.device.ip+"."+postfix], forceKill=True, modelname=src.device.model, srcidx=src.idx)
 
             #end for ------------------------------------------------------------- 
             

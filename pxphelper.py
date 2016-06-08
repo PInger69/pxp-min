@@ -33,6 +33,9 @@ class PXPHeler(threading.Thread):
         return ans
     
     def run(self):
+        """
+        rec_stat caller from the service
+        """
         import pxp # want to have fresh instance ???!
         ans = {}
         pu.mdbg.log("PXPWORKER started ------>cmd:{} cookie:{}".format(self.cmd, self.cookie))

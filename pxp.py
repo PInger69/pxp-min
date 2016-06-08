@@ -542,6 +542,8 @@ def rec_stat(params=False):
 	"""
 	Typical http request looks like this: http://localhost/min/ajax/rec_stat/{"sidx":"00hq","event":"live"}
 		sidx can have "*" instead of specific feed index such as 00hq 
+	
+	This reads the segment file creation time to provide the difference between the steaming start time
 	"""
 	recstat_param = params
 	if (not params):
@@ -630,6 +632,9 @@ def rec_stat(params=False):
 	return result
 
 def enc_stat():
+	"""
+	returns disk free space in server	
+	"""
 	result = {"success":False, "msg":""}
 	try:
 		#enoughSpace = diskInfo['free']>c.minFreeSpace
@@ -1042,6 +1047,9 @@ def evtsynclist():
 		return _err(str(e)+' '+str(sys.exc_info()[-1].tb_lineno))
 
 def ejectusbdrv():
+	"""
+	Send EJT command to the service (Eject USB) - not used anymore
+	"""
 	try:
 		io = pu.io
 		name = io.get('name')
@@ -1052,6 +1060,9 @@ def ejectusbdrv():
 		pu.mdbg.log("[---]ejectusbdrv-->{0}".format(e))
 
 def ejtprogress():
+	"""
+	USB eject callback (via EJS) - not used anymore
+	"""
 	try:
 		io = pu.io
 		stat = io.get('a1') # input arg1,arg2
@@ -1065,6 +1076,9 @@ def ejtprogress():
 		return {"results":json.loads(res)}
 
 def usbmounted():
+	"""
+	Check USB storage status attached for backup/restore purpose  
+	"""
 	resp = '{"status":False}'
 	try:
 		resp = pu.disk.sockSendWait(msg="USB|",addnewline=False)
@@ -1102,6 +1116,9 @@ def retry_pxpcmd(cmd=False,param=False,resp=False,sockWait=True):
 		return False
 
 def past_check_status():
+	"""
+	pastpage html context checker: it checks all of status such as backup,mp4 fix, export XML and USB status
+	"""
 	resp = {'results':{'status':False}}
 	try:
 		io = pu.io
@@ -1134,6 +1151,9 @@ def past_check_status():
 		return json.JSONEncoder().encode(json.loads({'results':{'status':False}}))
 
 def past_check_progress():
+	"""
+	pastpage html progress handler
+	"""
 	res = '{"progress":100}'
 	try:
 		resp = pu.disk.sockSendWait(msg="PCP|", addnewline=False)
@@ -1146,6 +1166,9 @@ def past_check_progress():
 #######################################################
 # Fix MP4
 def mp4rebuild():
+	"""
+	mp4 rebuild hanlder: entry for re-creating mp4 file when the recording was not successful. This will creates new mp4 with segment files.
+	"""
 	try:
 		pu.mdbg.log("-->mp4rebuild begins")
 		evt_hid = pu.io.get('event')
@@ -1171,9 +1194,14 @@ def mp4rebuild():
 		return _err(str(e)+' '+str(sys.exc_info()[-1].tb_lineno))
 
 def mp4rebuildstatus():
+	"""
+	rebuild mp4 status handler: not used anymore
+	"""
 	pass
 
-
+#------------------------
+# Tag to XML exporting
+#------------------------
 class Tag2XML(object):
 	def __init__(self):
 		self.tags = []
@@ -1207,6 +1235,7 @@ class Tag2XML(object):
 		s = dom.toprettyxml()
 		return s
 
+# export all of tags to XML file
 def exportevt():
 	try:
 		# exportevt/?event=2016-06-01_11-10-29_ca1a59ffd98847917d80d9a8a60d5c4ca473fa84_local&vq=HQ&sidx=s_00		
@@ -2036,6 +2065,9 @@ def teamsget():
 #end teamsget
 
 class PXPWorker(threading.Thread):
+	"""
+	pxp thread wrapper for background processing: for now, tagset, tagmod, sumset,sumget are supported
+	"""
 	def __init__(self, cmd, cookie, param):
 		threading.Thread.__init__(self)
 		self.cmd = cmd
@@ -2063,6 +2095,18 @@ class PXPWorker(threading.Thread):
 
 def appreq():
 	"""
+	To avoid the long wait for the request, user just sends this request and check appresp later to get the result.
+	This will prevents time out issue in client side in case long time processing task is requested.
+	cmd should have pxp command like tagset, and unique cookie must be provides to claim the take result.
+	
+	input:
+		inputs should be the same as cmd argument, for example, if cmd is tagset, it should have tagset input params should be provided.
+			Only added parts are 'cmd' and 'cookie'. These should be added when this command is called to start the command ana 
+			claim the result.
+	
+	Output:
+		Given command will be started and result will be stored in database to retieve later via appresp
+		
 	typical request: http://localhost/min/ajax/appreq/{"cmd":"tagset","cookie":"c-10","deviceid":"B983D5BA-B7D9-48BA-BB43-F1D39D5931A5","name":"LO Attack","user":"ae1e7198bc3074ff1b2e9ff520c30bc1898d038e","colour":"3AF20F","time":"13.469176","event":"2016-02-04_10-35-49_24816038a176786ea2fa6c19c7f4c9976c49ae81_local","requesttime":"793.534259"}	
 	"""
 	result = {"success":False,"msg":"","action":""}
@@ -2106,6 +2150,10 @@ def appreq():
 
 def appresp():
 	"""
+	This will be called anytime when the client know it needs to have the result. (It also provides the progress)
+	input:
+		cmd: invoked command
+		cookie: one that have sent in appreq 
 	typical request: http://localhost/min/ajax/appresp/{"cmd":"tagset","cookie":"c-10"}
 	"""
 	param = pu.uri.segment(3,"{}") # always GET command
@@ -3124,6 +3172,9 @@ def getsidx(s):
 	return s
 
 def isAngleFolder(event='live'):
+	"""
+	check if the angle folder is existing
+	"""
 	try:
 		if (pu.pxpconfig.use_split_event_folder() and os.path.isdir(c.wwwroot+event+'/video/hq_00')):
 			return True

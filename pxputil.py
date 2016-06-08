@@ -1718,6 +1718,7 @@ class c_bonjour:
             pass
 #end bonjour class
 
+# configuration file accessor (pxpconfig file, located in min folder)
 class c_pxpconfig:
     config = {}
     def __init__(self):
@@ -1739,7 +1740,7 @@ class c_pxpconfig:
             return self.getSockCmdFlag()
         except:
             pass
-    def pre_rec_conf(self):
+    def pre_rec_conf(self): # record command line option 
         self.reload()
         if ('pre_rec_conf' in self.config):
             return "-fflags +igndts" if self.config['pre_rec_conf']=='0' else self.config['pre_rec_conf'].strip()
@@ -1749,7 +1750,7 @@ class c_pxpconfig:
         if ('post_rec_conf' in self.config):
             return "-codec copy -bsf:a aac_adtstoasc" if self.config['post_rec_conf']=='0' else self.config['post_rec_conf'].strip()
         return "-codec copy -bsf:a aac_adtstoasc" 
-    def capture_mp4_conf(self):
+    def capture_mp4_conf(self): # capture command line option
         self.reload()
         if ('capture_mp4_conf' in self.config):
             return "-codec copy -f mpegts" if self.config['capture_mp4_conf']=='0' else self.config['capture_mp4_conf'].strip()
@@ -1759,80 +1760,80 @@ class c_pxpconfig:
         if ('capture_conf' in self.config):
             return c.fifo_size if self.config['capture_conf']=='0' else self.config['capture_conf'].strip()
         return c.fifo_size 
-    def segment_conf(self):
+    def segment_conf(self): # segmenter command line option
         self.reload()
         if ('segment_conf' in self.config):
             return c.segment_conf if self.config['segment_conf']=='0' else self.config['segment_conf'].strip()
         return c.segment_conf 
-    def virtual_lq_enabled(self):
+    def virtual_lq_enabled(self): # enable/disable LQ feed for each of camera
         if ('virtual_lq_enabled' in self.config):
             return True if self.config['virtual_lq_enabled']=='1' else False
         return False 
-    def show_pingcam_check(self):
+    def show_pingcam_check(self): # showing ping cam message on/off switch 
         if ('show_pingcam_check' in self.config):
             return True if self.config['show_pingcam_check']=='1' else False
         return False 
-    def make_extra_log(self):
+    def make_extra_log(self): # make extra log mypxp.txt
         if ('make_extra_log' in self.config):
             return True if self.config['make_extra_log']=='1' else False
         return False 
-    def IgnoreVideoSettings(self):
+    def IgnoreVideoSettings(self): # not used anymore
         if ('ignore_video_settings' in self.config):
             return True if self.config['ignore_video_settings']=='1' else False
         return False 
-    def ShowUsbDriveMessage(self):
+    def ShowUsbDriveMessage(self): # debug message for USB check
         if ('pxp_svc_usbdrv_msg' in self.config):
             return True if self.config['pxp_svc_usbdrv_msg']=='1' else False
         return False 
-    def lq_mp4_enabled(self):
+    def lq_mp4_enabled(self): # not used anymore
         if ('lq_mp4_enabled' in self.config):
             return True if self.config['lq_mp4_enabled']=='1' else False
         return False 
-    def fix_mp4_background(self):
+    def fix_mp4_background(self): # not used anymore
         if ('fix_mp4_background' in self.config):
             return True if self.config['fix_mp4_background']=='1' else False
         return False 
-    def use_blue_cmd(self):
+    def use_blue_cmd(self): # stop command option
         try:
             if ('use_blue_cmd' in self.config):
                 return True if self.config['use_blue_cmd']=='1' else False
             return True
         except:
             return True 
-    def enable_mp4_convert(self):
+    def enable_mp4_convert(self): # post process for mp4 aligment by new cutting the mp4 files 
         try:
             if ('enable_mp4_convert' in self.config):
                 return True if self.config['enable_mp4_convert']=='1' else False
             return False 
         except:
             return False
-    def use_ping_camcheck(self):
+    def use_ping_camcheck(self): # ping cam debug message switch 
         try:
             if ('use_ping_camcheck' in self.config):
                 return True if self.config['use_ping_camcheck']=='1' else False
             return True
         except:
             return True 
-    def use_split_event_folder(self):
+    def use_split_event_folder(self): # make event folder structure to have each feed per directory
         try:
             if ('use_split_event_folder' in self.config):
                 return True if self.config['use_split_event_folder']=='1' else False
             return True
         except:
             return True 
-    def auto_start(self): 
+    def auto_start(self): # auto start deployment purpose (always true)
         try:
             if ('auto_start' in self.config):
                 return True if self.config['auto_start']=='1' else False
             return True # default is True
         except:
             return True
-    def pxp_ctrl_catch(self):
+    def pxp_ctrl_catch(self): # not used anymore
         if (self.check_dbg('ctrl') and 'pxp_ctrl_catch' in self.config):
             if (self.config['pxp_ctrl_catch']!='0'):
                 return self.config['pxp_ctrl_catch']
             return ""
-    def check_dbg(self, code):
+    def check_dbg(self, code): # debug message switch controller
         # return False if not existing in the pxpconfig
         if (code=='ctrl' and 'pxp_ctrl_debug' in self.config):
             return True if self.config['pxp_ctrl_debug']=='1' else False
@@ -1849,7 +1850,7 @@ class c_pxpconfig:
         elif (code=='dbg' and 'pxp_dbg_debug' in self.config):
             return True if self.config['pxp_dbg_debug']=='1' else False
         return False
-    def getSockCmdFlag(self):
+    def getSockCmdFlag(self): # debug message switch controller
         # SCF_HIDEMASTER      = 1 << 0 # hide master status in the debug
         # SCF_HIDECMD         = 1 << 1 # prohibit command line status in the debug
         # SCF_SHOWDETAILEDCMD = 1 << 2 # detailed command line for ffmpeg  
@@ -1883,7 +1884,7 @@ class c_pxpconfig:
         if ('pxp_dbg_level' in self.config):
             level = self.config['pxp_dbg_level']
         return level
-    def pxp_hide_cmdmsg(self, check_this_msg):
+    def pxp_hide_cmdmsg(self, check_this_msg): # not used anymore
         try:
             if ('pxp_hide_cmdmsg' in self.config):
                 hide_cmdmsg = self.config['pxp_hide_cmdmsg']
@@ -1896,7 +1897,7 @@ class c_pxpconfig:
             return False
         except:
             return False
-    def check_webdbg(self, code):
+    def check_webdbg(self, code): # pxp debug message switch
         # ['pxp_ctrl_debug','pxp_src_debug','pxp_srm_debug','pxp_ppc_debug','pxp_pcm_debug','pxp_enc_debug','pxp_dbg_debug']
         if (code=='param' and 'pxp_web_param' in self.config):
             return True if self.config['pxp_web_param']=='1' else False
@@ -1909,7 +1910,7 @@ class c_pxpconfig:
         elif (code=='controller_run' and 'pxp_web_controller.run' in self.config):
             return True if self.config['pxp_web_controller.run']=='1' else False
         return False
-    def support_cam(self, code):
+    def support_cam(self, code): # camera debug message switcher
         try:
             if (code=='td' and 'cam_tdk' in self.config):
                 return True if self.config['cam_tdk']=='1' else False
@@ -1924,24 +1925,24 @@ class c_pxpconfig:
             return False
         except:
             return True
-    def use_tcp(self):
+    def use_tcp(self): # use tcp connection in rtsp feed
         if ('use_tcp' in self.config):
             return True if self.config['use_tcp']=='1' else False
         return False 
-    def use_mp4tcp(self):
+    def use_mp4tcp(self): # mp4 record used tcp connection
         if ('use_mp4tcp' in self.config):
             return True if self.config['use_mp4tcp']=='1' else False
         return False 
-    def use_mp4align(self):
+    def use_mp4align(self): # enable/disable mp4 alignment based on rec_stat information
         if ('use_mp4align' in self.config):
             return True if self.config['use_mp4align']=='1' else False
         return False 
-    def hbrake_conf(self):
+    def hbrake_conf(self): # handbrake command line option
         self.reload()
         if ('hbrake_conf' in self.config):
             return c.hbrake_conf if self.config['hbrake_conf']=='0' else self.config['hbrake_conf'].strip()
         return c.hbrake_conf 
-    def use_segment_later(self):
+    def use_segment_later(self): # launch segmenter later when every feeds are ready
         try:
             if ('use_segment_later' in self.config):
                 return True if self.config['use_segment_later']=='1' else False
