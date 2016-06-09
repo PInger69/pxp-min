@@ -1388,8 +1388,8 @@ class c_ssdp:
             try:
                 response = sock.recv(buffer_size)
                 device = self.SSDPResponse(response)
-                #if (response.find("192.168.2.110")>0):
-                #mdbg.log("SSDP_RESP:{0}".format(response))
+                #if (response.find("192.168.5.108")>0):
+                #mdbg.log("SSDP_RESP:{}".format(response))
                 if((st or (text and device.match(field,text))) and not (device.location in devices)):
                     #found a device that matches the search criteria
                     devices[device.location] = device

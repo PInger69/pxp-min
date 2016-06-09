@@ -2577,12 +2577,12 @@ class encTeradek(encDevice):
 
 class encMatrox(encDevice):
     """ Matrox device management class """
-    def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False):
-        encDevice.__init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False)
+    def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False, isHDX=False):
+        #encDevice.__init__(self, ip, vq, uid, pwd, realm, mac)
         if(ip):
             super(encMatrox,self).__init__(ip, vq, uid=uid, pwd=pwd, realm=realm, mac=mac)
-            self.model = "MATROX"
-        self.isHDX = False
+        self.model = "MATROX"
+        self.isHDX = isHDX
         self.ENC1 = False
         self.ENC2 = False
         self.RTSPStarted = False
@@ -2609,7 +2609,11 @@ class encMatrox(encDevice):
                         if (dev.st.find('MonarchHDXUpnpDevice')>0):
                             self.isHDX = True
                             dbg.prn(dbg.MTX, "encMatrox.HDX found...{}".format(devLoc))
+                        else:
+                            self.isHDX = False
+                            dbg.prn(dbg.MTX, "encMatrox.HD found...{}".format(devLoc))
                         serial, modelname = self.setModel(dev.location, 'MATROX', 'modelName')
+                        self.model = modelname
                         devIP, devPT = self.parseURI(dev.location)
                         if(not devIP): #did not get ip address of the device
                             continue
@@ -2626,12 +2630,43 @@ class encMatrox(encDevice):
                             output['password'] = False
                             output['realm'] = False
                             output['mac'] = False
-                            output['model'] = modelname     
-                            iter1=5
-                            while (devaddingnow and iter1>=0):
-                                time.sleep(200)
-                                iter1 -= 1                                                                                                                                                      
-                            callback(output)
+                            if (not self.isHDX):
+                                output['model'] = modelname + "." + output['vid-quality'] + "." + devIP     
+                                iter1=5
+                                while (devaddingnow and iter1>=0):
+                                    time.sleep(200)
+                                    iter1 -= 1                                                                                                                                                      
+                                callback(output)
+                            else:
+                                if (not pu.pxpconfig.virtual_lq_enabled()):
+                                    output['model'] = modelname + "." + output['vid-quality'] + "." + devIP     
+                                    iter1=5
+                                    while (devaddingnow and iter1>=0):
+                                        time.sleep(200)
+                                        iter1 -= 1                                                                                                                                                      
+                                    callback(output)
+                                else:
+                                    for i in xrange(2):
+                                        iter1=5
+                                        while (devaddingnow and iter1>=0):
+                                            time.sleep(200)
+                                            iter1 -= 1                                                                                                                           
+                                        if (i==0):
+                                            output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
+                                            callback(output)
+                                            # prepare fake LQ cam URL
+                                            if 'url' in output:
+                                                del output['url']  
+                                            if 'port' in output:
+                                                del output['port']  
+                                            output['preview']="rtsp://"+devIP+":7070/Preview" # rtsp://192.168.5.108:7070/Preview, HDX preview fixed
+                                            output['preview-port']=7070
+                                            output['vid-quality'] = 'LQ'
+                                        else:
+                                            output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
+                                            callback(output)
+                                        #end if i
+                                    #end for xrange(2)
                     except Exception as e: #may fail if the device is invalid or doesn't have required attributes
                         dbg.prn(dbg.MTX|dbg.ERR, "[---]encMatrox.discover",e, sys.exc_info()[-1].tb_lineno)
                 #end for devLoc in monarchs
@@ -2641,56 +2676,70 @@ class encMatrox(encDevice):
                 pass
         except Exception as e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]encMatrox.discover",e, sys.exc_info()[-1].tb_lineno)
-    def restart_HDX(self, encIP):
+    def restart_HDX(self, encIP, encoder=1):
+        """ start HDX device
+            Args:
+                encIP(striing): device ip
+                encoder(int): must be 1 or 2
+            Returns:
+                boolean: show if it is successfully sent.
+        """
         try:
             #pu.io.url('http://'+self.ip+'/Monarch/syncconnect/sdk.aspx?command=StopEncoder1',timeout=10, username="admin", password="admin")
+            result = 'FAILED'
             if (encIP):
-                pu.io.url('http://'+encIP+'/Monarch/syncconnect/sdk.aspx?command=StartEncoder1',timeout=10, username="admin", password="admin")
-                self.RTSPStarted = True
-            else:
-                self.RTSPStarted = False
+                result = pu.io.url('http://'+encIP+'/Monarch/syncconnect/sdk.aspx?command=StartEncoder'+str(encoder), timeout=10, username="admin", password="admin")
+                dbg.prn(dbg.MTX,"StartEncoder{}-result:{}".format(encoder, result))
+            return result == 'SUCCESS'
         except:
             pass
+        return False
     def getSpanValue(self, src_page=False, span_id=False):
         """
-        parse the htmn page to extract the useful information - usually for Monarch HDX...
+        parse the html page to extract the useful information - usually for Monarch HDX...
         """
         valueFound = False
-        resPos = src_page.find(span_id) # <span id="ctl00_MainContent_E1RTSPStreamLabelC2">rtsp://192.168.5.108:8554/Stream1</span>
-        if (resPos>0):
-            posStart = src_page.find('>',resPos)+1
-            if (posStart>0):
-                posStop = src_page.find('<',resPos)
-                if (posStop>0):
-                    if((posStart>0) and (posStop>0) and (posStop>posStart)):
-                        valueFound = src_page[posStart:posStop].strip()
+        try:
+            resPos = src_page.find(span_id) # <span id="ctl00_MainContent_E1RTSPStreamLabelC2">rtsp://192.168.5.108:8554/Stream1</span>
+            if (resPos>0):
+                posStart = src_page.find('>',resPos)+1
+                if (posStart>0):
+                    posStop = src_page.find('<',resPos)
+                    if (posStop>0):
+                        if((posStart>0) and (posStop>0) and (posStop>posStart)):
+                            valueFound = src_page[posStart:posStop].strip()
+        except Exception as e:
+            dbg.prn(dbg.MTX|dbg.ERR,"[---]matrox.getSpanValue:",e,sys.exc_info()[-1].tb_lineno)
         return valueFound
-    def getKeyValueDict(self, status): # status: ENC1:RTSP,READY,ENC2:NONE,DISABLED,NAME:Monarch HDX
-        km = ['ENC1:', 'ENC2:', 'NAME:']
+    def getKeyValueDict(self, status): # status: {ENC1:RTSP,READY,ENC2:NONE,DISABLED,NAME:Monarch HDX}
+        """
+        Convert status result to dictionary
+        """
+        kv_list = ['ENC1:', 'ENC2:', 'NAME:']
         kv_dict = {'ENC1:':-1, 'ENC2:':-1, 'NAME:':-1}
         kv_ans = {'ENC1:':'', 'ENC2:':'', 'NAME:':''}
         try:
-            for k in km:
+            for k in kv_list:
                 found = status.find(k)
                 if (found>0):
-                    kv_dict[k]=found-1
+                    kv_dict[k]=found
                 elif (found==0):
                     kv_dict[k]=found
                 else:            
                     kv_dict[k]=-1
-            for i in xrange(len(km)):
-                if (i == (len(km)-1)):
-                    start_pos = kv_dict[km[i]]
+            for i in xrange(len(kv_list)):
+                if (i == (len(kv_list)-1)): # last one
+                    start_pos = kv_dict[kv_list[i]]
                     stop_pos = len(status)
                 else:
-                    start_pos = kv_dict[km[i]]
-                    stop_pos = kv_dict[km[i+1]]
+                    start_pos = kv_dict[kv_list[i]]
+                    stop_pos = kv_dict[kv_list[i+1]]-1 # remove comma
                 if (start_pos<stop_pos):
-                    kv_ans[km[i]] = status[start_pos+len(km[i]):stop_pos]
-        except:
-            pass
+                    kv_ans[kv_list[i]] = status[start_pos+len(kv_list[i]):stop_pos]
+        except Exception as e:
+            dbg.prn(dbg.MTX|dbg.ERR,"[---]matrox.getKeyValueDict:",e,sys.exc_info()[-1].tb_lineno)
         return kv_ans
-    def getParams(self,ip=False):
+    def getParams(self,ip=False, vq='HQ'):
         """ Gets parameters from a matrox monarch device (using the status page for now, until they release the API)
         """
         params = {
@@ -2710,21 +2759,30 @@ class encMatrox(encDevice):
             ####################
             # make sure the device has RTSP enabled
             # this should be admin:admin@192.168..... but seems like that's not necessary, plus python doesn't like those URLs
-            status = pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=GetStatus',timeout=10, username="admin", password="admin")
-            dbg.prn(dbg.MTX,"GetStatus:",status)
+            if (self.isHDX):
+                status = pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=GetStatus',timeout=10, username="admin", password="admin")
+            else:
+                status = pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=GetStatus',timeout=10)
+            dbg.prn(dbg.MTX,"GetStatus-{}:{}".format(self.model, status))
             if(status):
+                if (status=="SUCCESS"):
+                    pass
                 if (status.find('name:monarch hdx')):
                     self.isHDX = True
                 if (self.isHDX):
                     hdx_stat = self.getKeyValueDict(status)
                     if ('ENC1:' in hdx_stat and 'ENC2:' in hdx_stat):
-                            self.ENC1 = hdx_stat['ENC1:']=='RTSP,READY'
-                            self.ENC2 = hdx_stat['ENC2:']!='NONE,DISABLED'
-                            if (not self.RTSPStarted): # HDX is not streaming in first boot
+                            self.ENC1 = (hdx_stat['ENC1:'].find('RTSP')>=0)
+                            enc1_stat = hdx_stat['ENC1:'].split(',')
+                            if (len(enc1_stat)>1):
+                                self.RTSPStarted = enc1_stat[1]=='ON'
+                            self.ENC2 = (hdx_stat['ENC2:'].find("RECORD")>=0)
+                            if (len(enc1_stat)>1 and enc1_stat[1]=='READY'): # HDX is not streaming in first boot
                                 self.restart_HDX(ip)
                     else:
                         self.ENC1 = False
                         self.ENC2 = False
+                    dbg.prn(dbg.MTX,"HDX:{} ENC1:{} ENC2:{} hdx_stat:{}".format(self.isHDX, self.ENC1, self.ENC2, hdx_stat))
                 else:
                     streamParams = status.split(',') 
                     status = status.lower()
@@ -2788,6 +2846,8 @@ class encMatrox(encDevice):
                     params['rtsp_url'] = rtsp_setting
                     from urlparse import urlparse
                     params['rtsp_port'] = urlparse(rtsp_setting).port
+                else:
+                    dbg.prn(dbg.MTX,"monarch rtsp_setting is not avaialble-{}".format(mtPage))
                 if (video_input):
                     if((video_input.find(",")>0) and (video_input.find("fps")>0)): # video source present
                         # get resolution
@@ -2810,10 +2870,17 @@ class encMatrox(encDevice):
                         params['streamFramerate'] = framerate
                         if(resolution and framerate):
                             params['inputResolution'] = resolution+framerate # e.g. 1080i60
+                else:
+                    dbg.prn(dbg.MTX,"monarch video_input is not avaialble-{}".format(mtPage))
                 if (enc1_setting):
                     bitrate = enc1_setting.split(',')[2].strip()
                     if (bitrate):
                         params['streamBitrate'] = bitrate.split(' ')[0]
+                else:
+                    dbg.prn(dbg.MTX,"monarch enc1_setting is not avaialble-{}".format(mtPage))
+                if (rec_media and (self.ENC2)):
+                    self.dev_mp4path = rec_media # something like "//192.168.5.115:/Users/dev/recordings/av1"
+                    dbg.prn(dbg.MTX, "record_path:{}".format(self.dev_mp4path))
                 params["connection"] = True
                 return params 
             # ########### get rtsp url ###########
@@ -2926,7 +2993,7 @@ class encMatrox(encDevice):
             params["connection"] = True 
         except Exception, e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]matrox.getParams",e,sys.exc_info()[-1].tb_lineno)
-        dbg.prn(dbg.MTX,params)
+        dbg.prn(dbg.MTX,"monarch params-->", params)
         return params
     def parseURI(self,url):
         """ Extracts ip address and port from a uri.
@@ -2959,9 +3026,8 @@ class encMatrox(encDevice):
             Returns:
                 none
         """
-
         params = self.getParams()
-        dbg.prn(dbg.MTX, params, "mt.update")
+        dbg.prn(dbg.MTX, "mt.update:{}".format(params))
         if(params and params['connection']):
             self.resolution = params['inputResolution']
             self.isCamera = self.resolution!=False
@@ -2977,6 +3043,10 @@ class encMatrox(encDevice):
             self.rtspURL = False
             self.initialized = False
     def startRec(self):
+        """
+        Monarch doesn't automatically start the stream until it is configured from the XML (which needs XML loading from the web-server)
+        For this, it needs to start manually every time it needs to.
+        """
         try:
             if (self.ip):
                 if (self.isHDX):
@@ -3022,41 +3092,76 @@ class encMatrox(encDevice):
 #                 pass
 #         dbg.prn(dbg.MTX, "encMatrox.collect_mp4:{}".format(self.dev_mp4path))
         try:
-            w = self.dev_mp4path.split("/")
-            if (len(w)>0):
-                s = w[len(w)-1]
-                if (not os.path.exists(vid_path + s)):
-                    os.system("mkdir " + vid_path + "/" + s)
-                cmd = "mv /Users/dev/recordings/" + s + "*.mp4 " + vid_path + "/" + s
-                os.system(cmd)
-                dbg.prn(dbg.MTX, "encMatrox.collect_mp4::move all of files->{}".format(cmd))
+            if (self.dev_mp4path and (self.dev_mp4path!="")):
+                w = self.dev_mp4path.split("/")
+                if (len(w)>0):
+                    s = w[len(w)-1]
+                    if (not os.path.exists(vid_path + s)):
+                        os.system("mkdir " + vid_path + "/" + s)
+                    cmd = "mv /Users/dev/recordings/" + s + "*.mp4 " + vid_path + "/" + s
+                    os.system(cmd)
+                    dbg.prn(dbg.MTX, "encMatrox.collect_mp4::move all of files->{}".format(cmd))
         except:
             pass
         return True
     def postproc(self, srcidx, vq, vid_path):
+        """
+        Caoncat the all of mp4 files created from the Monarch devices:
+        """
 #         self.dev_mp4path = pu.io.url('http://'+self.ip+'/Monarch/syncconnect/sdk.aspx?command=GetRecordFileName',timeout=10, username="admin", password="admin")
 #         dbg.prn(dbg.MTX, "encMatrox.postproc:{}".format(self.dev_mp4path))
         try:
-            w = self.dev_mp4path.split("/")
-            if (len(w)>0):
-                s = w[len(w)-1]
-                mp4files = glob.glob(vid_path + "/" + s + "/" + s + "*.mp4")
-                mp4files.sort(key=os.path.getmtime)
-                arg = '# concat mp4\n'
-                for f in mp4files:
-                    arg += "file " + "'" + f + "'" + "\n"
-                if (len(mp4files)>0):
-                    pu.disk.file_set_contents(vid_path + "/" + s + "/mp4_" + s + ".txt", arg)
-                    #ffmpeg -f concat -i mp4.txt -c copy -y all.mp4
-                    cmd = c.ffbin + " -f concat -i " + vid_path + "/" + s + "/mp4_" + s + ".txt -c copy -y " + vid_path + "/" + s + "/all_" + s + ".mp4"
-                    os.system(cmd)  
-                    dbg.prn(dbg.MTX, "encMatrox.postproc::concat->{}".format(cmd))
-                cmd = "mv " + vid_path + "/" + s + "/all_" + s + ".mp4 " + vid_path + "/" + vq + "_" + str(srcidx).zfill(2)
-                os.system(cmd)
+            if (self.dev_mp4path and (self.dev_mp4path!="")):
+                w = self.dev_mp4path.split("/")
+                if (len(w)>0):
+                    s = w[len(w)-1]
+                    mp4files = glob.glob(vid_path + "/" + s + "/" + s + "*.mp4")
+                    mp4files.sort(key=os.path.getmtime)
+                    arg = '# concat mp4\n'
+                    for f in mp4files:
+                        arg += "file " + "'" + f + "'" + "\n"
+                    if (len(mp4files)>0):
+                        pu.disk.file_set_contents(vid_path + "/" + s + "/mp4_" + s + ".txt", arg)
+                        #ffmpeg -f concat -i mp4.txt -c copy -y all.mp4
+                        cmd = c.ffbin + " -f concat -i " + vid_path + "/" + s + "/mp4_" + s + ".txt -c copy -y " + vid_path + "/" + s + "/all_" + s + ".mp4"
+                        os.system(cmd)  
+                        dbg.prn(dbg.MTX, "encMatrox.postproc::concat->{}".format(cmd))
+                    cmd = "mv " + vid_path + "/" + s + "/all_" + s + ".mp4 " + vid_path + "/" + vq + "_" + str(srcidx).zfill(2)
+                    os.system(cmd)
         except:
             pass
         return cmd
-
+    def hdx_stat(self, ip=False, encoder=1, status='READY'):
+        """ check if rtsp streaming is on progress by using GetStatus API
+            Args:
+                ip(striing): device ip
+                encoder(int): must be 1 or 2
+                status(string): 'READY' or 'ON' or 'DISABLED'
+            Returns:
+                boolean: to show if the streaming is on progress
+        """
+        try:
+            if (self.isHDX and ip):
+                stat = False
+                status = pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=GetStatus',timeout=10, username="admin", password="admin")
+                dbg.prn(dbg.MTX,"GetStatus2-{}:{}".format(self.model, status))
+                if(status):
+                    hdx_stat = self.getKeyValueDict(status)
+                    if ('ENC1:' in hdx_stat and 'ENC2:' in hdx_stat):
+                            self.ENC1 = hdx_stat['ENC1:'].find('RTSP')>=0
+                            enc1_stat = hdx_stat['ENC1:'].split(',')
+                            if (len(enc1_stat)>1):
+                                stat = enc1_stat[1]==status
+                            self.ENC2 = hdx_stat['ENC2:']!='NONE,DISABLED'
+                    else:
+                        self.ENC1 = False
+                        self.ENC2 = False
+                self.RTSPStarted = stat                 
+                return stat
+        except:
+            pass
+        return False  
+    
 class encPivothead(encDevice):
     """ Pivothead glasses encoder management class """
     def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False):
@@ -3506,6 +3611,8 @@ class source:
                 return False
             self.device = devClass(ip, vq, uid, pwd, realm, mac)
             self.device.model = modelname
+            if (modelname.find('Monarch HDX')>=0):
+                self.device.isHDX = True
             self.ffcap_cmd = False
             self.ffseg_cmd = False
             self.ffrec_cmd = False
@@ -4517,7 +4624,10 @@ class sourceManager:
                     src.StopDeviceRecord()
                 
                 self.sources[idx].isEncoding = False
-                ffBlue += " -r 30 -vcodec libx264 -an -f mpegts udp://127.0.0.1:"+str(src.ports['mp4'])
+                if (pu.pxpconfig.use_mp4tcp()):
+                    ffBlue += " -r 30 -vcodec libx264 -an -f mpegts tcp://127.0.0.1:"+str(src.ports['mp4'])
+                else:
+                    ffBlue += " -r 30 -vcodec libx264 -an -f mpegts udp://127.0.0.1:"+str(src.ports['mp4'])
                     
                 if ((idx%EVERY_BLUE) == (EVERY_BLUE-1)):
                     blueCmd[str(blueCmdCount)] = ffBlue
