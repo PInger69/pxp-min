@@ -1388,7 +1388,6 @@ class c_ssdp:
             try:
                 response = sock.recv(buffer_size)
                 device = self.SSDPResponse(response)
-                #if (response.find("192.168.5.108")>0):
                 #mdbg.log("SSDP_RESP:{}".format(response))
                 if((st or (text and device.match(field,text))) and not (device.location in devices)):
                     #found a device that matches the search criteria
@@ -1740,6 +1739,25 @@ class c_pxpconfig:
             return self.getSockCmdFlag()
         except:
             pass
+    def change_value(self, key_name, setting):
+        try:
+            import os
+            if(os.path.exists(c.approot + '/pxpconfig')):
+                contents = ""
+                with open(c.approot + '/pxpconfig',"rb") as f:
+                    contents = f.read()
+                cfglist = contents.strip().split("\n")
+                for i in xrange(len(cfglist)):
+                    if (not cfglist[i].startswith("#")):
+                        kv = cfglist[i].strip().split(' = ')
+                        if (key_name==kv[0].strip()):
+                            cfglist[i] = kv[0].strip() + " = " + setting
+                            break
+                disk.file_set_contents(c.approot + '/pxpconfig', "\n".join(cfglist))
+                self.reload()
+            return True
+        except:
+            pass
     def pre_rec_conf(self): # record command line option 
         self.reload()
         if ('pre_rec_conf' in self.config):
@@ -1946,6 +1964,27 @@ class c_pxpconfig:
         try:
             if ('use_segment_later' in self.config):
                 return True if self.config['use_segment_later']=='1' else False
+            return False
+        except:
+            return False 
+    def use_proxy(self): # use live555 proxy for capture input
+        try:
+            if ('use_proxy' in self.config):
+                return True if self.config['use_proxy']=='1' else False
+            return True
+        except:
+            return True 
+    def show_webplayer(self): # show web player in setting page
+        try:
+            if ('show_webplayer' in self.config):
+                return True if self.config['show_webplayer']=='1' else False
+            return False
+        except:
+            return False 
+    def show_tcpopt(self):
+        try:
+            if ('show_tcpopt' in self.config):
+                return True if self.config['show_tcpopt']=='1' else False
             return False
         except:
             return False 

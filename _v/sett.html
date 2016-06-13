@@ -11,7 +11,11 @@ tabname = ""
 tabsidx = ""
 idx=0
 vidurl = ""
+show_player = iff(int(settings['misc']['show_webplayer']), True, False)
+show_tcpopt = iff(int(settings['misc']['show_tcpopt']), True, False)
 )
+<div id="show_player" flag="@str(show_player)"></div>
+<div id="show_tcpopt" flag="@str(show_tcpopt)"></div>
 <div class="col_12">
 @if 'bitrate' in settings['video'] and settings['video']['bitrate']:
 	<div class="row">
@@ -111,21 +115,156 @@ vidurl = ""
 @end
 </div>
 
+<div id="misc_options">
+    <p><b>Miscellaneous Options</b></p>
+    <table border="1">
+    <tr>
+        <td width="50%">
+        <div  class="col_5">
+            <section name="misc"> 
+                <div>
+                    Use separate folder structure for each video feed.
+                </div>
+                <div>
+                    <input type="checkbox" name="use_splited_feed" @iff(int(settings['misc']['use_splited_feed']),'checked','')/>
+                    <ajaxSpin></ajaxSpin>
+                </div>
+            </section>
+        <div>
+        </td>
+        <td width="50%">
+        <div  class="col_5">
+            <section name="misc"> 
+                <div>
+                    Postprocess
+                </div> 
+                <div>
+                    <input type="checkbox" name="use_postproc" @iff(int(settings['misc']['use_postproc']),'checked','')/>
+                    <ajaxSpin></ajaxSpin>
+                </div>
+            </section>
+        </div>
+        </td>
+    </tr>
+    <!-- ################### -->
+    <tr>
+        <td width="50%">
+        <div  class="col_5">
+        <section name="misc"> 
+            <div>
+                High quality video only
+            </div> 
+            <div>
+                <input type="checkbox" name="use_virtual_lq_enabled" @iff(int(settings['misc']['use_virtual_lq_enabled']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+        </div>
+        </td>
+        <td width="50%">
+        <div  class="col_5">
+        <section name="misc"> 
+            <div>
+                Use proxy mode
+            </div> 
+            <div>
+                <input type="checkbox" name="use_proxy" @iff(int(settings['misc']['use_proxy']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+        </div>
+        </td>
+    </tr>
+    <!-- ################### -->
+    <tr id="tcprow">
+        <td width="50%">
+        <div  class="col_5">
+        <section name="misc"> 
+            <div>
+                Use TCP connection for RTSP streaming
+            </div> 
+            <div>
+                <input type="checkbox" name="use_tcp" @iff(int(settings['misc']['use_tcp']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+        </div>
+        </td>
+        <td width="50%">
+        <div  class="col_5">
+        <section name="misc"> 
+            <div>
+                Use TCP connection for recording
+            </div> 
+            <div>
+                <input type="checkbox" name="use_mp4tcp" @iff(int(settings['misc']['use_mp4tcp']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+        </div>
+        </td>
+    </tr>
+    <tr>
+        <td width="50%">
+        <div  class="col_5">
+        <section name="misc"> 
+            <div>
+                Sync Test
+            </div> 
+            <div>
+                <input type="checkbox" name="use_segment_later" @iff(int(settings['misc']['use_segment_later']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+        </div>
+        </td>
+        <td width="50%">
+        <div  class="col_5">
+        <section name="misc"> 
+            <div>
+                Use ping to help finding camera
+            </div> 
+            <div>
+                <input type="checkbox" name="use_ping_camcheck" @iff(int(settings['misc']['use_ping_camcheck']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+        </div>
+        </td>
+    </tr>
+    <!--
+    <tr>
+        <td width="50%">
+        <div  class="col_5">
+        </div>
+        </td>
+        <td width="50%">
+        <div  class="col_5">
+        </div>
+        </td>
+    </tr>
+    -->
+    </table>
+</div> <!-- misc_options -->
+
 <div class="row">
      <table border="0" height="30%">
-     @for proxy_url in settings['urls']:     
-     <tr >
-         <!--td style="width=320 height:180"--> 
-              <!--embed type="application/x-vlc-plugin" pluginspage="http://nightlies.videolan.org/build/macosx-intel/?C=N;O=A" version="VideoLAN.VLCPlugin.2"  width="240" height="120" id="vlc1" loop="yes"autoplay="yes" target=@proxy_url /-->
-         <!--/td-->               
-     </tr>
-     @end
+         @for proxy_url in settings['urls']:     
+         <tr >
+             <!--td style="width=320 height:180"--> 
+                  <!--embed type="application/x-vlc-plugin" pluginspage="http://nightlies.videolan.org/build/macosx-intel/?C=N;O=A" version="VideoLAN.VLCPlugin.2"  width="240" height="120" id="vlc1" loop="yes"autoplay="yes" target=@proxy_url /-->
+             <!--/td>
+             <!--          
+             <td style="width=320 height:180"> 
+                  <embed autoplay="true" type="application/x-quicktime-media-link" pluginspage=@proxy_url version="qt.7"  width="240" height="120" id="vlc1" loop="yes" />
+             </td>
+             -->          
+         </tr>
+         @end
      </table>
 </div>
 
-
 <script src="js/mon/jwplayer.js"></script>
-
 <script>
 var pxp_ip="127.0.0.1";
 
@@ -229,33 +368,31 @@ function myvid(vq) {
         console.log("cookie set");
         //jwplayer('my_video1').play();
     }
-
-
 }
 </script>
 
-
-<button id="b1" onclick="myvid('hq')">HQ PLAY</button>
-<button id="b2" onclick="myvid('lq')">LQ PLAY</button>
-
-<table border="1">
-       <tr>
-           <td>
-<video id="my_video1"></video>
-           </td>
-           <td>
-<video id="my_video2"></video>
-           </td>
-       </tr>
-       <tr>
-           <td>
-<video id="my_video3"></video>
-           </td>
-           <td>
-<video id="my_video4"></video>
-           </td>
-       </tr>
-</table>
+<div id="web_player">
+    <button id="b1" onclick="myvid('hq')">HQ PLAY</button>
+    <button id="b2" onclick="myvid('lq')">LQ PLAY</button>
+    <table id="web_player_tbl" border="1">
+           <tr>
+               <td>
+    <video id="my_video1"></video>
+               </td>
+               <td>
+    <video id="my_video2"></video>
+               </td>
+           </tr>
+           <tr>
+               <td>
+    <video id="my_video3"></video>
+               </td>
+               <td>
+    <video id="my_video4"></video>
+               </td>
+           </tr>
+    </table>
+</div>
 
 
 <script type="text/javascript">
@@ -303,8 +440,42 @@ function fOnLoad(){
 		};
 		setParam(params,this);
 	});
+	if ($("#show_player").attr("flag")=='False') {
+	   $("#web_player").hide();
+	}
+	else {
+       $("#web_player").show();
+	}
+    if ($("#show_tcpopt").attr("flag")=='False') {
+       $("#tcprow").hide();
+    }
+    else {
+       $("#tcprow").show();
+    }
 }
 function reload() {
     window.location.reload();
 }
+
+function restart_sys() {
+    params = {
+        section:"misc",
+        setting:"restart",
+        value:"1"
+    };
+    if(confirm('This will destroy current running event. Are you really sure ?')){
+        setParam(params,this);
+        alert("server will be ready within 2 or 3 minutes. Please be patient until the server is ready...it will redirect to home page in 30 seconds...");  
+        setTimeout(
+            function() 
+            {
+                window.location.href = "http://127.0.0.1";
+                //$(location).attr('href', 'http://127.0.0.1')
+            }, 30000);
+    }
+}
+
 </script>
+
+<button id="restart" onclick="restart_sys()">RESTART Server</button>
+

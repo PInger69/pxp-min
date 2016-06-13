@@ -547,7 +547,9 @@ ExportEvent.prototype.do_progress = function(data) {
 ExportEvent.prototype.done = function(data) {
     console.log("ExportEvent.DONE  ====>" + "key:" + this.key + " XPT-COMPLETED:" + data);
     if(data>95){
-        this.holder.html('<a id="eject-button" class="icon-ok blue large" href=""></a>');
+        dn_link = "http://127.0.0.1/events/2016-06-09_13-15-12_aaa76434269bb76045266a022e629aefc44716d0_local/2016-06-09_13-15-12_aaa76434269bb76045266a022e629aefc44716d0_local.xml"
+        dn_link = "http://127.0.0.1/events/" + this.hid + "/" + this.hid + ".xml"        
+        this.holder.html('<a id="download_xml" class=" icon-circle-arrow-down green large" href="' + dn_link + '"></a>');
         this.finished = true;
         exportingCount = exportingCount - 1;
         if (exportingCount<0)

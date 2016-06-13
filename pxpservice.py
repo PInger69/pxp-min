@@ -2370,7 +2370,7 @@ class encTeradek(encDevice):
             url = "http://"+self.ip+"/cgi-bin/api.cgi"
             if(not self.tdSession):
                 self.login()
-            dbg.prn(dbg.MN, "getmac:ip:{} session:{}".format(self.ip, self.tdSession))
+            dbg.prn(dbg.TDK, "getmac-->ip:{} session:{}".format(self.ip, self.tdSession))
             curl = url
             if (self.tdSession):
                 curl = url + "?session="+str(self.tdSession)
@@ -2652,17 +2652,27 @@ class encMatrox(encDevice):
                                             time.sleep(200)
                                             iter1 -= 1                                                                                                                           
                                         if (i==0):
+                                            params = self.getParams(devIP, "LQ")
+                                            output['preview']="rtsp://"+devIP+":7070/Preview" # rtsp://192.168.5.108:7070/Preview, HDX preview fixed
+                                            output['preview-port']=7070
+                                            output['vid-quality'] = "LQ"
                                             output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
-                                            callback(output)
                                             # prepare fake LQ cam URL
                                             if 'url' in output:
                                                 del output['url']  
                                             if 'port' in output:
                                                 del output['port']  
-                                            output['preview']="rtsp://"+devIP+":7070/Preview" # rtsp://192.168.5.108:7070/Preview, HDX preview fixed
-                                            output['preview-port']=7070
-                                            output['vid-quality'] = 'LQ'
+                                            callback(output)
                                         else:
+                                            params = self.getParams(devIP, "HQ")
+                                            if 'preview' in output:
+                                                del output['preview']  
+                                            if 'preview-port' in output:
+                                                del output['preview-port']  
+                                            output['url'] = params['rtsp_url']
+                                            output['port'] = params['rtsp_port']
+                                            output['devClass'] = encMatrox
+                                            output['vid-quality'] = "HQ"
                                             output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
                                             callback(output)
                                         #end if i
@@ -2711,13 +2721,18 @@ class encMatrox(encDevice):
         except Exception as e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]matrox.getSpanValue:",e,sys.exc_info()[-1].tb_lineno)
         return valueFound
-    def getKeyValueDict(self, status): # status: {ENC1:RTSP,READY,ENC2:NONE,DISABLED,NAME:Monarch HDX}
+    def getKeyValueDict(self, kv_list=False, status=False): # status: {ENC1:RTSP,READY,ENC2:NONE,DISABLED,NAME:Monarch HDX}
         """
         Convert status result to dictionary
         """
-        kv_list = ['ENC1:', 'ENC2:', 'NAME:']
-        kv_dict = {'ENC1:':-1, 'ENC2:':-1, 'NAME:':-1}
-        kv_ans = {'ENC1:':'', 'ENC2:':'', 'NAME:':''}
+        kv_dict = {}
+        kv_ans = {}
+        for i in xrange(len(kv_list)):
+            kv_dict[kv_list[i]] = -1
+            kv_ans[kv_list[i]] = ''
+        #kv_list = ['ENC1:', 'ENC2:', 'NAME:']
+        #kv_dict = {'ENC1:':-1, 'ENC2:':-1, 'NAME:':-1}
+        #kv_ans = {'ENC1:':'', 'ENC2:':'', 'NAME:':''}
         try:
             for k in kv_list:
                 found = status.find(k)
@@ -2765,12 +2780,14 @@ class encMatrox(encDevice):
                 status = pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=GetStatus',timeout=10)
             dbg.prn(dbg.MTX,"GetStatus-{}:{}".format(self.model, status))
             if(status):
+                if (status=="FAILED"):
+                    return params
+                if (status.find('name:monarch hdx')>=0):
+                    self.isHDX = True
                 if (status=="SUCCESS"):
                     pass
-                if (status.find('name:monarch hdx')):
-                    self.isHDX = True
-                if (self.isHDX):
-                    hdx_stat = self.getKeyValueDict(status)
+                elif (self.isHDX):
+                    hdx_stat = self.getKeyValueDict(['ENC1:', 'ENC2:', 'NAME:'], status)
                     if ('ENC1:' in hdx_stat and 'ENC2:' in hdx_stat):
                             self.ENC1 = (hdx_stat['ENC1:'].find('RTSP')>=0)
                             enc1_stat = hdx_stat['ENC1:'].split(',')
@@ -2784,6 +2801,7 @@ class encMatrox(encDevice):
                         self.ENC2 = False
                     dbg.prn(dbg.MTX,"HDX:{} ENC1:{} ENC2:{} hdx_stat:{}".format(self.isHDX, self.ENC1, self.ENC2, hdx_stat))
                 else:
+                    hd_stat = self.getKeyValueDict(['RECORD:', 'STREAM:', 'NAME:'], status) #RECORD:READY,STREAM:RTSP,ON,NAME:MHD-00
                     streamParams = status.split(',') 
                     status = status.lower()
                     # extract RECORD status
@@ -2805,6 +2823,7 @@ class encMatrox(encDevice):
 #                         pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=SetRTSP,Stream1,8554',timeout=10) 
 #                         time.sleep(1)
                     # get RTSP parameters
+                if (not self.isHDX):
                     status = pu.io.url('http://'+ip+'/Monarch/syncconnect/sdk.aspx?command=GetRTSP',timeout=10)
                     dbg.prn(dbg.MTX,"GetRTSP:",status)
                     if(status and status !='FAILED'):
@@ -2846,8 +2865,18 @@ class encMatrox(encDevice):
                     params['rtsp_url'] = rtsp_setting
                     from urlparse import urlparse
                     params['rtsp_port'] = urlparse(rtsp_setting).port
+                    if (vq=="LQ"):
+                        params['rtsp_url'] = "rtsp://"+ip+":7070/Preview"
+                        params['rtsp_port'] = 7070
                 else:
                     dbg.prn(dbg.MTX,"monarch rtsp_setting is not avaialble-{}".format(mtPage))
+                if (vq=="LQ"):
+                    params['streamResolution'] = "320x180i"
+                    params['streamBitrate'] = "0.5"
+                    params['streamFramerate'] = "30"
+                    params['inputResolution'] = "180i30" # 320x180
+                    params["connection"] = True
+                    return params 
                 if (video_input):
                     if((video_input.find(",")>0) and (video_input.find("fps")>0)): # video source present
                         # get resolution
@@ -2936,6 +2965,7 @@ class encMatrox(encDevice):
                 if((inRes.find(",")>0) and (inRes.find("fps")>0)): # video source present
                     # get resolution
                     resParts = inRes.lower().strip().split(',')
+                    params['streamResolution'] = resParts[0]
                     # now first part contains the resolution (e.g. 1280x720p)
                     resolution = resParts[0].strip().split('x')
                     if(len(resolution)>1):
@@ -2948,6 +2978,7 @@ class encMatrox(encDevice):
                         framerate = framerate[0].strip()
                     else:
                         framerate = False
+                    params['streamFramerate'] = framerate
                     if(resolution and framerate):
                         params['inputResolution'] = resolution+framerate # e.g. 1080i60
                 #end if inRes contains ',' and 'fps'
@@ -2993,7 +3024,7 @@ class encMatrox(encDevice):
             params["connection"] = True 
         except Exception, e:
             dbg.prn(dbg.MTX|dbg.ERR,"[---]matrox.getParams",e,sys.exc_info()[-1].tb_lineno)
-        dbg.prn(dbg.MTX,"monarch params-->", params)
+        dbg.prn(dbg.MTX,"mtx:{} params-->{}".format(params['rtsp_url'], params))
         return params
     def parseURI(self,url):
         """ Extracts ip address and port from a uri.
@@ -3026,8 +3057,8 @@ class encMatrox(encDevice):
             Returns:
                 none
         """
-        params = self.getParams()
-        dbg.prn(dbg.MTX, "mt.update:{}".format(params))
+        params = self.getParams(ip=self.ip, vq=self.vidquality)
+        dbg.prn(dbg.MTX, "mt.{}.update:{}".format(self.vidquality, params))
         if(params and params['connection']):
             self.resolution = params['inputResolution']
             self.isCamera = self.resolution!=False
@@ -3652,7 +3683,18 @@ class source:
         return "<source> idx:{idx}  url:{rtspURL}  preview:{previewURL}  urlfile:{urlFilePath}  type:{type}  dev:{device}".format(**self.__dict__)
     def buildCapCmd(self):
         """ creates an ffmpeg capture command for this source using device's buildCapCmd method """
-        cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
+        try:
+            if (pu.pxpconfig.use_proxy()):
+                cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
+            else:
+                if (self.device.baseRTSPURL):
+                    cmd = self.device.buildCapCmd(self.device.baseRTSPURL, self.ports['chk'],self.ports['mp4'],self.ports['hls'])
+                    dbg.prn(dbg.SRC, "capture uses no proxy - model:{} url:{}".format(self.device.model, self.device.baseRTSPURL))
+                else:
+                    cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
+        except Exception as e:
+            dbg.prn(dbg.ERR|dbg.SRC,"[---]src.buildcapcmd err:".format(e))
+            cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
         return cmd
     def camPortMon(self):
         """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
@@ -3830,7 +3872,7 @@ class source:
                     data = s.recv(65535)
                 except Exception as e:
                     data = str(e)
-                    dbg.prn(dbg.SRC|dbg.ERR,"[---]source.monitor err: ",e,self.ipcheck,self.ports["rts"])
+                    dbg.prn(dbg.SRC|dbg.ERR,"[---]source.monitor err: ",e, self.ipcheck, self.ports["rts"])
                 #close the socket
                 try:
                     s.close()
@@ -3850,15 +3892,17 @@ class source:
                 #when connection can't be established or a response does not contain RTSP/1.0 200 OK
                 #pu.mdbg.log("DEVICE STATUS-->IP:{0} DATA:{1}".format(self.rtspURL, data))
                 self.device.isOn = (data.find('RTSP/1.0 200 OK')>=0)
-                show_message = pu.pxpconfig.show_pingcam_check()
-                if (not self.device.isOn):
-                    if (pu.pxpconfig.use_ping_camcheck()):
-                        self.device.isOn = pu.io.ping(self.device.ip)
+                try:
+                    show_message = pu.pxpconfig.show_pingcam_check()
+                    if (not self.device.isOn):
+                        if (pu.pxpconfig.use_ping_camcheck()):
+                            self.device.isOn = pu.io.ping(self.device.ip)
+                            if (show_message):
+                                dbg.prn(dbg.SRC,"-->check cam with ping now...ip:{}  status:{}  url:{}  model:{}".format(self.device.ip, self.device.isOn, self.rtspURL, self.device.model))
                         if (show_message):
-                            dbg.prn(dbg.SRC,"-->check cam with ping now...ip:{}  status:{}  url:{}  model:{}".format(self.device.ip, self.device.isOn, self.rtspURL, self.device.model))
-                    if (show_message):
-                        dbg.prn(dbg.SRC,"-->check cam DEV:{}  status:{}  {}  {}  data:{}".format(self.rtspURL, self.device.isOn, self.device.model, self.device.rtspURL, strdata))
-                    
+                            dbg.prn(dbg.SRC,"-->check cam DEV:{}  status:{}  {}  {}  data:{}".format(self.rtspURL, self.device.isOn, self.device.model, self.device.rtspURL, strdata))
+                except Exception as e:
+                    dbg.prn(dbg.SRC|dbg.ERR,"[---]source.monitor ping err:{} ipcheck:{} ports:{} on:{}".format(e, self.ipcheck, self.ports["rts"], self.device.isOn))
 
             # this next IF cuts the framerate in half if it's 50p or 60p
             # most iPads (as of Aug. 2014) can't handle decoding that framerate (coming by RTSP) using ffmpeg 
@@ -4236,13 +4280,20 @@ class sourceManager:
             
             dbg.log(dbg.SRM, "EVENT_STARTS =========================================> SRC_LEN:{0} EVT_HID:{1}".format(len(self.sources), evt_hid))                    
             enc.statusSet(enc.STAT_START)            
+
+            dbg.log(dbg.SRM, "EVENT_STARTS --> 1")                    
+
             
             # make sure ffmpeg's and segmenters are off:
             os.system("killall -9 "+c.segname+" 2>/dev/null")
             os.system("killall -9 "+c.ffname+" 2>/dev/null")
+
+            dbg.log(dbg.SRM, "EVENT_STARTS --> 2")                    
             
             self.rec_stat_worker = False
             self.evt_stat = {}
+
+            dbg.log(dbg.SRM, "EVENT_STARTS --> 3")                    
             
             # cmd = "cd /var/www/html/events/live/video && /usr/bin/mediastreamsegmenter -d 1 -p segm_ -m list.m3u8 -i udp://127.0.0.1:22200 -u ./"
             # sb.Popen(cmd.split(' '),stderr=FNULL,stdout=FNULL)
@@ -4262,6 +4313,9 @@ class sourceManager:
             # and create a soft link to the first list_XX.m3u8
             oldSupportSuffix = -1
             # go through each source and set up the streaming/capturing services
+
+            dbg.log(dbg.SRM, "EVENT_STARTS --> 4")                    
+
             
             EVERY_RECS = 1
             ffrecs = {}
@@ -4794,7 +4848,7 @@ class sourceManager:
                     # could not initialize the device or the device is an IP streaming device and they are not allowed at the moment
                     if(not enc.busy()):
                         # do not touch this device during a live event
-                        dbg.prn(dbg.SRM, "could not init device or IP sources are not allowed - stop monitor")
+                        dbg.prn(dbg.SRM, "could not init device or IP sources are not allowed - stop monitor:{}.{}".format(self.sources[idx].device.ip, self.sources[idx].device.vidquality))
                         # src.stopMonitor()
                         self.sources[idx].stopMonitor()
                         postfix = "HQ"

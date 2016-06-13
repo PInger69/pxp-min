@@ -543,7 +543,7 @@ def rec_stat(params=False):
 	Typical http request looks like this: http://localhost/min/ajax/rec_stat/{"sidx":"00hq","event":"live"}
 		sidx can have "*" instead of specific feed index such as 00hq 
 	
-	This reads the segment file creation time to provide the difference between the steaming start time
+	This reads the segment file creation time to provide the difference between the streaming start time
 	"""
 	recstat_param = params
 	if (not params):
@@ -574,7 +574,7 @@ def rec_stat(params=False):
 		
 		try:
 			if (event == 'live'):
-				resp = pu.disk.sockSendWait(msg="FCT|"+event,addnewline=False)
+				resp = pu.disk.sockSendWait(msg="FCT|"+event,addnewline=False) # get feed count
 				pu.mdbg.log("rec_stat-->FCT:{}".format(resp))
 				if (srclen==0):
 					srclen = int(resp)
@@ -1202,6 +1202,7 @@ def mp4rebuildstatus():
 #------------------------
 # Tag to XML exporting
 #------------------------
+
 class Tag2XML(object):
 	def __init__(self):
 		self.tags = []
@@ -1290,7 +1291,8 @@ def exportevt():
 		# convert tags into XML fomrat	
 		xml = t2xml.makeXML()
 		formatted_xml = t2xml.prettyXML(xml)
-		pu.disk.file_set_contents("/tmp/"+event+".xml", xml)
+		#pu.disk.file_set_contents("/tmp/"+event+".xml", xml)
+		pu.disk.file_set_contents(c.wwwroot+event+"/"+event+".xml", xml)
 		
 		pu.mdbg.log("tags to xml:")
 		pu.mdbg.log(formatted_xml)
@@ -1804,6 +1806,18 @@ def settingsGet():
 			(10,"10s"),
 			(20,"20s")
 		])
+		# misc -----
+		settings['misc']['use_splited_feed']=pu.pxpconfig.use_split_event_folder()
+		settings['misc']['use_postproc']=pu.pxpconfig.use_mp4align()
+		settings['misc']['use_virtual_lq_enabled']=not pu.pxpconfig.virtual_lq_enabled()
+		settings['misc']['use_proxy']=pu.pxpconfig.use_proxy()
+		settings['misc']['use_tcp']=pu.pxpconfig.use_tcp()
+		settings['misc']['use_segment_later']=pu.pxpconfig.use_segment_later()
+		settings['misc']['use_mp4tcp']=pu.pxpconfig.use_mp4tcp()
+		settings['misc']['use_ping_camcheck']=pu.pxpconfig.use_ping_camcheck()
+		settings['misc']['show_webplayer']=pu.pxpconfig.show_webplayer()
+		settings['misc']['show_tcpopt']=pu.pxpconfig.show_tcpopt()
+	
 	except Exception as e:
 		settings["err"]=str(e)+' '+str(sys.exc_info()[-1].tb_lineno)
 		pu.mdbg.log("[---] settingsGet_2...{0}".format(e))
@@ -1825,29 +1839,63 @@ def settingsSet():
 			(dictionary):
 				success(bool): whether the command was successful
 	"""
-	pu.mdbg.log("============= settingsSet---------------------->begins")
-	
 	io = pu.io
-	# get the parameter that user is trying to set
-	secc = io.get("section")
-	sett = io.get("setting")
-	vals = io.get("value")
-	if(secc=='video' and sett=='bitrate'):
-		#the following 2 commands are for blackmagic only
-		# changing video stream quality
-		pu.disk.file_set_contents(c.wwwroot+"_db/.cfgenc",vals)
-		# reset the streaming app
-		pu.disk.file_set_contents("/tmp/pxpcmd","2")
-		# this is for teradek/matrox - set bitrate for camera index -1: meaning all cameras
-		pu.disk.sockSend("BTR|"+str(vals)+"|-1",addnewline=False)
-		# add an event to live stream to indicate that the bitrate was changed
-		_logSql(ltype="changed_bitrate",lid=str(vals),dbfile=c.wwwroot+"live/pxp.db")
-	# will be true or false depending on success/failure
-	success = pu.disk.cfgSet(c.pxpConfigFile,section=secc,parameter=sett,value=vals)
-	
-	pu.mdbg.log("============= settingsSet---------------------->ends")
+	try:
+		# get the parameter that user is trying to set
+		secc = io.get("section")
+		sett = io.get("setting")
+		vals = io.get("value")
+		pu.mdbg.log("============= settingsSet---------------------->begins.sect:{}  sett:{}  value:{}".format(secc, sett, vals))
+		if(secc=='video' and sett=='bitrate'):
+			#the following 2 commands are for blackmagic only
+			# changing video stream quality
+			pu.disk.file_set_contents(c.wwwroot+"_db/.cfgenc",vals)
+			# reset the streaming app
+			pu.disk.file_set_contents("/tmp/pxpcmd","2")
+			# this is for teradek/matrox - set bitrate for camera index -1: meaning all cameras
+			pu.disk.sockSend("BTR|"+str(vals)+"|-1",addnewline=False)
+			# add an event to live stream to indicate that the bitrate was changed
+			_logSql(ltype="changed_bitrate",lid=str(vals),dbfile=c.wwwroot+"live/pxp.db")
+
+		if(secc=='misc' and sett=='use_postproc'):
+			pu.pxpconfig.change_value("enable_mp4_convert", str(vals))
+			pu.pxpconfig.change_value("use_mp4align", str(vals))
+
+		if(secc=='misc' and sett=='use_virtual_lq_enabled'):
+			if (str(vals)=='1'):
+				pu.pxpconfig.change_value("virtual_lq_enabled", str(0))
+			else:
+				pu.pxpconfig.change_value("virtual_lq_enabled", str(1))
+
+		if(secc=='misc' and sett=='use_proxy'):
+			pu.pxpconfig.change_value("use_proxy", str(vals))
+
+		if(secc=='misc' and sett=='use_tcp'):
+			pu.pxpconfig.change_value("use_tcp", str(vals))
+
+		if(secc=='misc' and sett=='use_mp4tcp'):
+			pu.pxpconfig.change_value("use_mp4tcp", str(vals))
+
+		if(secc=='misc' and sett=='use_segment_later'):
+			pu.pxpconfig.change_value("use_segment_later", str(vals))
+
+		if(secc=='misc' and sett=='restart'):
+			pu.mdbg.log("============= settingsSet----> RESTART!!")
+			cmd = "killall -9 python"
+			os.system(cmd)
+				
+		
+		
+		# will be true or false depending on success/failure
+		success = pu.disk.cfgSet(c.pxpConfigFile,section=secc,parameter=sett,value=vals)
+		
+		pu.mdbg.log("============= settingsSet---------------------->ends")
+	except Exception as e:
+		pu.mdbg.log("[---] settingsSet err:".format(e))
 	return {"success":success}
 #end settingsSet
+
+
 
 def sumget(strParam=False):
 	""" returns summary for the month or game
