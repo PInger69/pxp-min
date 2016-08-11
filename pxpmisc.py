@@ -11,7 +11,7 @@ import pprint as pp
 import threading
 import time
 from pip.utils.filesystem import check_path_owner
-
+import psutil
 
 tmr_misc = {}
 
@@ -87,7 +87,8 @@ class MP4FixWorker (threading.Thread):
             self.ret_status = True
             self.progress = 100
         except Exception as e:
-            self.log("[---] rebuild_mp4 {}".format(e))
+            self.log("[---] rebuild_mp4 {} {}".format(e,sys.exc_info()[-1].tb_lineno))
+            
         return self.ret_status
 
     def getseginfo(self, camid="00", vq="hq", event='live'):
@@ -168,7 +169,7 @@ class MP4FixWorker (threading.Thread):
             cur_progress = self.progress
             
             # this parsing line should be changed if the HB version is upgraded or changed...
-            # for now, it looks for such as following lines: Encoding: task 1 of 1, 100.00 % (521.78 fps, avg 533.34 fps, ETA 00h00m00s)
+            # for now, it looks for following lines like this: Encoding: task 1 of 1, 100.00 % (521.78 fps, avg 533.34 fps, ETA 00h00m00s)
             #
             percent_templ = re.compile("([A-z0-9: ]*[,]+)([ ]+)([.0-9][0-9. ]+[%]+)", re.I)
             line = ''
@@ -578,33 +579,128 @@ class ExportEvent(object):
             pu.mdbg.log("[---] error ExportEvent.run_forground: {}".format(e))
 
 #-------------------------------------------
-
-class EmailAlert(object):
+class TestMuxWorker (threading.Thread):
     def __init__(self):
-        pass
-    def check_max_stat(self):
-        pass
-    # send_gmail('alert@avocatec.com', '******', 'admin@yahoo.com', "test", "body 1234\n\tnext line\n\t\tnext line 2\nlast line")
-    def send_gmail(self, user, pwd, recipient, subject, body):
-        import smtplib
-        gmail_user = user
-        gmail_pwd = pwd
-        FROM = user
-        TO = recipient if type(recipient) is list else [recipient]
-        SUBJECT = subject
-        TEXT = body
-        message = "\From: {}\nTo: {}\nSubject: {}\n\n{}".format(FROM, ", ".join(TO), SUBJECT, TEXT)    
+        threading.Thread.__init__(self)
+        self.p = False
+        self.out = False
+        self.inp = False
+        #    -mpegts_service_id 3 \
+#         self.ffcmd = '/usr/bin/ffmpeg -fflags +igndts -thread_queue_size 1024 -i "rtsp://192.168.5.139/media/video1"  -thread_queue_size 1024 -i "rtsp://192.168.5.139/media/video2" -thread_queue_size 1024 -i "rtsp://192.168.5.139/media/video3" \
+#             -fflags +igndts -c copy -an -map 0:v -map 0:1 \
+#             -fflags +igndts -c copy -an -map 1:v -map 1:1 \
+#             -fflags +igndts -c copy -an -map 2:v -map 2:1 \
+#             -f mpegts udp://127.0.0.1:22600'
+#         self.ffcmd = '/usr/bin/ffmpeg -fflags +igndts -thread_queue_size 1024 -rtsp_transport tcp -i "rtsp://192.168.5.139/media/video1" -thread_queue_size 1024 -rtsp_transport tcp -i "rtsp://192.168.5.139/media/video2" \
+#                 -fflags +igndts -codec copy -an -map 0:v -map 0:1 \
+#                 -fflags +igndts -codec copy -an -map 1:v -map 1:1 \
+#                 -mpegts_service_id 1  -muxrate 3M \
+#                 -f mpegts udp://127.0.0.1:22600?pkt_size=1316'
+        self.ffcmd = '/usr/bin/ffmpeg -fflags +igndts -thread_queue_size 1024 -rtsp_transport tcp -i "rtsp://192.168.5.139/media/video1" -thread_queue_size 1024 -rtsp_transport tcp -i "rtsp://192.168.5.139/media/video2" \
+                -fflags +igndts -codec copy -map 0:v  \
+                -fflags +igndts -codec copy -map 1:v  \
+                -fflags +igndts -codec copy -map 0:a  \
+                -mpegts_service_id 1  -muxrate 3M \
+                -f mpegts udp://127.0.0.1:22600?pkt_size=1316'
+#         self.ffcmd = '/usr/bin/ffmpeg -fflags +igndts -i "rtsp://192.168.5.139/media/video1"  \
+#                 -fflags +igndts -codec copy -an -map 0:v -map 0:1 \
+#                 -mpegts_service_id 1  \
+#                 -f mpegts udp://127.0.0.1:22600?pkt_size=1316'
+    def run(self):
+        import subprocess
         try:
-            server = smtplib.SMTP("smtp.gmail.com", 587)
-            server.ehlo()
-            server.starttls()
-            server.login(gmail_user, gmail_pwd)
-            server.sendmail(FROM, TO, message)
-            server.close()
-            pu.mdbg.log('successfully sent the mail')
+            self.p = subprocess.Popen(self.ffcmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            while True:
+                self.out = self.p.stderr.read(1)
+                self.inp = self.p.stdin
+                if self.out == '' and self.p.poll() != None:
+                    break
+                if self.out != '':
+                    sys.stdout.write(self.out)
+                    sys.stdout.flush()            
+        except subprocess.CalledProcessError as e1:
+            print("CalledProcessError!! {}".format(e1))
+        except OSError as e2:
+            print("OSError!! {}".format(e2))
+        except Exception as e:
+            print('[---] test.run:{}'.format(e))
+    def stop(self):
+        try:
+            for i in xrange(3):
+                if (self.inp):
+                    self.inp.write('q')
+                    time.sleep(1)
+            print('muxer stopped')
         except:
-            pu.mdbg.log("failed to send mail")    
+            if (psutil.pid_exists(self.p.pid)):
+                self.p.send_signal(signal.SIGINT)
 
+class TestSegWorker (threading.Thread):
+    def __init__(self):
+        threading.Thread.__init__(self)
+        self.p = False
+        self.out = False
+        self.inp = False
+        #audio only
+        #self.segcmd = '/usr/bin/mediastreamsegmenter -a -p -t 1s -S 1 -s 4 -B 00hq_segm_ -i list_00hq.m3u8 -f /var/www/html/events/test 127.0.0.1:22600'
+        self.segcmd = '/usr/bin/mediastreamsegmenter -p -t 1s -S 1 -s 4 -B 00hq_segm_ -i list_00hq.m3u8 -f /var/www/html/events/test 127.0.0.1:22600'
+    def run(self):
+        import subprocess
+        try:
+            self.p = subprocess.Popen(self.segcmd, shell=True, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+            while True:
+                self.out = self.p.stderr.read(1)
+                self.inp = self.p.stdin
+                if self.out == '' and self.p.poll() != None:
+                    break
+                if self.out != '':
+                    sys.stdout.write(self.out)
+                    sys.stdout.flush()            
+        except subprocess.CalledProcessError as e1:
+            print("CalledProcessError!! {}".format(e1))
+        except OSError as e2:
+            print("OSError!! {}".format(e2))
+        except Exception as e:
+            print('[---] test.run:{}'.format(e))
+    def stop(self):
+        if (self.p):
+            self.p.send_signal(signal.SIGINT)
+            time.sleep(1)
+            if (psutil.pid_exists(self.p.pid)):
+                self.p.kill()
+            #self.p.terminate()
+            #self.p.kill()
+            print('segmenter stopped')
 
-    
-    
+# Fix m3u8 (capping with #EXT-X-ENDLIST)
+def fix_m3u8():
+    f =''
+    try:
+        for root, dirs, files in os.walk("/private/var/www/html/events"):
+            for pl_file in files:
+                f = root + "/" + pl_file
+                if file.endswith(".m3u8") and not os.path.islink(f):
+                    #print(f)
+                    if ((root.endswith("video") and not os.path.exists(root+"/hq_00"))  # video folder and no hq_XX
+                        or (root.find('video/hq_')>=0 or root.find('video/lq_')>=0)):   # hq_XX or lq_XX folder only
+                        pl = open(f,'rb')
+                        lines = pl.readlines()
+                        if lines:
+                            #first_line = lines[:1]
+                            last_line = ''
+                            i = 1
+                            while i<len(lines):
+                                last_line = lines[-i]
+                                i += 1
+                                if (last_line != '\n'):
+                                    break
+                        pl.close()
+                        print ("{} last:{}".format(f, last_line.replace("\n","")))
+                        if (last_line.find('EXT-X-ENDLIST')<0 and f.find('list_templ')<0 and not os.path.islink(f)):
+                            fp = open(f, 'a')
+                            fp.write("#EXT-X-ENDLIST\n")
+                            fp.close()
+                            print ("ENDLIST is added in file:{} ".format(f))
+    except Exception as e:
+        print(e)
+

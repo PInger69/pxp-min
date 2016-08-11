@@ -86,8 +86,8 @@ class Controller:
 				functionName = pu.uri.segment(2,"")
 				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):	
 					pu.mdbg.log("-->controller.run1-->", functionName)								
- 				#if (self.dbg_func(functionName)):				
-  				#	pydevd.settrace()								
+#  				if (self.dbg_func(functionName)):				
+#   					pydevd.settrace()								
 								
 				# check if user is running it from command line 
 				if len(sys.argv)>1:

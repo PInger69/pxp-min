@@ -560,6 +560,14 @@ class c_disk:
                 relPath = "/".join(url.split('/')[4:])
                 # get absoulute path to the file:
                 fullPath = c.wwwroot+relPath
+                if (not os.path.exists(fullPath)): # it doesn't matter whether it used use_split_folder or not. Old event has no this record...so check folder directly.
+                    hq_start_idx = fullPath.find("/hq_")
+                    lq_start_idx = fullPath.find("/lq_")
+                    if (hq_start_idx>=0 or lq_start_idx>=0):
+                        if (hq_start_idx>=0):
+                            fullPath = fullPath.replace(fullPath[hq_start_idx:hq_start_idx+6],"")
+                        else:
+                            fullPath = fullPath.replace(fullPath[lq_start_idx:lq_start_idx+6],"")
                 # get the size of the file, double it (since it will have same size in .TS segments) and add it to the total event size
                 totalSize += os.path.getsize(fullPath)<<1 #<<1 is faster than *2
         return totalSize
@@ -759,7 +767,21 @@ class c_disk:
         return "%sB" % n
     def diskusage(self):
         return psutil.disk_usage("/").free
-
+    def helplog(self, cmd=False):
+        if (cmd):
+            self.sockSendWait(cmd)
+        else:
+            print "KLL|ERR|MN|SRC|PCM|PPC|SRM|MTX"
+            print "HIDEMASTER      :1"
+            print "HIDECMD         :2"
+            print "SHOWDETAILEDCMD :4"
+            print "SHOWDB          :8"
+            print "SHOWEVENT      :16"
+            print "SHOWBONJ       :32"
+            print "SHOWSOCKCMD    :64"
+            print "SHOWPARAMS    :128"
+            print "SHOWBBQ       :256"
+            
 class c_enc:
     """encryption/string operations class"""
     def sha(self,string):
@@ -1938,6 +1960,8 @@ class c_pxpconfig:
                 return True if self.config['cam_axs']=='1' else False
             elif (code=='mt' and 'cam_mtr' in self.config):
                 return True if self.config['cam_mtr']=='1' else False
+            elif (code=='dt' and 'cam_dlt' in self.config):
+                return True if self.config['cam_dlt']=='1' else False
             elif (code=='ph' and 'cam_pvh' in self.config):
                 return True if self.config['cam_pvh']=='1' else False
             return False
@@ -1988,6 +2012,27 @@ class c_pxpconfig:
             return False
         except:
             return False 
+    def show_option(self):
+        try:
+            if ('show_option' in self.config):
+                return True if self.config['show_option']=='1' else False
+            return False
+        except:
+            return False 
+    def alert_mail(self): # email address 
+        try:
+            if ('alert_mail' in self.config):
+                return obfus.decode('avocatec', self.config['alert_mail'])
+            return ""
+        except:
+            return "" 
+    def alert_pass(self): # email account passwd 
+        try:
+            if ('alert_pass' in self.config):
+                return obfus.decode('avocatec', self.config['alert_pass'])
+            return ""
+        except:
+            return "" 
 
 class c_ffmpeg(object):
     def __init__(self, cmd):
@@ -2171,6 +2216,51 @@ class c_tinyutil(object):
                         os.system('mv ' + os.path.join(dirpath,filename) + " " + os.path.join(dirpath, "list_00hq.m3u8"))
                         os.system('ln -s ' + os.path.join(dirpath,"list_00hq.m3u8") + " " + os.path.join(dirpath, "list.m3u8"))        
 
+class c_simpleObfus(object):
+    def __init__(self):
+        self.mykey='avocatec'
+    def encode(self, key, clear):
+        enc = []
+        for i in range(len(clear)):
+            key_c = key[i % len(key)]
+            enc_c = chr((ord(clear[i]) + ord(key_c)) % 256)
+            enc.append(enc_c)
+        return base64.urlsafe_b64encode("".join(enc))
+    def decode(self, key, enc):
+        dec = []
+        enc = base64.urlsafe_b64decode(enc)
+        for i in range(len(enc)):
+            key_c = key[i % len(key)]
+            dec_c = chr((256 + ord(enc[i]) - ord(key_c)) % 256)
+            dec.append(dec_c)
+        return "".join(dec)    
+
+class c_emailAlert(object):
+    def __init__(self):
+        pass
+    def check_max_stat(self):
+        pass
+    def send_alert(self, subject, body):
+        import smtplib
+        gmail_user = pxpconfig.alert_mail()
+        gmail_pwd = pxpconfig.alert_pass()
+        recipient = gmail_user   
+        FROM = gmail_user
+        TO = recipient if type(recipient) is list else [recipient]
+        SUBJECT = "PXPSVR_REMINDER:" + subject
+        TEXT = body
+        message = "\From: {}\nTo: {}\nSubject: {}\n\n{}".format(FROM, ", ".join(TO), SUBJECT, TEXT)
+        try:
+            server = smtplib.SMTP("smtp.gmail.com", 587)
+            server.ehlo()
+            server.starttls()
+            server.login(gmail_user, gmail_pwd)
+            server.sendmail(FROM, TO, message)
+            server.close()
+            mdbg.log("alert sent successfully")
+        except Exception as e:
+            mdbg.log("[---] send_alert:{} user:{} pass:{}".format(e, gmail_user, gmail_pwd))
+
 osi = c_osi()
 db = c_sqdb
 disk = c_disk()
@@ -2183,6 +2273,8 @@ TimedThread = c_tt
 uri = c_uri()
 bonjour = c_bonjour()
 ffmpeg = c_ffmpeg(False)
+obfus = c_simpleObfus()
+pxp_mail = c_emailAlert()
 
 class c_misc:
     def getcam_idx_vq(self, filename): # list_00hq.m3u8

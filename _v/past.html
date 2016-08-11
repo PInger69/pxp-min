@@ -8,6 +8,14 @@ testcount = 0
 color_toggle = False
 row_attr = "row border-top"        
 )
+
+<style>
+.disabled_a {
+  color: grey; 
+}
+</style>
+
+
 <div id="alert-message" class="notice success" visible=false>
     <i class="icon-ok icon-large"></i> 
     Please make sure to shutdown computer after making backup to unmount the USB drive
@@ -51,7 +59,12 @@ row_attr = "row border-top"
 		            <td  style="width:13%; text-align: right; border: 0px solid black; vertical-align: bottom; height: 50px;">
     		            <input type="checkbox" control="chkAll" class="chkAll">&nbsp;&nbsp;check all</input>
 		            </td>
-		            <!--
+                    <td style="width:8%; border: 0px solid black; vertical-align: bottom; height: 50px;">
+                        <button id="backupusb" class="green small cw_11" type="reset">
+                            <i class="icon-save"></i>
+                        </button>
+                    </td>
+                    <!--
                     <td style="width:8%; border: 0px solid black; vertical-align: bottom; height: 50px;">
                         <button id="download" class="green small cw_11" type="reset">
                             <i class="icon-download-alt"></i>
@@ -156,7 +169,7 @@ row_attr = "row border-top"
                     n/a
                 @end
     		</div>
-    		<div class="col_21"><!-- BACKUP/REMOVE/FIX EVT -->
+    		<div class="col_21"><!-- FIX/REMOVE/XPORT/BACKUP EVT -->
                 <div class="center" style="float: left; width: 20.00%;">
                     @if not 'live' in ev: #and subcount==1:
                         @if ('name' in ev):
@@ -194,9 +207,9 @@ row_attr = "row border-top"
                         </div>
                         <div class="center" style="float: left; width: 10.00%;">
                             @if ('name' in ev):
-                                <input type="checkbox" control="check_each" class="center" num1_mp4="@mp4count" event="@ev['name']" eventID="@ev['hid']">
+                                <input type="checkbox" control="check_each" class="center each_chk" num1_mp4="@mp4count" event="@ev['name']" eventID="@ev['hid']">
                             @else:
-                                <input type="checkbox" control="check_each" class="center" num1_mp4="@mp4count" event="abcd" eventID="@ev['hid']">
+                                <input type="checkbox" control="check_each" class="center each_chk" num1_mp4="@mp4count" event="abcd" eventID="@ev['hid']">
                             @end
                         </div>
                     @end
@@ -333,6 +346,18 @@ PastPage.prototype.do_xpt_progress = function(status_dict) {
     }
     return true;
 }
+PastPage.prototype.all_done_count = function(dest) {
+    var v;
+    var c=0;
+    if (dest=='bkp') {
+        for (v in this.bkp_dict) {
+            if (this.bkp_dict[v].finished>0) {
+                c = c + 1;
+            }
+        }
+    }
+    return c; 
+};
 PastPage.prototype.clear_dict_hid = function(dest) {
     try {
         if (dest=='bkp') {
@@ -431,9 +456,10 @@ MP4Rebuilder.prototype.start = function() {
     var self = this;
     // start the rebuild mp4
     // mp4rebuild/?event=2016-06-01_11-10-29_ca1a59ffd98847917d80d9a8a60d5c4ca473fa84_local&vq=HQ&sidx=s_00
+
+    fixingCount = fixingCount + 1;
     ajaxCall("mp4rebuild/?event="+this.hid+"&vq="+this.vq+"&sidx="+this.sidx,"",
         function(){ // success callback
-            fixingCount = fixingCount + 1;
             self.load_anim();
             //self.progress(); //start getting progress for the fixing event when server sends a response
         });
@@ -474,8 +500,8 @@ MP4Rebuilder.prototype.do_progress = function(data) {
     return true;
 }
 MP4Rebuilder.prototype.done = function(data) {
-    console.log("fixed status " + "key:" + this.key + " done:" + data);
-    if(data>95){
+    console.log("rebuild_status " + "key:" + this.key + " done:" + data);
+    if (data>95) {
         this.holder.html('<a id="eject-button" class="icon-ok blue large" href=""></a>');
         fixingCount = fixingCount - 1;
         if (fixingCount<0)
@@ -497,11 +523,10 @@ ExportEvent.prototype.start = function() {
     var self = this;
     // start the Exporting Event
     // exportevt/?event=2016-06-01_11-10-29_ca1a59ffd98847917d80d9a8a60d5c4ca473fa84_local&vq=HQ&sidx=s_00
+    exportingCount = exportingCount + 1;
     ajaxCall("exportevt/?event="+this.hid+"&vq="+this.vq+"&sidx="+this.sidx,"",
         function(){ // success callback
-            exportingCount = exportingCount + 1;
             self.load_anim();
-            //self.progress(); //start getting progress for the fixing event when server sends a response
         });
 };
 ExportEvent.prototype.load_anim = function() {
@@ -547,7 +572,7 @@ ExportEvent.prototype.do_progress = function(data) {
 ExportEvent.prototype.done = function(data) {
     console.log("ExportEvent.DONE  ====>" + "key:" + this.key + " XPT-COMPLETED:" + data);
     if(data>95){
-        dn_link = "http://127.0.0.1/events/2016-06-09_13-15-12_aaa76434269bb76045266a022e629aefc44716d0_local/2016-06-09_13-15-12_aaa76434269bb76045266a022e629aefc44716d0_local.xml"
+        //dn_link = "http://127.0.0.1/events/2016-06-09_13-15-12_aaa76434269bb76045266a022e629aefc44716d0_local/2016-06-09_13-15-12_aaa76434269bb76045266a022e629aefc44716d0_local.xml"
         dn_link = "http://127.0.0.1/events/" + this.hid + "/" + this.hid + ".xml"        
         this.holder.html('<a id="download_xml" class=" icon-circle-arrow-down green large" href="' + dn_link + '"></a>');
         this.finished = true;
@@ -557,6 +582,7 @@ ExportEvent.prototype.done = function(data) {
     }
 }
 //----------------------------------------------------------------
+var bkQueue = []; //queue used for processing multiple backup
 var dlQueue = []; //queue used for processing multiple downloads
 var rmQueue = []; //queue used for processing multiple deletions
 var rmBtnHtml = "";
@@ -569,12 +595,11 @@ function Backuper (params) {
     // this.STAT_DONE = 1<<1 //backup done (success)
     // this.STAT_FAIL = 1<<2 //backup done (fail)
     // this.STAT_NOEVT= 1<<3 //event doesn't exist
-
 	this.status = 0;
 	this.testCount = 0;
+	this.finished = 0; // whether it has error or not
 	return this;
 	// var holder = obj.parents('.backup-holder');
-	// 
 	// ajaxCall("evtbackup/?event="+$(obj).attr('eventID'),null,function() {
 	// 	holder.html('<i class="icon-ok green large"></i>')
 	// });
@@ -706,6 +731,7 @@ Backuper.prototype.done = function() {
 			this.holder.html('error '+this.status);
 		}
 	}
+	this.finished = 1;
 };
 //----------------------------------------------------------------
 
@@ -834,6 +860,7 @@ function processQueue(itemDone, itemError) {
 		vid = dlQueue[0].find('input'); //dlqueue contains div's that contain checkboxes - hence the .find() method
 		// get the name of the event (for ipad)
 		evt = $(vid).attr('event');
+		
 		// replace checkbox with a progress bar
 		dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
 	}
@@ -855,6 +882,88 @@ function processQueue(itemDone, itemError) {
 	  }
 	});
 }//end processQueue
+
+//////////////////////////////////////////////////////////////////////
+function monitorBackupProgress() {
+    var qcount=bkQueue.length;
+    var v;
+    var c = 0;
+    var c1 = pagecontext.all_done_count('bkp');
+    for (v in pagecontext.bkp_dict) {
+        if (pagecontext.bkp_dict[v].finished>0) {
+            c = c + 1;
+        }
+    }
+    if (c1 == qcount) {
+        $('#backupusb').removeAttr('disabled');
+        $('#backupusb').html('<i class="icon-save"></i>');
+        
+        $('input[control=check_each]').each(function(index,data) {}).attr('disabled',false);
+        $('.fixEvt').each(function() {}).removeClass('disabled_a');        
+        $('.xportEvt').each(function() {}).removeClass('disabled_a');        
+        $('.removeEvt').each(function() {}).removeClass('disabled_a');        
+        $('.backupEvt').each(function() {}).removeClass('disabled_a');        
+        bkQueue = [];
+        pagecontext.bkp_dict = [];
+    }
+    else {
+        setTimeout(monitorBackupProgress,2000);
+    } 
+}
+
+// process backup queue
+function processBackupEvt(dl_item) {
+    try {
+        var vidCol_holder = (dl_item.parents('.row').length>0) ? dl_item.parents('.row').find('.vidColumn') : dl_item.parents('.row2').find('.vidColumn');
+        var fixEvt_holder = (dl_item.parents('.row').length>0) ? dl_item.parents('.row').find('.fixEvt') : dl_item.parents('.row2').find('.fixEvt');      
+        var rmvEvt_holder = (dl_item.parents('.row').length>0) ? dl_item.parents('.row').find('.removeEvt') : dl_item.parents('.row2').find('.removeEvt');      
+        var xptEvt_holder = (dl_item.parents('.row').length>0) ? dl_item.parents('.row').find('.xportEvt') : dl_item.parents('.row2').find('.xportEvt');      
+        var bkpEvt_holder = (dl_item.parents('.row').length>0) ? dl_item.parents('.row').find('.backupEvt') : dl_item.parents('.row2').find('.backupEvt');
+    }
+    catch(err) {
+    }                
+    try {
+        if(bkQueue.length<=0) { //no more items in the queue - all backups are complete
+            $('#backupusb').removeAttr('disabled');
+            $('#backupusb').html('<i class="icon-save"></i>');
+            return true; 
+        }
+        // grab the next video in the queue (first element)
+        vid = dl_item.find('input'); //bkQueue contains div's that contain checkboxes - hence the .find() method
+        // get the name of the event (for backup to usb storage)
+        evt = $(vid).attr('event');
+        var backupEvt_holder = (dl_item.parents('.row').length>0) ? dl_item.parents('.row').find('.backupEvt') : dl_item.parents('.row2').find('.backupEvt');      
+        
+        if(fixingCount>0){
+            console.log("Backup event cannot proceed. Please wait until mp4 rebuilding process is finished.");
+            return false;
+        }
+        if (pagecontext.usb_plugged) {
+            var hid = backupEvt_holder.attr('eventID');
+            var holder = vidCol_holder;
+            var backup = new Backuper({
+                hid:hid,
+                holder:holder
+            });
+            pagecontext.add_bkp(hid,backup);
+            backup.start();
+            console.log("event backup started: " + hid);
+        }
+        else {
+           alert("Please check if USB disk is plugged in.");
+        }
+    }
+    catch(err) {
+        console.log("caught in processBackupEvt:" + err);
+        fixEvt_holder.removeClass('disabled_a');        
+        rmvEvt_holder.removeClass('disabled_a');        
+        xptEvt_holder.removeClass('disabled_a');        
+        bkpEvt_holder.removeClass('disabled_a');        
+    }
+    return true;
+}//end processBackupEvt
+
+
 
 function pbarWidth(obj,width) {
 	obj.animate({
@@ -923,7 +1032,7 @@ function checkppstatus()
             {
                 if (dp.results.status==true) {
                     res = true;
-                    console.log("results_live_status------------->"+dp.results.live);
+                    //console.log("results_live_status------------->"+dp.results.live);
                     try {
                         if (mapsize(dp.results.xpt.status)>0) {
                             pagecontext.do_xpt_progress(dp.results.xpt);
@@ -990,7 +1099,8 @@ function checkppstatus()
 var checkppstatus_timer = $.timer(function() { checkppstatus(); });
 
 
-function fOnLoad (argument) {
+function fOnLoad (argument) 
+{
     $("#alert-message").hide();
 	// warn user about exiting the page if the download is in progress
 	window.onbeforeunload = function(e){
@@ -1025,8 +1135,7 @@ function fOnLoad (argument) {
             }
         }
     });
-    //-------------------------------------------------
-    	
+    //---------------------------------------------------------------------------------------
 	// attach a click to the close button on a window
 	$(document).on('click', '.wnd a[href$="close"]', function(e){
 		e.preventDefault();
@@ -1039,6 +1148,10 @@ function fOnLoad (argument) {
 	});
 	// attach media player to any media links (allows graceful breakdown for js-disabled cases)
     $('.media').click(function (e){
+        if ($(this).hasClass('disabled_a')) {
+            console.log("remove selected event disabled...");
+            return;
+        }
     	e.preventDefault();
 	    self = this;
 	    // html overlay
@@ -1054,7 +1167,46 @@ function fOnLoad (argument) {
 		videojs("#videoPlayer").play();
     	return false;
     });
-    // clicked download button
+
+    //---------------------------------------------------------------backup all of mp4 file into USB drive
+    $('#backupusb').click(function(){    
+        if(fixingCount>0){
+            alert("Please wait until mp4 rebuilding process is finished.");
+            return;
+        }
+        bkQueue = [];
+
+        $(this).attr('disabled','disabled'); //make sure user cannot click download again
+        $(this).html('<img src="css/img/ajax-loader.gif"/>')
+        
+        $('input[control=check_each]').each(function(index,data) {
+            var value = this.checked;
+            console.log("i="+index);
+            console.log("d="+data);
+            console.log("v="+value);
+            
+            if ($(this).is(":checked")) {
+                bkQueue.push($(this).parent('div')); // bkQueue[0] : check box holder 
+            }
+
+        }).attr('disabled','disabled');;        
+
+        $('.fixEvt').each(function() {}).addClass('disabled_a');        
+        $('.xportEvt').each(function() {}).addClass('disabled_a');       
+        $('.removeEvt').each(function() {}).addClass('disabled_a');      
+        $('.backupEvt').each(function() {}).addClass('disabled_a');      
+
+        // monitor if all are done. Once it is all done, it restores all of classes. 
+        setTimeout(monitorBackupProgress, 2000);
+        
+        // start backup
+        for (i=0; i<bkQueue.length; i++) {
+            processBackupEvt(bkQueue[i]);
+        }
+        
+    });
+    
+    // download all button
     $('#download').click(function(){
     	if(dlQueue.length>0 || rmQueue.length>0){ //do not allow download when download or deletion is in progress
     		return;
@@ -1064,27 +1216,28 @@ function fOnLoad (argument) {
 
     	$(this).attr('disabled','disabled'); //make sure user cannot click download again
     	$(this).html('<img src="css/img/ajax-loader.gif"/>')
-    	// go through every checked video (checkbox) and add it to the queue
-    	//$('input[download]:checked[control!="chkAll"]').each(function (){
-    	$('input:checked[control!="chkAll"]').each(function (){
+
+        // go through every checked video (checkbox) and add it to the queue
+        $('input[download]:checked[control!=chkAll]').each(function (){
+            // add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
+            dlQueue.push($(this).parent('div'));
+        }).attr('disabled','disabled');
+        console.log(dlQueue.length);
     	
-    	
-            console.log($(this).parent('div'));  	
-    	
-    	
-//    		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
-//    		dlQueue.push($(this).parent('div'));
-    		
-    		
-    		
-    	}).attr('disabled','disabled');
-    	console.log(dlQueue.length);
     	// start download
     	processQueue();
     });
     $('.removeSel').click(function (e){
+        if ($(this).hasClass('disabled_a')) {
+            console.log("remove selected event disabled...");
+            return;
+        }
         if(fixingCount>0){
             alert("Please wait until mp4 rebuilding process is finished.");
+            return false;
+        }
+        if(bkQueue.length>0){
+            alert("Please wait until backup process is finished.");
             return false;
         }
     	e.preventDefault();
@@ -1109,7 +1262,16 @@ function fOnLoad (argument) {
 			}
     	}//if confirm
     });//removeSel.click
+    
+    
+    //----------------------------------------------------------------------------------------------------
+    // individual operation goes from here...
+    //----------------------------------------------------------------------------------------------------
     $('.removeEvt').click(function (e) {
+        if ($(this).hasClass('disabled_a')) {
+            console.log("remove event disabled...");
+            return;
+        }
         if(fixingCount>0){
             alert("Please wait until mp4 rebuilding process is finished.");
             return false;
@@ -1162,7 +1324,14 @@ function fOnLoad (argument) {
     	}
     	return false;
     });//removeEvt.click
+    //---------------------------------------------------------------------------------------
     $('.fixEvt').click(function(event) {
+        
+        if ($(this).hasClass('disabled_a')) {
+            console.log("fix disabled...");
+            return;
+        }
+    
         if(confirm('This may need to takes few hours. Do you really want to continue ?')){
             if (!pagecontext.usb_plugged) {
                 try
@@ -1193,9 +1362,13 @@ function fOnLoad (argument) {
             }
         }
     });
-            
+    //---------------------------------------------------------------------------------------            
     $('.xportEvt').click(function(event) {
         console.log("Export Event");
+        if ($(this).hasClass('disabled_a')) {
+            console.log("Export disabled...");
+            return;
+        }
         if(fixingCount>0){
             alert("Please wait until mp4 rebuilding process is finished.");
             return false;
@@ -1222,8 +1395,12 @@ function fOnLoad (argument) {
             }
         }
     });
-    
+    //---------------------------------------------------------------------------------------    
     $('.backupEvt').click(function(event) {
+        if ($(this).hasClass('disabled_a')) {
+            console.log("backup disabled...");
+            return;
+        }
         if(fixingCount>0){
             alert("Please wait until mp4 rebuilding process is finished.");
             return false;
@@ -1244,14 +1421,32 @@ function fOnLoad (argument) {
     	}
 
     });
+    //---------------------------------------------------------------------------------------    
     $('.chkAll:checkbox').change(function () {
     	if($(this).is(":checked")){
-    		$(":checkbox").attr("checked","checked");
+    		//$(":checkbox").attr("checked","checked");
+            $('input[control=check_each]').each(function(index,data) { 
+                this.checked = true;
+            });
     	}
     	else{
-    		$(":checkbox").removeAttr("checked");
+            $('input[control=check_each]').each(function(index,data) { 
+                this.checked = false;
+            });
+            //$(":checkbox").removeAttr("checked");
     	}
     	return false;
+    });
+    $('.each_chk:checkbox').change(function () {
+        if($(this).is(":checked")){
+            //$(":checkbox").attr("checked","checked");
+            this.checked = true;
+        }
+        else{
+            //$(":checkbox").removeAttr("checked");
+            this.checked = false;
+        }
+        return false;
     });
 }//fOnLoad
 </script>

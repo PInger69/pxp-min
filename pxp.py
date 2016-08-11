@@ -47,6 +47,7 @@ def auth():
 		Returns:
 			(dictionary): 
 				success(bool): whether the user is authenticated
+				config: pre-roll and post-roll time (Richard requested. June 14, 2016)
 	"""
 	try:
 		# return _err("invalid id")
@@ -62,10 +63,22 @@ def auth():
 		else:
 			queryID = json.loads(resp)
 			queryID = queryID['id']
-		pu.mdbg.log("-->auth:{}".format(queryID))
-		return {"success":customerID==queryID}
-	except:
-		return {"success":False}
+
+		# added task to get pre-roll/post-roll time
+		config = settingsGet()
+		if ('tags' in config and 'preroll' in config['tags']):
+			preroll = int(config['tags']['preroll'])
+		if ('tags' in config and 'postroll' in config['tags']):
+			postroll = int(config['tags']['postroll'])
+		min_config = {'preroll':preroll, 'postroll': postroll}
+		result = {}
+		result['config'] = min_config
+		result['success'] = customerID==queryID
+		pu.mdbg.log("auth-->qid:{} result:{}".format(queryID, result))
+		return result # {"success":customerID==queryID}
+	except Exception as e:
+		pu.mdbg.log("[---] error in auth: {}".format(str(sys.exc_info()[-1].tb_lineno)+' '+str(e)))
+		return {"success":False, 'config':{}}
 	
 def checkspace():
 	""" checks if there is enough space on the hard drive if there isn't, stops whatever encode is going on currently.
@@ -466,6 +479,67 @@ def getlastlist(fname):
 	except Exception as e:
 		return line
 	
+def encstatsyncme(textOnly=True):
+	""" Combination with syncme and encstatus
+	""" 
+	try:
+		strParam = pu.uri.segment(3,"{}")
+		jp = json.loads(strParam)
+		if not ('user' in jp and 'event' in jp and 'device' in jp):
+			return _err("Specify user, event, and device")
+		param_print = pu.pxpconfig.check_webdbg('param') and pu.pxpconfig.check_webdbg('encoderstatus')
+		
+		if (param_print):
+			pu.mdbg.log("-->encstatsyncme: param-->", strParam)
+
+		#get user id
+		usr = jp['user']
+		#device ID
+		dev = jp['device']
+		#event
+		evt = jp['event']
+		if(_stopping(evt)):
+			return _stopping(msg=True)
+
+		#----------------------------------------------------------------
+		
+		txtStatus = pu.disk.file_get_contents(c.encStatFile)
+		if(not txtStatus):#this will only happen if the encoder is not initialized (or someone deleted the config file)
+			enc = {'status':'','code':0}
+		else:
+			enc = json.loads(txtStatus)
+		if(not 'status' in enc):
+			state = 0
+			status = "pro recorder disconnected"
+		else:
+			state = enc['code'] #1+2+4#+8+16 #encoder + camera + streaming + ffmpeg + 
+			status = enc['status']
+		resp = pu.disk.sockSendWait(msg="SNF|", addnewline=False)
+		if(not resp):
+			data = {}
+		else:
+			data = json.loads(resp)
+
+		if (textOnly):
+			return status
+		
+		encstatus = {"status":status,"code":state}
+		encstatus.update(data)
+
+		#--------------------------------------------------
+		sync = _syncTab(user=usr, device=dev, event=evt)
+		result = {}
+		result['encstatus'] = encstatus
+		result['syncme'] = sync
+		if (param_print):
+			pu.mdbg.log("-->encstatsyncme: user:{}  device:{}  event:{}  result:{}".format(usr, dev, evt, result))
+		return result
+	except Exception as e:
+		import sys
+		errmsg = _err(str(e)+' '+str(sys.exc_info()[-1].tb_lineno))
+		pu.mdbg.log("[---]encstatsyncme err:".format(errmsg))
+		return errmsg
+	
 def encoderstatus(textOnly=True):
 	""" Outputs the encoder status.
 		Args:
@@ -531,7 +605,12 @@ def ipad_log(params=False):
 		pu.mdbg.log("ipad_log-->param:{}".format(ipad_log_param))
 		param = json.loads(ipad_log_param)
 		result['success'] = True
-		pu.disk.file_set_contents("/tmp/"+param['title'], param['txt'])
+		if (('title' in param) and param['title'] and (len(param['title'])>1)):
+			pu.disk.file_set_contents("/tmp/"+param['title'], param['txt'])
+		else:
+			imsi = str(time.time())
+			pu.disk.file_set_contents("/tmp/"+imsi, param['txt'])
+		pu.pxp_mail.send_alert(param['title'], param['txt'])
 	except Exception as e:
 		result['success'] = False
 		result['msg'] = str(e)
@@ -573,11 +652,10 @@ def rec_stat(params=False):
 			srclen = param['srclen']
 		
 		try:
-			if (event == 'live'):
-				resp = pu.disk.sockSendWait(msg="FCT|"+event,addnewline=False) # get feed count
-				pu.mdbg.log("rec_stat-->FCT:{}".format(resp))
-				if (srclen==0):
-					srclen = int(resp)
+			resp = pu.disk.sockSendWait(msg="FCT|"+event,addnewline=False) # get feed count
+			pu.mdbg.log("rec_stat-->FCT:{}".format(resp))
+			if (srclen==0):
+				srclen = int(resp)
 		except:
 			srclen = 0
 		
@@ -607,13 +685,14 @@ def rec_stat(params=False):
 		count = 0
 		for d in dirs:
 			if (os.path.isdir(d)):
-				if (len(glob.glob(d + "*.m3u8")) > 0):
-					for f in glob.glob(d + "*.m3u8"):
+				if (len(glob.glob(d + "list_*.m3u8")) > 0):
+					for f in glob.glob(d + "list_*.m3u8"):
 						i1=f.find('list_')
 						i2=f.find('.m3u8')
-						if (i1>0 and i2>0):
+						if (i1>=0 and i2>=0):
 							sidx=f[i1+5:i2]
-							if (not pu.pxpconfig.virtual_lq_enabled() and event=='live' and sidx.find('lq')>0):
+							#if (not pu.pxpconfig.virtual_lq_enabled() and event=='live' and sidx.find('lq')>0):
+							if (not pu.pxpconfig.virtual_lq_enabled() and sidx.find('lq')>0):
 								continue
 							info = os.stat(d + sidx + '_segm_0.ts')
 							#result['atime-'+sidx]=info[7]
@@ -621,7 +700,7 @@ def rec_stat(params=False):
 							count += 1			
 							if (pu.pxpconfig.check_webdbg('param')):			
 								pu.mdbg.log("rec_stat--> f:{} sidx:{}  videopath:{} info:{}".format(f, sidx, videoPath, result))
-		result['freedisk'] = pu.disk.diskusage()
+		#result['freedisk'] = pu.disk.diskusage()
 		if (srclen>0):
 			result['success'] = (srclen==count)
 		else:
@@ -1468,6 +1547,8 @@ def login(sess=False, email=False, passw=False):
 				return resp
 		#if not inited
 
+		result = {"success":False}
+
 		# check if user is in the database
 		db = pu.db(c.wwwroot+"_db/pxp_main.db")
 		sql = "SELECT `hid` FROM `users` WHERE `email` LIKE ? AND `password` LIKE ?"
@@ -1492,11 +1573,12 @@ def login(sess=False, email=False, passw=False):
 			sess.data['ep']=encPs
 			if (pu.pxpconfig.check_webdbg('param')):
 				pu.mdbg.log('--> login session created', sess.data['user'], sess.data['email'], sess.data['ee'], sess.data['ep'])
+			result = {"success":True}
 	except Exception as e:
 		import sys
 		return _err(str(e)+' '+str(sys.exc_info()[-1].tb_lineno))
 	# return {io.get("email"):io.get("pass")}
-	return {"success":True}
+	return result
 
 def logout( sess):
 	""" Authenticates a user and saves his info in a session
@@ -1513,6 +1595,35 @@ def logout( sess):
 	sess.data['email']=False
 	return {"success":True}
 #end logout
+
+def prepbackup():
+	""" 
+		Args:
+			none
+		API args:
+			event(str): name of the event to download
+			appid(str,optional): id of the app to which to download. default: com.avocatec.Live2BenchNative
+			source(str,optional): download video from this source. default: first source will be used
+		Returns:
+			success(bool): whether the command was successful
+	"""
+	io = pu.io
+	event = io.get('event')
+	appid = io.get('appid')
+	sIdx = io.get('source') #e.g. 00hq, 01lq, etc...
+
+	pu.mdbg.log("prepbackup--> event:", event)
+	pu.mdbg.log("prepbackup--> appID:", appid)
+	pu.mdbg.log("prepbackup--> sIdx:", sIdx)
+	
+	try:
+		return {"success":True}
+	except Exception as e:
+		import sys
+		em = str(sys.exc_info()[-1].tb_lineno)+' '+str(e) 
+		_slog(str(sys.exc_info()[-1].tb_lineno)+' '+str(e))
+		pu.mdbg.log("[---] prepbackup -- {0}  event:{1}".format(em, event))				
+		return _err(em)
 
 def prepdown():
 	""" DEPRECATED. Prepares the event download - converts tags to a plist and starts the idevcopy process
@@ -1741,7 +1852,7 @@ def settingsGet():
 			else:#cannot set bitrate on this camera
 				settings['video']['bitrate'] = False
 		except Exception as e:
-			pu.mdbg.log("[---] settingsGet...{0}".format(e))
+			pu.mdbg.log("[---] settingsGet...{}".format(e))
 			pass
 		settings['video']['bitrate_options']=OrderedDict([
 			(5000,"Very high (5Mbps)"),
@@ -1807,6 +1918,8 @@ def settingsGet():
 			(20,"20s")
 		])
 		# misc -----
+		if(not 'misc' in settings):
+			settings['misc']={}
 		settings['misc']['use_splited_feed']=pu.pxpconfig.use_split_event_folder()
 		settings['misc']['use_postproc']=pu.pxpconfig.use_mp4align()
 		settings['misc']['use_virtual_lq_enabled']=not pu.pxpconfig.virtual_lq_enabled()
@@ -1817,10 +1930,11 @@ def settingsGet():
 		settings['misc']['use_ping_camcheck']=pu.pxpconfig.use_ping_camcheck()
 		settings['misc']['show_webplayer']=pu.pxpconfig.show_webplayer()
 		settings['misc']['show_tcpopt']=pu.pxpconfig.show_tcpopt()
+		settings['misc']['show_option']=pu.pxpconfig.show_option()
 	
 	except Exception as e:
 		settings["err"]=str(e)+' '+str(sys.exc_info()[-1].tb_lineno)
-		pu.mdbg.log("[---] settingsGet_2...{0}".format(e))
+		pu.mdbg.log("[---] settingsGet_2...{}".format(settings["err"]))
 		# could not get/parse some settings, download the config file from the cloud
 		pass
 	pu.mdbg.log("============= settingsGet---------------------->ends")
@@ -3630,8 +3744,8 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 				result[i]['md5'] = hashlib.md5(open(evtDir+'/pxp.db', 'rb').read()).hexdigest()
 			else:
 				result[i]['md5'] = ''
-			if (pu.mdbg.checkscf2(pu.SCF_SHOWEVENT)):
-				pu.mdbg.log("-->index:{0} {1}".format(i, pp.pformat(result[i])))
+			#if (pu.mdbg.checkscf2(pu.SCF_SHOWEVENT)):
+			pu.mdbg.log("-->index:{0} {1}".format(i, pp.pformat(result[i])))
 			i+=1
 		#end for row in result
 		db.close()
@@ -3665,19 +3779,42 @@ def _listEvtSources(evtName, srcType='list'):
 			fExt = 'mp4'
 		# generate a list of possible file names that may contain video:
 		# this will generate names like list_00hq.m3u8, list_01lq.m3u8, etc...
+		#['list_00hq.m3u8', 'list_01hq.m3u8', 'list_02hq.m3u8', .....
 		fileNames = map(lambda x: fName+str(x).zfill(2)+'hq.'+fExt,range(0,c.maxSources))+map(lambda x: fName+str(x).zfill(2)+'lq.'+fExt,range(0,c.maxSources))
 		# go through each file and see if it exists, if it does, that'll be a video source
 		vidfiles = []
 		vidsize = {}
-		for fn in fileNames:
-			fpath = c.wwwroot+evtName+'/video/'+fn
-			if(os.path.exists(fpath)):
-				vidfiles.append(fn)
-				fsize = os.path.getsize(fpath)
-				if (fsize/1000000.0 > 999.9):
-					vidsize[fn] = str("{:8.2f}GB".format(fsize/1000000000.0))
-				else:	
-					vidsize[fn] = str("{:8.2f}MB".format(fsize/1000000.0)) #<<1, should I double the size??
+		vidsize2 = {}
+		
+		# Need to check file size to see if it is completed
+		video_path = c.wwwroot+evtName+'/video/'
+		folder_splitted = video_path
+		if (os.path.exists(video_path+'hq_00')):
+			for dirname, dirnames, filenames in os.walk(video_path):
+				folder_splitted = dirnames
+				break
+		for d in folder_splitted:
+			for fn in fileNames:
+				fpath = video_path + d + "/" + fn
+				if(os.path.exists(fpath)):
+					vidfiles.append(fn)
+					fsize = os.path.getsize(fpath)
+					vidsize2[fn] = str(fsize)
+					if (fsize/1000000.0 > 999.9):
+						vidsize[fn] = str("{:8.2f}GB".format(fsize/1000000000.0))
+					else:	
+						vidsize[fn] = str("{:8.2f}MB".format(fsize/1000000.0)) #<<1, should I double the size??
+						
+#       OLD WAY... (REPLACED due to download transmission error) - need to check file size to see if it is completed  
+# 		for fn in fileNames:
+# 			fpath = video_path+fn
+# 			if(os.path.exists(fpath)):
+# 				vidfiles.append(fn)
+# 				fsize = os.path.getsize(fpath)
+# 				if (fsize/1000000.0 > 999.9):
+# 					vidsize[fn] = str("{:8.2f}GB".format(fsize/1000000000.0))
+# 				else:	
+# 					vidsize[fn] = str("{:8.2f}MB".format(fsize/1000000.0)) #<<1, should I double the size??
 		# [2] this method is 100% reliable for finding correct files (*.m3u8 or *.mp4) but it's waaaaay too slow for cgi python - basically unusable without proper timeouts in the URL requests
 		# vidfiles = glob.glob(c.wwwroot+evtName+'/video/*.m3u8')
 		# if(len(vidfiles)<1): #there are no sources in this folder matching the search pattern
@@ -3710,8 +3847,32 @@ def _listEvtSources(evtName, srcType='list'):
 			if(not pu.uri.host):
 				pu.uri.host=pu.io.myIP()
 			sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/'+vid
-			sources['s_'+n]['vq'] = q
+			
+			#if (pu.pxpconfig.use_split_event_folder()):
+			if (os.path.exists(c.wwwroot+evtName+'/video/hq_00')):
+				if (q=='hq'):			
+					sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/hq_'+n+"/"+vid
+					check_path = c.wwwroot+evtName+'/video/hq_'+n+"/"+vid
+				else:
+					sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/lq_'+n+"/"+vid
+					check_path = c.wwwroot+evtName+'/video/lq_'+n+"/"+vid
+			else:
+				sources['s_'+n][q]='http://'+pu.uri.host+'/events/'+evtName+'/video/'+vid
+				check_path = c.wwwroot+evtName+'/video/'+vid
+			# if one of old events didn't use split folder structure, fix path here...
+			if (not os.path.exists(check_path)): 
+				hq_start_idx = sources['s_'+n][q].find("/hq_")
+				lq_start_idx = sources['s_'+n][q].find("/lq_")
+				if (hq_start_idx>=0 or lq_start_idx>=0):
+					if (hq_start_idx>=0):
+						sources['s_'+n][q] = sources['s_'+n][q].replace(sources['s_'+n][q][hq_start_idx:hq_start_idx+6],"") # remove /hq_xx
+					else:
+						sources['s_'+n][q] = sources['s_'+n][q].replace(sources['s_'+n][q][lq_start_idx:lq_start_idx+6],"") # remove /lq_xx
+			pu.mdbg.log("_listEvtSources--->SRC:{}".format(sources['s_'+n][q]))
+			
+			#sources['s_'+n]['vq'] = q
 			sources['s_'+n]['vidsize_'+q] = vidsize[vname]			
+			sources['s_'+n]['vidsize2_'+q] = vidsize2[vname]			
 			#if (pu.mdbg.checkscf(pu.SCF_SHOWEVENT)):
 			#pu.mdbg.log("-->_listEvtSources: s_", n, q, sources['s_'+n][q])
 			if(int(n)<lowestIndex):
@@ -3730,7 +3891,7 @@ def _listEvtSources(evtName, srcType='list'):
 		# output[key] = sources[srcKeys[0]][qs[0]] #get the first quality in the first source (usually it'll be hq)
 		# output[key+'_2'] = sources.copy()
 		#pu.mdbg.log("-->listEvtSources-->", pp.pformat(sources))
-		xq = sources['s_00']['vq']
+		#xq = sources['s_00']['vq']
 		return (sources,sources[firstSource]['hq']) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
 	except Exception as e:
 		em = str(e) + ' ' + str(sys.exc_info()[-1].tb_lineno)
@@ -3946,7 +4107,7 @@ def _postProcess():
 		os.remove(c.wwwroot+"live/evt.txt")
 		# rename the live to that directory
 		os.rename(c.wwwroot+"live",c.wwwroot+event)
-		pu.mdbg.log("live event renamed:{}-->{}".format(c.wwwroot+"live", c.wwwroot+event))
+		pu.mdbg.log("live event rename to --> {}".format(c.wwwroot+event))
 		# remove the stopping.txt file
 		os.system("rm "+c.wwwroot+event+"/stopping.txt")
 		
@@ -3976,26 +4137,50 @@ def _postProcess():
 							cmd = "ln -s " + mp4path + " " + c.wwwroot + event + "/video/" + "main_" + sidx + cvq + ".mp4 >/dev/null 2>/dev/null"
 							os.system(cmd)
 							pu.mdbg.log("AFTER f:{} --> realpath:{}".format(f, os.path.realpath(f)))
-				for f in glob.glob(c.wwwroot + event + "/video/vid*.mp4"):
-					pu.mdbg.log("re-create link vid--> link:{}".format(f))
-					if (os.path.islink(f)): # ln -s /var/www/html/events/live/video/00hq_vid_5.mp4 vid_5.mp4
-						pu.mdbg.log("{} ".format(f))
-						i1 = f.find("/vid_")
-						i2 = f.find(".mp4")
+			for f in glob.glob(c.wwwroot + event + "/video/vid*.mp4"):
+				pu.mdbg.log("re-create link vid--> link:{}".format(f))
+				if (os.path.islink(f)): # ln -s /var/www/html/events/live/video/00hq_vid_5.mp4 vid_5.mp4
+					pu.mdbg.log("{} ".format(f))
+					i1 = f.find("/vid_")
+					i2 = f.find(".mp4")
+					if (i1>0 and i2>0):
+						pu.mdbg.log("BEFORE f:{} --> realpath:{}".format(f, os.path.realpath(f)))
+						i1 = f.find("/"+event)
+						i2 = f.find("/video")
+						pu.mdbg.log("{}  {}  {} ".format(f, i1, i2))
 						if (i1>0 and i2>0):
-							pu.mdbg.log("BEFORE f:{} --> realpath:{}".format(f, os.path.realpath(f)))
-							i1 = f.find("/"+event)
-							i2 = f.find("/video")
-							pu.mdbg.log("{}  {}  {} ".format(f, i1, i2))
-							if (i1>0 and i2>0):
-								realpath = os.path.realpath(f)
-								i1 = realpath.find("/live")
-								i2 = realpath.find("/video")
-								src_path = realpath[0:i1] + "/" + event + realpath[i2:]
-								os.system("rm " + f)
-								os.symlink(src_path, f)
-								pu.mdbg.log("AFTER f:{} --> realpath:{}".format(f, os.path.realpath(f)))
-						
+							realpath = os.path.realpath(f)
+							i1 = realpath.find("/live")
+							i2 = realpath.find("/video")
+							src_path = realpath[0:i1] + "/" + event + realpath[i2:]
+							os.system("rm " + f)
+							os.symlink(src_path, f)
+							pu.mdbg.log("AFTER f:{} --> realpath:{}".format(f, os.path.realpath(f)))
+			# add EXT-X-ENDLIST in the playlist					
+			try:
+				fc = glob.glob(c.wwwroot+event+"/video/list_*.m3u8")
+				if (fc):
+					for f in fc:
+						if (os.path.isfile(f)):
+							zstr = os.path.basename(f).split("_")
+							sidx = zstr[1][0:2]
+							vq = zstr[1][2:4]
+							fn = c.wwwroot+event+"/video"+"/list_"+sidx+vq+".m3u8"
+							if (pu.pxpconfig.use_split_event_folder()):
+								fn = c.wwwroot+event+"/video/"+vq+"_"+sidx+"/list_"+sidx+vq+".m3u8"
+							pl = open(fn,'rb')
+							lines = pl.readlines()
+							if lines:
+								#first_line = lines[:1]
+								last_line = lines[-1]
+							pl.close()
+							if (last_line.find('EXT-X-ENDLIST')<0):
+								f = open(fn, 'a')
+								f.write("#EXT-X-ENDLIST\n")
+								f.close()
+								pu.mdbg.log("ENDLIST is added in file:{} ".format(fn))
+			except Exception as e:
+				pu.mdbg.log("[---] add_ENDLIST: line:{} err:{}".format(sys.exc_info()[-1].tb_lineno, e))
 		except Exception as e:
 			pu.mdbg.log("[---] re-create link error {}".format(e))
 			pass			
@@ -4183,7 +4368,7 @@ def _syncEnc( encEmail="none",encPassw="none"):
 			return _err("connection error")
 		
 		if (pu.pxpconfig.check_webdbg('param')):
-			pu.mdbg.log("SYNC_DATA1 ==> ", resp)
+			pu.mdbg.log("SYNC_DATA1 ==> ", pp.pformat(resp))
 		
 		# DEBUG NOTE:
 		# CHECK WHAT HAPPENS WHEN THERE IS NO INTERNET CONNECTION, FOR SOME REASON OUTPUT IS '0'
@@ -4199,7 +4384,7 @@ def _syncEnc( encEmail="none",encPassw="none"):
 			pass
 
 		if (pu.pxpconfig.check_webdbg('param')):
-			pu.mdbg.log("SYNC_DATA2 ==> ", syncData)
+			pu.mdbg.log("SYNC_DATA2 ==> ", pp.pformat(syncData))
 
 		syncLevel = syncData['level']
 
@@ -4857,3 +5042,7 @@ def _xmltype(variable):
 		return "dict"
 	else:
 		return "string"
+
+
+
+

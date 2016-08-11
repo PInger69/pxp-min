@@ -17,6 +17,10 @@ import sqlite3
 from test.test_socket import try_address
 import pxphelper
 from types import NoneType
+import serial
+from serial.serialutil import SerialException
+from __builtin__ import True
+import telnetlib
 
 # big broadcast queue - queue containing all of the sent messages for every client that it was sent to
 # in this format:
@@ -126,6 +130,7 @@ class debugLogger(object):
     PXP            = 1<<23 # PXP Log
     FIX            = 1<<24 # MP4 repair
     MDB            = 1<<25 # SQLMDB
+    DLT            = 1<<26 # Delta Camera
 
     #this property defines which of the above groups will be logged
     #KLL|ERR|MN|SRC|PCM|PPC
@@ -198,6 +203,8 @@ class debugLogger(object):
             pass
     def log(self, kind, *arguments, **keywords):
         # print arguments
+        if(not (kind & self.LVL)): #only print one type of event
+            return
         print dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"),'(',self._cmdName(kind),'):',(' '.join(map(str, (arguments)))), '[[written:',self.LOG,']]'
         if(self.LOG):
             try:
@@ -210,7 +217,7 @@ class debugLogger(object):
                     fp.write(' '+' '.join(map(str, (arguments))))
                     fp.write("\n")
             except Exception as e:
-                print "[---]prn:",e, sys.exc_info()[-1].tb_lineno
+                print "[---]log:",e, sys.exc_info()[-1].tb_lineno
     def _cmdName(self,cmd):
         """ a command lookup dictionary """
         names = {
@@ -239,7 +246,8 @@ class debugLogger(object):
             self.MN :"MN",
             self.AXS:"AXS",
             self.PXP:"PXP",
-            self.MDB:"MDB"
+            self.MDB:"MDB",
+            self.DLT:"DLT"
         }
         cmdList = []
         # go through each command and add it to the display list if its bit is set in the user's command
@@ -274,7 +282,8 @@ class debugLogger(object):
         "MN": self.MN ,
         "AXS":self.AXS ,
         "PXP":self.PXP, 
-        "MDB":self.MDB
+        "MDB":self.MDB,
+        "DLT":self.DLT
         }
         level = 0
         if (cmds != ''):
@@ -366,7 +375,7 @@ class backupEvent(object):
         try:
             while((self.status==self.STAT_START) and (not self.kill) and (not (enc.code & enc.STAT_SHUTDOWN))):
                 time.sleep(5)
-                dbg.prn(dbg.BKP,"copied: ", self.copied)
+                dbg.prn(dbg.BKP,"copied:{} file:{}".format(self.copied, self.currentFile))
                 if(self.currentFile and self.copied==lastSize and self.currentFile==lastFile): #probably copying a large file
                     currentBigSize = os.path.getsize(self.currentFile)
                     self.copied += currentBigSize - lastBigSize
@@ -718,7 +727,9 @@ class backupEvent(object):
                     linkto = os.readlink(src)
                     os.symlink(linkto, dst)
                 else:
-                    shutil.copy(src,dst)                
+                    shutil.copy(src,dst)
+                    dbg.prn(dbg.BKP,"bkpevt.copy src:{} dst:{}".format(src, dst))
+                                    
                 # org -- shutil.copy(src,dst) #copy file
                 
                 if(hasattr(self,'lastBigSize') and self.lastBigSize>0): #correct for large copy progress file size
@@ -1792,6 +1803,37 @@ class appGlobal:
 ### encoder device classes ###
 ##############################
 
+class usbserial(object):
+    """ Represents serial device. (delat encoder for now)"""
+    def __init__(self, name="usbserial", dev=False):
+        """ initialize the class 
+            Args:
+                dev(serail device): 
+        """
+        self.serialport = dev
+        self.dev_name = name
+        self.dt_params = {'IP':False, 'MAC':False, 'FMT':False, 
+                          'GEC':False, 'GVB':False, 'IMO':False, 'OCR':False, 'OIF':False, 'ORS':False, 
+                          'ESM':False, 'EGL':False, 'ELI':False, 'EHI':False, 'ELP':False, 'EHP':False, 'EPF':False, 
+                          'IAA':False, 'IMA':False,
+                          'VTP':False, 'VCF':False, 'VIT':False ,'VCL':False, 'VDL':False,
+                          'AMO':False, 'AIS':False, 'ACF':False, 'ACB':False 
+                          }
+    def __repr__(self):
+        return "<usbserial> name:{dev_name}  serialport:{serialport}".format(**self.__dict__)
+    def cmd_value(self, cmd):
+        """ cmd should be the one which can return integer value. dt_params should also be filled before call this. 
+            It is used with check_cmd in encDelta in most cases.
+        """
+        try:
+            cmdValue = self.dt_params[cmd.strip()]
+            z=cmdValue.strip().split("=")
+            if (len(z)>1):
+                return int(z[1])
+        except:
+            return 0
+        return 0
+
 class encDevice(object):
     """ Template class for an encoder device. """
     def __init__(self, ip, vq, uid=False, pwd=False, realm=False, mac=False):
@@ -1863,6 +1905,17 @@ class encDevice(object):
                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
                 + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+        # Delta Only        
+#         capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
+#                 + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
+#                 + " -fflags +igndts -codec copy -map 0:v -f mpegts " + mp4entry + str(camMP4) \
+#                 + " -fflags +igndts -codec copy -map 0:v" \
+#                 + " -vf drawtext=\"fontfile=/Library/Fonts/Arial.ttf: timecode='00\:00\:00\:00':r=24.976:x=10:y=10:fontsize=62:fontcolor=lightgreen: box=1: boxcolor=0x00000099\"" \
+#                 + " -f mpegts" \
+#                 + "     -c:v libx264 -preset ultrafast -tune zerolatency -r 29 -s 720x480 -pix_fmt yuv420p -b:v 1000k -minrate 1000k -maxrate 1000k -bufsize 1835k" \
+#                 + "     -x264opts keyint=50:bframes=0:ratetol=1.0:ref=1 -profile main -level 3.1" \
+#                 + "     -c:a copy" \
+#                 + " udp://127.0.0.1:" + str(camHLS) + "?pkt_size=1316"
         return capcmd
     def discover(self):
         """ To implement in device-specific class """
@@ -2575,6 +2628,551 @@ class encTeradek(encDevice):
     def stopRec(self):
         pass        
 
+class encDelta(encDevice):
+    """ Delta 4480E SD/HD Encoder device management class
+        usbserial class is always comes together to complete the functiionalities.
+    """
+    def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False):
+        try:
+            super(encDelta,self).__init__(ip, vq, uid=uid, pwd=pwd, realm=realm, mac=mac)
+            self.delta = serial.Serial()
+            self.dev_name = "/dev/ttyUSB1"
+            self.serport = 1
+            self.ccBitrate      = True # can change bitrate
+            self.ccFramerate    = True # can change framerate
+            self.ccResolution   = True # can change resolution
+            self.tdSession      = None # reference to the login session on the teradek
+            self.model = "Delta"
+            self.dt_params = {}
+            self.avformat = ["NotLocked","720x480i29","720x576i25","1280x720p50","1280x720p59","1280x720p60","1920x1080i25","1920x1080i29",
+                             "1920x1080i30","1920x1080p25","1920x1080p29","1920x1080p30","1920x1080p50","1920x1080p59","1920x1080p60",
+                             "640x480p60","800x600p60","1024x768p60","1280x1024p60"]
+            self.findingInProgress = False
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.__init__:",e,sys.exc_info()[-1].tb_lineno)
+    def set_dtparams(self, params):
+        for v in params:
+            self.dt_params[v] = params[v] 
+    def readresp(self, dev=False):
+        """ read command response from the serial device  
+            Args:
+                dev(serial.Serial): usb serial device
+            Returns:
+                s(str): returned string from the device 
+        """
+        if (not dev):
+            return ''
+        try:
+            #dbg.prn(dbg.MN, "dt.readresp started")
+            s = ''
+            count = 0
+            while count<10:
+                bytesToRead = dev.inWaiting()
+                if (bytesToRead>0):
+                    count = 0
+                    z = dev.read(bytesToRead)
+                    s += z
+                    if (s.find("OK>")>=0 or z==''):
+                        break
+                else:
+                    count += 1
+                    time.sleep(0.2)
+                    #dbg.prn(dbg.MN, "dt.readresp count:", count)
+            if (count>=10):
+                dbg.prn(dbg.MN, "dt.readresp timeout err:", dev)
+            return s
+        except (serial.SerialException, Exception) as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---] dt.readresp err:{} at {}".format(e, sys.exc_info()[-1].tb_lineno))
+            return False
+        return True
+    def sendcmd(self, dev, cmd, multiline=False):
+        """ send given command to usb serial device  
+            Args:
+                dev(usbserial or serial.Serial): serial device
+                cmd(str): delta command
+                multiline(bool): response can have multiple lines 
+            Returns:
+                resp(str): returned string from the device 
+        """
+        resp = []
+        try:
+            if (type(dev)!=serial.serialposix.Serial):
+                serialport = dev.serialport
+            else:
+                serialport = dev
+            serialport.write(cmd+"\r\n")
+            #time.sleep(0.2) # give the serial port sometime to receive the data
+            resp = self.readresp(serialport).strip().split("\r\n")    # "\r\nIMA=0\r\nOK>"
+            if (resp[0]==''):
+                dbg.prn(dbg.DLT, "[-->] dt.sendcmd error cmd:{} resp:{} dev:{}".format(cmd, resp, dev))
+                return resp[0] # error
+            setcmd = cmd.split("=")
+            if (resp[len(resp)-1][0]=='E'):
+                self.dt_params[setcmd[0]] = resp[len(resp)-1] # error
+                dbg.prn(dbg.DLT, "[-->] dt.sendcmd error cmd:{} resp:{} dev:{}".format(cmd, resp, dev))
+                return resp[len(resp)-1]
+            if (resp[len(resp)-1]=="OK>"):
+                pass
+            if (multiline):
+                s = ""
+                for i in xrange(len(resp)-1):
+                    s += resp[i]
+                    s += "\r\n"
+                return s.strip()    
+        except (serial.SerialException, Exception) as e:
+            dbg.prn(dbg.DLT, "[---] dt.sendcmd cmd:{} resp:{} dev:{} err:{} at:{}".format(cmd, resp, dev, e, sys.exc_info()[-1].tb_lineno))
+        return resp[0]
+    def updatecmd(self,dev,cmd):
+        """ Update dt_params in usbserial by reading the param from the device.  
+            Args:
+                dev(usbserial): usb serial device
+                cmd(str): delta command 
+            Returns:
+                boolean(result): True or False (success/fail in sending command) 
+        """
+        try:
+            setcmd = cmd.split("=")
+            if (setcmd[0]=='MAC' or setcmd[0]=='IP'):
+                if (len(setcmd)>1):
+                    dev.dt_params[setcmd[0]] = setcmd[1]
+                return True
+            ans = self.sendcmd(dev,setcmd[0])
+            if (dev.dt_params[setcmd[0]] != ans):
+                dev.dt_params[setcmd[0]] = ans
+                resp = self.sendcmd(dev.serialport, cmd)
+                if (cmd.find("=")>0): # send set command i.e OCR=3000
+                    if (resp.find("OK>",0)>=0):
+                        return True
+                elif (len(resp.split("="))==2): # read param as response i.e IMA=00:0f:5b:04:60:6b
+                    return True
+        except (serial.SerialException, Exception) as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---] dt.updatecmd cmd:{} dev:{} err:{} at:{}".format(cmd, dev, e, sys.exc_info()[-1].tb_lineno))
+        return False
+    def closePort(self,dev):
+        try:
+            dev.close()
+        except:
+            pass
+    def check_cmd(self,dev,cmd):
+        """
+        Retruns given command value (response) from the device
+        """
+        if (not self.updatecmd(dev, cmd)): 
+            dbg.prn(dbg.DLT|dbg.ERR, "dt.check_cmd error in ",cmd)
+        else: # success
+            return dev.cmd_value(cmd)
+        return 0
+    def parse_resp(self, cmd):
+        """
+        Get any value from the command response as string
+        """
+        if (cmd and len(cmd)>0 and cmd.find("=")>=0):
+            scmd = cmd.strip().split("=")
+            if (len(scmd)>1):
+                return scmd[1]
+        return cmd
+    def parse_int_resp(self, cmd):
+        """
+        Get integer value from the command response
+        """
+        if (cmd and len(cmd)>0 and cmd.find("=")>=0):
+            scmd = cmd.strip().split("=")
+            if (len(scmd)>1):
+                return int(scmd[1])
+        return 0
+    def parse_dtparam(self, cmd):
+        if (cmd and len(cmd)>0 and cmd in self.dt_params):
+            cmd = self.dt_params[cmd]
+            return self.parse_int_resp(cmd)
+        return 0
+    def check_delta_stat(self, dev):
+        """
+        Check if video feed is connected to the device. it checks if it is SDI or DVI first.
+        It fills up FMT key in params. (resolution/fps)
+        """
+        try:
+            if (dev and dev.serialport):
+                elspsed_time = time.time()
+#                 VCL = self.check_cmd(dev,'VCL')
+#                 VCF = self.check_cmd(dev,'VCF')
+#                 VTP = self.check_cmd(dev,'VTP')
+#                 VDL = self.check_cmd(dev,'VDL')
+                if (self.check_cmd(dev,'VCL')==1): # CVBS/SDI LOCK Reports whether the CVBS/SDI input is connected and locked, 0 = Not Locked 1 = Locked
+                    v = self.check_cmd(dev,'VCF')
+                    if (v != 0): # CVBS/SDI FORMAT Reports the detected video resolution and frame rate
+                        dev.dt_params['FMT'] = self.avformat[v]
+                    else:
+                        v = self.check_cmd(dev,'VTP')
+                        if (v != 0): # VIDEO TEST PATTERN resolution and frame rate
+                            dev.dt_params['FMT'] = self.avformat[v]
+                else:
+                    if (self.check_cmd(dev,'VDL')==0): # DVI LOCK, 0 = Not Locked 1 = Locked
+                        v = self.check_cmd(dev,'VTP')                         
+                        if (v > 0): # VIDEO TEST PATTERN resolution and frame rate
+                            dev.dt_params['FMT']=self.avformat[v]
+                        else:
+                            dev.dt_params['FMT']="000x000p00"
+                    else:
+                        dbg.prn(dbg.DLT, "[---] dt.check_delta_stat err: DVI in DELTA IS NOT SUPPORTED!!, Please re-configure.")
+                elspsed_time = time.time() - elspsed_time
+                dbg.prn(dbg.DLT, "dt.check_delta_stat elspsed_time:{} [secs]".format(elspsed_time))
+        except (serial.SerialException, Exception) as e:
+            dbg.prn(dbg.DLT, "[---] dt.check_delta_stat err:{} at:{}".format(e, sys.exc_info()[-1].tb_lineno))
+    def is_valid_ip(self, ip):
+        if (not ip or ip.find("0.0.0.0")>=0):
+            return False
+        main_ip = appg.mainip.split(".")
+        if (len(main_ip)<3):
+            return False
+        else:
+            if (ip.find(main_ip[0])<0 or ip.find(main_ip[1])<0):
+                return False
+        return True
+    def setRecommandedSettings(self, dev):
+        """ Update Delta device with recommanded settings. (It updates usbserial.dt_params.)  
+            Args:
+                dev(usbserial): serial device
+            Returns:
+                None 
+        """
+        # Recommanded Default Encoder Settings from Delta --------------------------------------------------
+        # Change Slice Mode to full frame.
+        # ESM - VIDEO ENCODE: SLICE MODE                 = 0 (FULL FRAME)
+        # Change GOP Size to 60
+        # EGL - VIDEO ENCODE: GOP LENGTH                 = 60
+        # I-Frame Min Quant to 10
+        # ELI - VIDEO ENCODE: I-FRAME MIN QUANT          = 10
+        # I-Frame Max Quant to 36
+        # EHI - VIDEO ENCODE: I-FRAME MAX QUANT          = 36
+        # P-Frame Min Quant to 10
+        # ELP - VIDEO ENCODE: P-FRAME MIN QUANT          = 10
+        # P-Frame Max Quant to 36
+        # EHP - VIDEO ENCODE: P-FRAME MAX QUANT          = 36
+        try:
+            if (dev and dev.serialport):
+                elspsed_time = time.time()
+                # Network settings
+                if (not self.updatecmd(dev, 'IMO=1')): # IMO  MODE  0=FIXED  1=DHCP (make this first so it cam re-new the ip while it is processing...)
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in IMO")
+                if (not self.updatecmd(dev, "OCR=3000")):  # OCR  STREAM BITRATE (KBPS) 64 to 20000 (*6000)
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in OCR")
+                if (not self.updatecmd(dev, "OIF=2")):     # OIF  INTERFACE     *0 = ETHERNET TS  1 = ETHERNET RTP  2 = ETHERNET RTP/RTSP]
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in OIF")
+                if (not self.updatecmd(dev, "ORS=1")):     # ORS  REMOTE IP STREAM   0 = Disable *1 = Enable
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in ORS")
+                # Audio Setting
+                if (not self.updatecmd(dev, "AMO=3")):     # AMO AUDIO MODE *0 = OFF 1 = LEFT 2 = RIGHT 3 = BOTH
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in AMO")
+                if (not self.updatecmd(dev, "AIS=2")):     # AIS INPUT SOURCE *0 = ANALOG INPUT 1 = TEST TONE 2 = SDI INPUT
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in AIS")
+                if (not self.updatecmd(dev, "ACF=1")):     # ACF COMPRESSION FORMAT *0 = MPEG1 LAYER2  1 = ADPCM
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in ACF")
+                if (not self.updatecmd(dev, "ACB=1")):     # ACB MPEG-1 LAYER 2 BIT RATE Total Rate when AMO=3 is: 128 kbps if ACB=0 192 kbps if ACB=1 384 kbps if ACB=2 *0 = 64 kbit/s 1 = 96 kbit/s 2 = 192 kbit/s
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in ACB")
+                # TTY settings
+                if (not self.updatecmd(dev, 'GEC=0')):  # CONTROL ECHO      *0 = Disable (No echo) 1 = Enable (Echo received characters)
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in GEC")
+                if (not self.updatecmd(dev, 'GVB=0')):  # CONTROL VERBOSE   *0 = Disable (Quiet) 1 = Enable (Verbose)
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in GVB")
+                # Encoder settings
+                if (not self.updatecmd(dev, "EPF=1")):     # VIDEO PROFILE (H.264 only) *0 = Baseline Profile 1 = Main Profile 2 = High Profile 
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in EPF")
+                if (not self.updatecmd(dev, "ESM=0")):     # SLICE MODE = 0 (FULL FRAME)
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in ESM")
+                if (not self.updatecmd(dev, "EGL=60")):     # GOP Size to 60
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in EGL")
+                if (not self.updatecmd(dev, "ELI=10")):     # I-Frame Min Quant to 10
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in ELI")
+                if (not self.updatecmd(dev, "EHI=36")):     # I-Frame Max Quant to 36
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in EHI")
+                if (not self.updatecmd(dev, "ELP=10")):     # P-FRAME MIN QUANT to 10
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in ELP")
+                if (not self.updatecmd(dev, "EHP=36")):     # P-FRAME MAX QUANT to 36
+                    dbg.prn(dbg.DLT, "dt.setRecommandedSettings error in EHP")
+                elspsed_time = time.time() - elspsed_time
+                dbg.prn(dbg.DLT, "dt.setRecommandedSettings setting elspsed_time:{} [secs]".format(elspsed_time))
+        except (serial.SerialException, Exception) as e:
+            dbg.prn(dbg.DLT, "[---] dt.setRecommandedSettings dev:{} err:{} at:{}".format(dev, e, sys.exc_info()[-1].tb_lineno))
+    def find_delta(self):
+        """ Find any new Delta devices using serial port check and create the delta_found list. It also set the recommanded encoder settings.
+            Once the dt_params are filled, it must close the serial port.
+            Args:
+                none 
+            Returns:
+                delta_found(dict): all of devices found 
+        """
+        import serial.tools.list_ports
+        c = serial.tools.list_ports.comports()        
+        delta_found = {}
+        for i in xrange(len(c)):
+            try:
+                #usb device detected and check if it is serial device
+                if (c[i].vid>0 and c[i].pid>0):
+                    dbg.prn(dbg.DLT, "dt.find_delta trying...{}".format(c[i].device))
+                    dev = serial.Serial()
+                    dev.port = c[i].device
+                    dev.baudrate = 9600                   # baud rate
+                    dev.bytesize = serial.EIGHTBITS       # bits per bytes
+                    dev.parity = serial.PARITY_NONE       # parity check: no parity
+                    dev.stopbits = serial.STOPBITS_ONE    # stop bits
+                    dev.timeout = 1                       # non-block read
+                    dev.xonxoff = False                   # disable software flow control
+                    dev.rtscts = False                    # disable hardware (RTS/CTS) flow control
+                    dev.dsrdtr = False                    # disable hardware (DSR/DTR) flow control
+                    dev.writeTimeout = 2                  # timeout for write
+                    # make sure serial port is not taken by anyone
+                    # try tty port
+#                     dev_tty = c[i].device.replace("cu.", "tty.") 
+#                     dev.port = dev_tty
+#                     if (not dev.isOpen()):
+#                         dev.open()
+#                     dev.close()
+                    # try cu port...again
+                    dev.port = c[i].device
+                    dev.open()
+                    if dev.isOpen():
+                        dev.flushInput()                 # flush input buffer, discarding all its contents
+                        dev.flushOutput()                # flush output buffer, aborting current output and discard all that is in buffer
+                        # set default settings (GEC,GVB,Encoder setting)
+                            # GVR  VERSION INFO Displays software and PLD versions and build dates / times
+                            # GDN  DEVICE NAME  Up to 64 Characters (*Device Name)
+                            # IDF  SET DEFAULTS  Sets NETWORK parameters to the default settings
+                            # GEC  CONTROL ECHO      *0 = Disable (No echo) 1 = Enable (Echo received characters)
+                            # GVB  CONTROL VERBOSE   *0 = Disable (Quiet) 1 = Enable (Verbose)
+                            # OCR  STREAM BITRATE (KBPS) 64 to 20000 (*6000)
+                            # OIF  INTERFACE     *0 = ETHERNET TS  1 = ETHERNET RTP  2 = ETHERNET RTP/RTSP]
+                            # ORS  REMOTE IP STREAM   0 = Disable *1 = Enable
+                            # IMA  MAC ADDRESS
+                            # IMO  MODE  0=FIXED  1=DHCP
+                            # IAA  ASSIGNED ADDRESS (by DHCP)
+                            # IAM  ASSIGNED SUBNET  X.X.X.X; where X = 0 - 255 (*255.0.0.0)
+                            # IAG  ASSIGNED GATEWAY X.X.X.X; where X = 0 - 255 (*10.10.0.1)
+                        resp = self.sendcmd(dev,'IMA')   # get MAC address
+                        if (resp!=''):
+                            mac=re.compile(r'([A-z0-9: -:\r\n\t>]*)([=][ ]*)(([0-9a-fA-F][0-9a-fA-F]:){5}([0-9a-fA-F][0-9a-fA-F]))', re.I)
+                            g=mac.match(resp)
+                            if ((g!=None) and (not self.mac)):
+                                mac_addr = g.group(3)                            
+                                delta_found[mac_addr] = usbserial(c[i].device, dev) # should be MAC
+                                self.updatecmd(delta_found[mac_addr], "MAC="+mac_addr)
+                                self.setRecommandedSettings(delta_found[mac_addr])
+                                resp = self.sendcmd(delta_found[mac_addr],'IAA')   # get IP address
+                                dbg.prn(dbg.DLT, "dt.find_delta IP:{} MAC:{} SVR_IP:{}".format(resp.split("=")[1], mac_addr, appg.mainip))
+                                self.updatecmd(delta_found[mac_addr], "IP="+resp.split("=")[1]) 
+                                self.check_delta_stat(delta_found[mac_addr])
+                                if (pu.mdbg.checkscf(sockCmd, pu.SCF_SHOWBONJ)):
+                                    dbg.prn(dbg.MN, "-->DELTA:Network settings-->\r\n", self.sendcmd(dev,"IST", True))
+                                dbg.prn(dbg.DLT, "-->DELTA:serial device recs-->", delta_found[mac_addr].dt_params)
+                                self.getParams(ip=delta_found[mac_addr].dt_params['IP'])
+                                if (not self.is_valid_ip(resp.split("=")[1])):
+                                    delta_found = False
+                        else: # IMA not respond
+                            dbg.prn(dbg.DLT, "[-->] dt.find_delta: IMA not respond:", c[i].device)
+                        dev.close()
+                    else:
+                        dbg.prn(dbg.DLT, "[-->] dt.find_delta: cannot open...", c[i].device)
+            except (serial.SerialException, Exception) as e:
+                dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.find_delta error, check next one...:", e, sys.exc_info()[-1].tb_lineno)
+                self.closePort(dev)
+        return delta_found
+    def discover(self, callback):
+        """ Find any new devices using serial port check 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+        """
+        global devaddingnow
+        try:
+            if(enc.code & enc.STAT_SHUTDOWN):
+                return
+            if(enc.code & enc.STAT_LIVE):
+                dbg.prn(dbg.DLT, "encDelta.discovering is disabled due to live mode...")
+                return
+            if (self.findingInProgress):
+                dbg.prn(dbg.DLT, "dt.find_delta: skipped...")
+                return
+            self.findingInProgress = True
+            dbg.prn(dbg.DLT, "encDelta.discovering...")
+            dev_found = self.find_delta()
+            if (len(dev_found)>0):
+                for found in dev_found:
+                    delta = dev_found[found]
+                    try:
+                        if (pu.mdbg.checkscf(sockCmd, pu.SCF_SHOWBONJ)):
+                            dbg.prn(dbg.MN, "-->DELTA:recs-->", delta)
+                        serial_no = "" 
+                        modelname = "delta"       
+                        self.set_dtparams(delta.dt_params)          
+                        devIP = delta.dt_params['IP'] 
+                        devPT = 0
+                        if(not devIP): # did not get ip address of the device
+                            continue
+                        params = self.getParams(devIP) # not used, get all the parameters from the Delta's home page
+                        if(delta.dt_params and delta.dt_params['IP'] and delta.dt_params['MAC']):
+                            output = {}
+                            output['ip'] = devIP
+                            output['type'] = 'dt_enc'
+                            output['url'] = "rtsp://"+devIP+"/stream1"
+                            output['port'] = False
+                            output['devClass'] = encDelta
+                            output['vid-quality'] = 'HQ'
+                            output['username'] = False 
+                            output['password'] = False 
+                            output['realm'] = False
+                            output['mac'] = delta.dt_params['MAC'] 
+                            output['model'] = "delta" + "." + output['vid-quality'] + "." + devIP
+                            output['serialport'] = delta.dt_params
+                            callback(output)
+#                             if (not pu.pxpconfig.virtual_lq_enabled()):
+#                                 output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
+#                                 callback(output)
+#                             else:
+#                                 for i in xrange(2):
+#                                     iter1=5
+#                                     while (devaddingnow and iter1>=0):
+#                                         time.sleep(200)
+#                                         iter1 -= 1                                                                                                                           
+#                                     if (i==0):
+#                                         output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
+#                                         callback(output)
+#                                         # prepare fake LQ cam URL
+#                                         params = self.getParams(devIP, vq='LQ') #get all the parameters from the SONY's page
+#                                         lowq_port = output['port']
+#                                         lowq_url = params['rtsp_url'] #.replace('video1', 'video2')
+#                                         if 'url' in output:
+#                                             del output['url']  
+#                                         if 'port' in output:
+#                                             del output['port']  
+#                                         output['preview']=lowq_url
+#                                         output['preview-port']=lowq_port
+#                                         output['vid-quality'] = 'LQ'
+#                                     else:
+#                                         output['model'] = modelname + "." + output['vid-quality'] + "." + devIP
+#                                         callback(output)
+                                    #end if i
+                                #end for xrange(2)
+                        #end if param                                    
+                    except Exception as e: #may fail if the device is invalid or doesn't have required attributes
+                        dbg.prn(dbg.SNC|dbg.ERR, "[---]encDelta.discover",e, sys.exc_info()[-1].tb_lineno)
+                        self.findingInProgress = False
+            else:
+                dbg.prn(dbg.DLT, "None of Delta device is found.")
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.discover:",e,sys.exc_info()[-1].tb_lineno)
+            self.findingInProgress = False
+        self.findingInProgress = False
+    def getParams(self,ip=False, vq='HQ'):
+        params = {
+            "rtsp_url"          : False,
+            "rtsp_port"         : False,
+            "inputResolution"   : False,
+            "streamResolution"  : False,
+            "streamFramerate"   : False,
+            "streamBitrate"     : False,
+            "connection"        : False #whether there is connection with this device at all
+        }
+        try:
+            if (not ip):
+                ip = self.ip
+            if (ip):
+                tn = telnetlib.Telnet(ip) # use telnet interface to retrieve the params
+                time.sleep(0.3)
+                ans = tn.read_until("OK>")
+                tn.write("GST\r\n")
+                time.sleep(0.3)
+                ans = tn.read_until("OK>")
+                tmp_params = ans.strip().split("\r\n")
+                for param in tmp_params:
+                    if (param.find("=")>=0):
+                        k = param.strip().split("=")[0]
+                        if (k in self.dt_params):
+                            self.dt_params[k] = param # update self.dt_params
+                tn.close()
+                dbg.prn(dbg.DLT, "dt.getParams ip:{} dt_params-->{}".format(ip,self.dt_params))
+            
+            params['rtsp_url']='rtsp://'+ip+'/stream1'
+            params['mac'] = False
+            params['username'] = False
+            params['password'] = False
+            params['streamBitrate'] = "6000"
+            if ('OCR' in self.dt_params and self.dt_params['OCR']!=False):
+                params['streamBitrate']=str(self.dt_params['OCR'].strip().split("=")[1])
+            params['inputResolution']="721p31"
+            params['streamResolution']="777"+'p'
+            params['streamFramerate']="31"
+            if ('FMT' in self.dt_params and self.dt_params['FMT']!=False):
+                params['inputResolution'] = self.dt_params['FMT'].split("x")[1] # "1920x720p30" --> "720p30"
+                if (self.dt_params['FMT'].find("p")>=0):
+                    z = self.dt_params['FMT'].split("p")
+                if (self.dt_params['FMT'].find("i")>=0):
+                    z = self.dt_params['FMT'].split("i")
+                params['streamResolution'] = z[0] # "720"+'p'
+                params['streamFramerate'] = z[1]  # "30"
+            params['rtsp_port']=False
+            params['connection']=True
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.getParams:",e,sys.exc_info()[-1].tb_lineno)
+        return params
+    def getmac(self):
+        try:
+            if ('MAC' in self.dt_params):
+                return self.dt_params['MAC']
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.getmac:",e,sys.exc_info()[-1].tb_lineno)
+    def setBitrate(self, bitrate):
+        try:
+            tn = telnetlib.Telnet(self.ip)
+            time.sleep(0.3)
+            ans = tn.read_until("OK>")
+            tn.write("GST\r\n")
+            time.sleep(0.3)
+            ans = tn.read_until("OK>")
+            params = ans.strip().split("\r\n")
+            bitrate_set = False
+            for param in params:
+                if (param.find("OCR")>=0):
+                    OCR = self.parse_resp(param)
+                    if (OCR != bitrate):
+                        tn.write("OCR="+str(bitrate).strip()+"\r\n") # update bitrate...
+                        time.sleep(0.3)
+                        ans = tn.read_until("OK>")
+                        dbg.prn(dbg.DLT, "dt.setBitrate:set to ",bitrate)
+                        bitrate_set = True
+                        break
+            tn.close()
+            if (not bitrate_set):
+                dbg.prn(dbg.DLT, "Cannot set dt.bitrate to {}  params:{}".format(bitrate, params))
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.setBitrate:",e,sys.exc_info()[-1].tb_lineno)
+    def setFramerate(self, framerate):
+        try:
+            pass
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.setFramerate:",e,sys.exc_info()[-1].tb_lineno)
+    def update(self):
+        try:
+            if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
+                return
+            params = self.getParams(vq=self.vidquality)
+            if(params and params['connection']):
+                self.resolution = params['inputResolution']
+                self.isCamera = self.resolution!=False
+                self.bitrate = params['streamBitrate']
+                self.framerate = params['streamFramerate']
+                self.rtspURL = params['rtsp_url']
+            else:
+                dbg.prn(dbg.DLT,"update FAIL!")
+                self.isOn = False
+                self.isCamera = False
+                self.resolution = False
+                self.bitrate = False
+                self.framerate = False
+                self.rtspURL = False
+                self.initialized = False
+        except Exception as e:
+            dbg.prn(dbg.DLT|dbg.ERR, "[---]dt.update:",e,sys.exc_info()[-1].tb_lineno)
+    
 class encMatrox(encDevice):
     """ Matrox device management class """
     def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False, isHDX=False):
@@ -3651,6 +4249,7 @@ class source:
             self.disconn = []
             if (idx>=0):
                 self.idx = idx
+            self.sIN = False
 
             #if (pu.mdbg.checkscf(sockCmd, pu.SCF_SHOWBONJ)):
             dbg.prn(dbg.SRC, "[###]{0}[{1}] IP:{2}.{3} FILE:[{4}] SOURCE_PORTS-->{5}".format(modelname, idx, ip, vq, self.urlFilePath, ports))
@@ -3696,6 +4295,75 @@ class source:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]src.buildcapcmd err:".format(e))
             cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
         return cmd
+    def clearport(self):
+        self.sIN.close()
+        self.sIN = False
+    def camPortMon_resusable(self):
+        """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
+        try:
+            dbg.prn(dbg.SRC,"starting camportmon_reusable for {} {}".format(self.idx, self.ports['chk']))
+            host = '127.0.0.1'          #local ip address
+            self.sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #Create a socket object
+            self.sIN.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            portIn = self.ports['chk']
+            err = True
+            while (err and not (enc.code & enc.STAT_SHUTDOWN)):
+                try:
+                    self.sIN.bind((host, portIn)) #Bind to the port
+                    err = False
+                except (socket.error, KeyboardInterrupt), msg:
+                    self.sIN.close()
+                    self.sIN = False
+                    time.sleep(1)
+                    err = True
+                    dbg.prn(dbg.ERR|dbg.SRC,"portmon cannot start {} {} {}".format(portIn, socket.error, msg))
+                    pass
+            #end while err
+            dbg.prn(dbg.SRC,".............bound.................{} {} {}".format(self.idx, self.ports['chk'], self.isEncoding), )
+            self.sIN.setblocking(0)
+            self.sIN.settimeout(0.5)
+            timeStart = time.time()
+            while ((enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED)) and self.isEncoding):
+                try:
+                    if((enc.code & enc.STAT_PAUSED)): #the encoder is paused - do not check anything
+                        time.sleep(0.2) #reduce the cpu load
+                        continue
+                    data, addr = self.sIN.recvfrom(65535)
+                    if(len(data)<=0):
+                        continue
+                    #pxp status should be 'live' at this point
+                    if((enc.code & enc.STAT_START) and (time.time()-timeStart)>2):
+                        enc.statusSet(enc.STAT_LIVE,autoWrite=False)
+                except (socket.error, KeyboardInterrupt), msg:
+                    # only gets here if the connection is refused or interrupted
+                    # sys.stdout.write('.')
+                    dbg.prn(dbg.ERR|dbg.SRC,"^.^  port:{}  sock:{}  msg:{}".format(portIn, socket.error, msg))
+                    #print '^.^   port:{0}'.format(portIn)
+                    try:
+                        timeStart = time.time()                            
+                        if(enc.code & enc.STAT_LIVE):
+                            # only set encoder status if there is a live event 
+                            # to make sure the monitor runs an RTSP check on the stream
+                            self.device.isOn=False
+                            # start file monitor to add EXT-X-DISCONTINUITY
+                            if(not(str(self.id)+'_filemon' in tmr['src'])):
+                                tmr['src'][str(self.id)+'_filemon'] = TimedThread(self.fileSegMon)
+                        time.sleep(1) #wait for a second before trying to receive data again
+                    except (Exception,KeyboardInterrupt) as e:
+                        self.sIN.close()
+                        self.sIN = False
+                        dbg.prn(dbg.ERR|dbg.SRC,"TT.TT  err:{}".format(e))
+                        pass
+                except (Exception,KeyboardInterrupt) as e:
+                    dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon_reusable err: ",e,sys.exc_info()[-1].tb_lineno)
+            #end while
+        except (Exception, KeyboardInterrupt) as e:
+            self.sIN.close()
+            self.sIN = False
+            dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon_reusable err: ", e, sys.exc_info()[-1].tb_lineno)
+        self.sIN.close()
+        self.sIN = False
+        dbg.prn(dbg.SRC,"camportmon_reusable exited normally")
     def camPortMon(self):
         """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
         try:
@@ -3752,6 +4420,8 @@ class source:
             #end while
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon err: ", e, sys.exc_info()[-1].tb_lineno)
+        sIN.close()
+        sIN = False
         dbg.prn(dbg.SRC,"camportmon exited normally")
     def fileSegMon(self):
         """ monitors m3u8 file when video stopped unexpectedly. once the video resumes, it'll add the EXT-X-DISCONTINUITY flag """
@@ -3815,7 +4485,7 @@ class source:
                 # timeout reached - there was no stream - restart live555
                 # usually this will happen if the ip address or port on the device changed, 
                 # restarting live555 will set it up with those new parameters and get the stream going
-                dbg.prn(dbg.SRC,"stopping_1 livefeed_" + self.device.vidquality + "  IP:" + self.device.ip)
+                dbg.prn(dbg.SRC,"stopping_1 livefeed_{} IP:{}  status:{}".format(self.device.vidquality,self.device.ip, self.device.isOn))
                 procMan.pstop(name="livefeed_"+self.device.vidquality, devID=self.device.ip+"."+self.device.vidquality)
                 
             # if live555 proxy is running, it'll have an rtsp url - this block will get that url
@@ -3900,7 +4570,7 @@ class source:
                             if (show_message):
                                 dbg.prn(dbg.SRC,"-->check cam with ping now...ip:{}  status:{}  url:{}  model:{}".format(self.device.ip, self.device.isOn, self.rtspURL, self.device.model))
                         if (show_message):
-                            dbg.prn(dbg.SRC,"-->check cam DEV:{}  status:{}  {}  {}  data:{}".format(self.rtspURL, self.device.isOn, self.device.model, self.device.rtspURL, strdata))
+                            dbg.prn(dbg.SRC,"-->check cam DEV:{}  status:{}  model:{}  rtsp:{}  data:{}".format(self.rtspURL, self.device.isOn, self.device.model, self.device.rtspURL, strdata))
                 except Exception as e:
                     dbg.prn(dbg.SRC|dbg.ERR,"[---]source.monitor ping err:{} ipcheck:{} ports:{} on:{}".format(e, self.ipcheck, self.ports["rts"], self.device.isOn))
 
@@ -4014,10 +4684,10 @@ class sourceManager:
         self.hlsBase = 22600 #ffmpeg captures rtsp stream and outputs MPEG-TS here
         self.chkBase = 22700 #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
         self.rtpBase = 8500  #rtsp proxy port - when live555 starts, it will try to run on this port, if that doesn't work, i'll try +1 port and so on
-        self.mp4BaseByType = {'sn_snc':22100, 'td_cube':22400, 'sn_axis':22700, 'mt_monarch':23100, 'ph_glass':23400} 
-        self.hlsBaseByType = {'sn_snc':22200, 'td_cube':22500, 'sn_axis':22800, 'mt_monarch':23200, 'ph_glass':23500} 
-        self.chkBaseByType = {'sn_snc':22300, 'td_cube':22600, 'sn_axis':22900, 'mt_monarch':23300, 'ph_glass':23600} 
-        self.rtpBaseByType = {'sn_snc':10100, 'td_cube':8500, 'sn_axis':14100, 'mt_monarch':15100, 'ph_glass':16100} 
+        self.mp4BaseByType = {'sn_snc':22100, 'td_cube':22400, 'sn_axis':22700, 'mt_monarch':23100, 'ph_glass':23400, 'dt_enc':23700} 
+        self.hlsBaseByType = {'sn_snc':22200, 'td_cube':22500, 'sn_axis':22800, 'mt_monarch':23200, 'ph_glass':23500, 'dt_enc':23800} 
+        self.chkBaseByType = {'sn_snc':22300, 'td_cube':22600, 'sn_axis':22900, 'mt_monarch':23300, 'ph_glass':23600, 'dt_enc':23900} 
+        self.rtpBaseByType = {'sn_snc':10100, 'td_cube': 8500, 'sn_axis':14100, 'mt_monarch':15100, 'ph_glass':16100, 'dt_enc':17100} 
         #self.rtpBaseByType = {'sn_snc':8500, 'td_cube':8500, 'sn_axis':8500, 'mt_monarch':8500, 'ph_glass':8500} 
         #self.mp4BaseByType = {'sn_snc':22500, 'td_cube':22500, 'sn_axis':22500, 'mt_monarch':22500, 'ph_glass':22500} 
         #self.hlsBaseByType = {'sn_snc':22600, 'td_cube':22600, 'sn_axis':22600, 'mt_monarch':22600, 'ph_glass':22600} 
@@ -4102,7 +4772,9 @@ class sourceManager:
                 if('port' in inputs): #update the ports as well (may have changed)
                     self.sources[idx].ports['rtp'] = inputs['port']
                 if('preview-port' in inputs):
-                    self.sources[idx].ports['rtp'] = inputs['preview-port']                    
+                    self.sources[idx].ports['rtp'] = inputs['preview-port']
+                if ('serialport' in inputs):
+                    self.sources[idx].device.set_dtparams(inputs['serialport'])
                 if ('td_cube'==inputs['type'] and not self.sources[idx].device.mac):
                     ans = self.sources[idx].device.getmac()
                     if (ans):
@@ -4148,6 +4820,8 @@ class sourceManager:
                 #dbg.log(dbg.SRC, "-->adddev: LQ found IP:{0} VQ:{1} idx:{2} ports:{3}".format(ip, vq, idx, ports))
             if(newsrc):
                 newsrc.idx = idx
+                if ('serialport' in inputs):
+                    newsrc.device.set_dtparams(inputs['serialport']) # yes, it needs to be copied...
                 if ('td_cube'==inputs['type'] and not newsrc.device.mac):
                     ans = newsrc.device.getmac()
                     if (ans):
@@ -4260,6 +4934,7 @@ class sourceManager:
             m3u8_str = f.read()
         f.close()
         m3u8_str = m3u8_str.replace("{{{folder}}}", cvq + "_" + cidx)
+        #m3u8_str = m3u8_str.replace("{{{folder}}}", "http://127.0.0.1/min/events/live/video/"+cvq + "_" + cidx)        
         m3u8_str = m3u8_str.replace("{{{m3u8}}}", "list_" + cidx + cvq + ".m3u8")
         with open(m3u8_file, "w") as f:
             f.write(m3u8_str)
@@ -4277,6 +4952,7 @@ class sourceManager:
                 return False
                 
             self.checkStatDone == False
+            self.evt_path = evt_hid
             
             dbg.log(dbg.SRM, "EVENT_STARTS =========================================> SRC_LEN:{0} EVT_HID:{1}".format(len(self.sources), evt_hid))                    
             enc.statusSet(enc.STAT_START)            
@@ -4632,6 +5308,11 @@ class sourceManager:
             dbg.log(dbg.SRM, "")
             dbg.log(dbg.SRM, "EVENT_STOPS =========================================> SRC_LEN:{0}".format(len(self.sources)))
 
+            content = pu.disk.file_get_contents(c.wwwroot+"live/evt.txt")
+            if (content):
+                self.evt_path = content.strip()
+
+
             USE_BLUE = pu.pxpconfig.use_blue_cmd()       # use blue or SIGINT??
             EVERY_BLUE = 1
             
@@ -4782,7 +5463,6 @@ class sourceManager:
 
             # STOP ALL of LIVE555 (for good measure)
             os.system("killall -9 live555 >/dev/null 2>/dev/null")
-            
             
             dbg.log(dbg.SRM, "EVENT_STOPS ENDS =========================================>")                    
         except Exception as e:
@@ -5008,6 +5688,10 @@ class sourceManager:
     def getFeedCount(self, evt='live'):
         if (evt=='live' and (enc.code & enc.STAT_LIVE) or (enc.code & enc.STAT_START) or (enc.code & enc.STAT_PAUSED)):
             return len(self.sources)
+        else:
+            fc = glob.glob(c.wwwroot+evt+"/video/list_*.m3u8")
+            if (fc):
+                return len(fc)
         return 0
     
     def IsPostProcDone(self):
@@ -5831,6 +6515,7 @@ class proc:
 #                 dbg.prn(dbg.PPC,"KILL CAPTURE =======================> proc._monitor:name:{} dev:{} alive:{} pid:{}".format(self.name, self.dev, self.alive, self.pid))
             return True
         except Exception as e:
+            import sys
             if(sys and sys.exc_traceback and sys.exc_info()[-1].tb_lineno):
                 errline = sys.exc_info()[-1].tb_lineno
             else:
@@ -6333,8 +7018,8 @@ def DataHandler(data,addr):
                                 if (xpt_status):
                                     x = 1    
                                 res = {'results': {'status':True, 'live':(enc.code&enc.STAT_LIVE), 'usb':usb_status, 'bkp':bkp_status, 'fix':fix_status, 'xpt':xpt_status}} 
-                                pu.mdbg.log("PCS: ---> data1:{}".format(dataParts))
-                                pu.mdbg.log("PCS: ---> data2:{}".format(res))
+                                #pu.mdbg.log("PCS: ---> data1:{}".format(dataParts))
+                                #pu.mdbg.log("PCS: ---> data2:{}".format(res))
                         except Exception as e:
                             pu.mdbg.log("[---] PCS: {}  data:{}".format(e, dataParts))
                             return {'results': {'status': False}}
@@ -6399,7 +7084,7 @@ def SockHandler(sock,addr):
                 try:
                     rspString = json.dumps(result)
                 except Exception as e:
-                    dbg.prn(dbg.SHL|dbg.ERR, "[---]sockhandler: data:{} result:{}  err:{}".format(data, result,e))
+                    dbg.prn(dbg.SHL, "[---]sockhandler: data:{} result:{}  err:{}".format(data, result,e))
                     rspString = result
                 sock.send(rspString)
             # clientsock.send(msg)
@@ -6620,6 +7305,9 @@ devEnabled = {
     ,"sn":{ #sony SNC
         "class":encSonySNC
     }
+    ,"dt":{ #delta
+        "class":encDelta
+    }
     , "ax":{ #axis
           "class":encAxis
     }
@@ -6751,3 +7439,8 @@ if __name__=='__main__': # will enter here only when executing this file (if it 
         dbg.prn(dbg.ERR|dbg.MN, "MAIN ERRRRR????????? {0} {1}".format(e, sys.exc_info()[-1].tb_lineno))
     dbg.prn(dbg.MN,'---APP STOP---')
 #emd if main
+
+
+
+
+

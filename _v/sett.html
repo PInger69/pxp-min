@@ -3,8 +3,11 @@
 @(
 #inline if statement for wheezy template
 def iff(cond,if_true,if_false=""):
-	if cond:
-		return if_true
+    try:
+    	if cond:
+    		return if_true
+	except:
+	   pass
 	return if_false
 looplist = ['s_00']
 tabname = ""
@@ -13,9 +16,11 @@ idx=0
 vidurl = ""
 show_player = iff(int(settings['misc']['show_webplayer']), True, False)
 show_tcpopt = iff(int(settings['misc']['show_tcpopt']), True, False)
+show_option = iff(int(settings['misc']['show_option']), True, False)
 )
 <div id="show_player" flag="@str(show_player)"></div>
 <div id="show_tcpopt" flag="@str(show_tcpopt)"></div>
+<div id="show_option" flag="@str(show_option)"></div>
 <div class="col_12">
 @if 'bitrate' in settings['video'] and settings['video']['bitrate']:
 	<div class="row">
@@ -175,7 +180,7 @@ show_tcpopt = iff(int(settings['misc']['show_tcpopt']), True, False)
         </div>
         </td>
     </tr>
-    <!-- ################### -->
+    <!-- ################### TCP -->
     <tr id="tcprow">
         <td width="50%">
         <div  class="col_5">
@@ -257,6 +262,7 @@ show_tcpopt = iff(int(settings['misc']['show_tcpopt']), True, False)
              <!--          
              <td style="width=320 height:180"> 
                   <embed autoplay="true" type="application/x-quicktime-media-link" pluginspage=@proxy_url version="qt.7"  width="240" height="120" id="vlc1" loop="yes" />
+                  <a href="http://127.0.0.1/preview.mov">
              </td>
              -->          
          </tr>
@@ -394,6 +400,11 @@ function myvid(vq) {
     </table>
 </div>
 
+<!--
+<video width="320" height="240">
+<source src="http://127.0.0.1/events/2016-06-29_09-05-06_a6531edeccccbed470f78b3945a7352ca7483075_local/video/hq_00/list_00hq.m3u8" />
+</video>
+-->
 
 <script type="text/javascript">
 function getms() {
@@ -452,6 +463,12 @@ function fOnLoad(){
     else {
        $("#tcprow").show();
     }
+    if ($("#show_option").attr("flag")=='False') {
+       $("#misc_options").hide();
+    }
+    else {
+       $("#misc_options").show();
+    }
 }
 function reload() {
     window.location.reload();
@@ -469,9 +486,9 @@ function restart_sys() {
         setTimeout(
             function() 
             {
-                window.location.href = "http://127.0.0.1";
-                //$(location).attr('href', 'http://127.0.0.1')
-            }, 30000);
+                window.location.href = "http://127.0.0.1/min";
+                //$(location).attr('href', 'http://127.0.0.1/min')
+            }, 15000);
     }
 }
 
