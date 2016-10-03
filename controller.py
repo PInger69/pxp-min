@@ -84,10 +84,10 @@ class Controller:
 			elif (functionName=="ajax"): #call method from the pxp model (ajax mode)
 				# function itself will be in the next parameter: e.g. min/ajax/tagset
 				functionName = pu.uri.segment(2,"")
-				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):	
-					pu.mdbg.log("-->controller.run1-->", functionName)								
-#  				if (self.dbg_func(functionName)):				
-#   					pydevd.settrace()								
+				#if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):	
+				pu.mdbg.log("-->controller.run1-->", functionName)								
+  				#if (self.dbg_func(functionName)):				
+   				#	pydevd.settrace()								
 								
 				# check if user is running it from command line 
 				if len(sys.argv)>1:
@@ -99,10 +99,10 @@ class Controller:
 				# get address of the function that user is requesting 
 				# the function is either in this class (controller) 
 				# or it's an html page, in which case fn will be false
-				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
-					pu.mdbg.log("-->controller.run2-->", functionName)
-# 				if (self.dbg_func(functionName)):				
-#  					pydevd.settrace()								
+				#if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
+				pu.mdbg.log("-->controller.run2-->", functionName)
+ 				#if (self.dbg_func(functionName)):				
+  				#pydevd.settrace()								
 				fn = getattr(self, functionName, None)
 				# check if user is logged in or not
 				if (not ((sess and 'user' in sess.data and sess.data['user']) or functionName=='login')):
@@ -129,8 +129,8 @@ class Controller:
 					result = fn(sess)
 				else:
 					# all the other functions can be called without parameters
-# 					if (self.dbg_func(functionName)):				
-# 						pydevd.settrace()													
+ 					#if (self.dbg_func(functionName)):				
+ 					# 	pydevd.settrace()													
 					result = fn()
 					#pu.mdbg.log("-->controller.result-->{}".format(pp.pformat(result)))
 				# check if the result of the function is a dictionary and output it
@@ -144,6 +144,8 @@ class Controller:
 				  # try to find an html page with this name
 				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
 					pu.mdbg.log("-->controller.run3-->", functionName)
+ 				#if (functionName=='sett'):				
+  				#	pydevd.settrace()								
 				self.page(functionName)
 		except Exception as e:
 			# in an event of unhandled error, output the result

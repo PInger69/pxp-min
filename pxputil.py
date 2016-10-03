@@ -274,7 +274,6 @@ class c_disk:
             Returns:
                 (mixed): returns a string if it's only a specific parameter, a dictionary of the section or entire file otherwise
         """
-
         import json
         try:#load all the settings
             settings = json.loads(self.file_get_contents(cfgfile))
@@ -415,7 +414,7 @@ class c_disk:
         return totalcpu
     #end getCPU
 
-    def list(self):
+    def list(self, dbg_print=False):
         """ Lists all attached strage devices
             Args:
                 none
@@ -439,6 +438,8 @@ class c_disk:
                 # /dev/disk3s1 on /Volumes/32gb (exfat, local, nodev, nosuid, noowners)
                 # /dev/disk1s1 on /Volumes/32gb 1 (exfat, local, nodev, nosuid, noowners)
                 listdrivesout, err=listdrives.communicate()
+                if (dbg_print):
+                    mdbg.log("mount: listdrivesout:{}  err:{}".format(listdrivesout, err))
                 for drive in listdrivesout.split('\n'):
                     if(drive.startswith("/dev")): #this is a mounted drive. gets its mount point
                         try:
@@ -2033,6 +2034,21 @@ class c_pxpconfig:
             return ""
         except:
             return "" 
+    def delta_conf(self, delta_idx=1, cmd='ILA'): # delat encoder manual setup
+        self.reload()
+        try:
+            if (cmd=="count"):
+                if ("delta_count" in self.config):
+                    return 0 if self.config["delta_count"]=='0' else int(self.config["delta_count"])
+        except:
+            return 0
+        delta_cmd = 'dlt_'+ cmd
+        if (delta_idx>0):
+            delta_cmd += "_" + str(delta_idx)
+        if (delta_cmd in self.config):
+            return "0" if self.config[delta_cmd]=='0' else self.config[delta_cmd].strip()
+        
+        return c.hbrake_conf 
 
 class c_ffmpeg(object):
     def __init__(self, cmd):

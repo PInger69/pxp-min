@@ -37,7 +37,11 @@ def camParam(param,camID=False,getAll=False):
 		Returns:
 			(str)
 	"""
+	# ex) CML-JSON-->{'192.168.5.126-HQ': {'sidx': '01', 'ip': '192.168.5.126', 'mac': '00:0f:5b:04:60:6e', 'bitrate': '2000', 'ccBitrate': True, 'on': True, 'url': 'rtsp://192.168.5.115:17200/pxpstr', 'resolution': '721p31', 'vid-quality': 'HQ', 'framerate': '31', 'cameraPresent': True, 'deviceURL': 'rtsp://192.168.5.126/stream1', 'type': 'dt_enc'}, 
+	#                 '192.168.5.123-HQ': {'sidx': '00', 'ip': '192.168.5.123', 'mac': '00:0f:5b:04:60:6b', 'bitrate': '2000', 'ccBitrate': True, 'on': True, 'url': 'rtsp://192.168.5.115:17100/pxpstr', 'resolution': '720p59', 'vid-quality': 'HQ', 'framerate': '59', 'cameraPresent': True, 'deviceURL': 'rtsp://192.168.5.123/stream1', 'type': 'dt_enc'}
+	#                }
 	cams = getOnCams()
+	
 	# check if the specified camera exists in the list
 	if(camID and not (camID in cams)):
 		return False #specified camera doesn't exist

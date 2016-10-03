@@ -971,6 +971,7 @@ def evtbackup():
 		pu.mdbg.log("-->evtbackup")
 		# get id of the event to back up
 		evtHID = pu.io.get('event')
+		pu.mdbg.log("-->evtbackup:"+str(evtHID))
 		_dbgLog("backup event:"+str(evtHID))
 		if(re.search("[^A-z0-9]",str(evtHID))): #found non-alphanumeric characters
 			_dbgLog("invalid characters in event HID")
@@ -1838,11 +1839,14 @@ def settingsGet():
 		bitrate = camera.camParam('bitrate')
 		ccBitrate = camera.camParam('ccBitrate') #can change bitrate
 		allparams = camera.camParam('url', getAll=True)
-		pu.mdbg.log("settingsGet urls---->{}".format(allparams))
+		pu.mdbg.log("settingsGet urls---->{}".format(allparams)) # i.e [u'rtsp://192.168.5.115:17200/pxpstr', u'rtsp://192.168.5.115:17100/pxpstr']
 		settings['urls'] = allparams
 
 		#default bitrate
 		settings['video']={'bitrate':5000}
+		#default video input type (Delta Encoder Only)
+		if (pu.pxpconfig.support_cam('dt')):
+			settings['video']={'vit':3}
 		try:
 			if(ccBitrate): #this camera allows changing the bitrate
 				# verify bitrate is a valid number
@@ -1862,6 +1866,23 @@ def settingsGet():
 			(1500,"Very low (1.5Mbps)"),
 			(1000,"Poor (1Mbps)")
 		])
+		if (pu.pxpconfig.support_cam('dt')):
+			settings['video']['bitrate_options']=OrderedDict([
+				(5000,"Very high (5Mbps)"),
+				(3000,"High (3Mbps)"),
+				(2000,"Medium (2.0Mbps)"),
+				(1000,"Low (1Mbps)"),
+			])
+			settings['video']['vit_options']=OrderedDict([
+				(0,"CVBS/SDI Auto Detect"),
+				(1,"CVBS"),
+				(2,"SDI"),
+				(3,"DVI"),
+				(4,"Test Pattern"),
+			])
+			vit = camera.camParam('vit')
+			settings['video']['vit'] = vit
+			
 		# MyClip settings
 		if(not 'clips' in settings):
 			settings['clips']={'quality':1}
@@ -1960,6 +1981,16 @@ def settingsSet():
 		sett = io.get("setting")
 		vals = io.get("value")
 		pu.mdbg.log("============= settingsSet---------------------->begins.sect:{}  sett:{}  value:{}".format(secc, sett, vals))
+		if(secc=='video' and sett=='vit'):
+			#the following 2 commands are for blackmagic only
+			# changing video stream quality
+			pu.disk.file_set_contents(c.wwwroot+"_db/.cfgenc",vals)
+			# reset the streaming app
+			pu.disk.file_set_contents("/tmp/pxpcmd","2")
+			# this is for teradek/matrox - set bitrate for camera index -1: meaning all cameras
+			pu.disk.sockSend("VIT|"+str(vals)+"|-1",addnewline=False)
+			# add an event to live stream to indicate that the bitrate was changed
+			_logSql(ltype="changed_bitrate",lid=str(vals),dbfile=c.wwwroot+"live/pxp.db")
 		if(secc=='video' and sett=='bitrate'):
 			#the following 2 commands are for blackmagic only
 			# changing video stream quality
@@ -1998,6 +2029,8 @@ def settingsSet():
 			cmd = "killall -9 python"
 			os.system(cmd)
 				
+		if(secc=='misc' and sett=='find_delta'):
+			pu.mdbg.log("============= settingsSet----> find_delta")
 		
 		
 		# will be true or false depending on success/failure
@@ -3745,7 +3778,7 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 			else:
 				result[i]['md5'] = ''
 			#if (pu.mdbg.checkscf2(pu.SCF_SHOWEVENT)):
-			pu.mdbg.log("-->index:{0} {1}".format(i, pp.pformat(result[i])))
+			#pu.mdbg.log("-->index:{0} {1}".format(i, pp.pformat(result[i])))
 			i+=1
 		#end for row in result
 		db.close()
@@ -3868,7 +3901,8 @@ def _listEvtSources(evtName, srcType='list'):
 						sources['s_'+n][q] = sources['s_'+n][q].replace(sources['s_'+n][q][hq_start_idx:hq_start_idx+6],"") # remove /hq_xx
 					else:
 						sources['s_'+n][q] = sources['s_'+n][q].replace(sources['s_'+n][q][lq_start_idx:lq_start_idx+6],"") # remove /lq_xx
-			pu.mdbg.log("_listEvtSources--->SRC:{}".format(sources['s_'+n][q]))
+			if (pu.pxpconfig.check_webdbg('param')):
+				pu.mdbg.log("_listEvtSources--->SRC:{}".format(sources['s_'+n][q]))
 			
 			#sources['s_'+n]['vq'] = q
 			sources['s_'+n]['vidsize_'+q] = vidsize[vname]			
@@ -3882,7 +3916,6 @@ def _listEvtSources(evtName, srcType='list'):
 		# end for vid
 		# set url (for web-based viewer) as the first source in the list
 		# srcKeys = sources.keys() # list of sources
-		
 		#ORGINAL---------
 		#qs = sources[firstSource].keys() # list of qualities in the 1st source
 		#return (sources,sources[firstSource][qs[0]]) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
@@ -3890,13 +3923,15 @@ def _listEvtSources(evtName, srcType='list'):
 		qs = sources[firstSource].keys() # list of qualities in the 1st source
 		# output[key] = sources[srcKeys[0]][qs[0]] #get the first quality in the first source (usually it'll be hq)
 		# output[key+'_2'] = sources.copy()
-		#pu.mdbg.log("-->listEvtSources-->", pp.pformat(sources))
+		if (pu.pxpconfig.check_webdbg('param')):
+			pu.mdbg.log("-->listEvtSources-->", pp.pformat(sources))
 		#xq = sources['s_00']['vq']
 		return (sources,sources[firstSource]['hq']) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
 	except Exception as e:
 		em = str(e) + ' ' + str(sys.exc_info()[-1].tb_lineno)
-		pu.mdbg.log("[---] _listEvtSources:", em)
-		pu.mdbg.log("[---] _listEvtSources: evtName:{}  firstSource:{}  sources:{}".format(evtName, firstSource, sources))
+		pu.mdbg.log("[---] _listEvtSources:done (reason:{})".format(em))
+		#pu.mdbg.log("[---] _listEvtSources:", em)
+		#pu.mdbg.log("[---] _listEvtSources: evtName:{}  firstSource:{}  sources:{}".format(evtName, firstSource, sources))
 		return (False, _err(em + " -- listEvtSources"))
 
 #######################################################

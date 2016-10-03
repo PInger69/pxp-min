@@ -36,6 +36,22 @@ show_option = iff(int(settings['misc']['show_option']), True, False)
 				</select>
 				<ajaxSpin></ajaxSpin>
 			</div>
+<!--
+@if 'vit' in settings['video']:
+            <div class="col_2">
+                Video Input (Delta Encoder)
+            </div> 
+            <div class="col_10">
+                <select name="vit">
+@for q in settings['video']['vit_options']:
+                    <option value="@str(q)" @iff(str(q)==str(settings['video']['vit']),'selected','')>@str(settings['video']['vit_options'][q])</option>
+@end
+                </select>
+                <ajaxSpin></ajaxSpin>
+            </div>
+@end #if settings['video']['vit']
+-->
+
 		</section>
 	</div>
 @end #if settings['video']
@@ -492,7 +508,20 @@ function restart_sys() {
     }
 }
 
+function find_DELTA_IP() {
+    params = {
+        section:"misc",
+        setting:"find_delta",
+        value:"1"
+    };
+    if(confirm('This may destroy current running event. Are you really sure ?')) {
+        setParam(params,this);
+    }
+}
+
+
 </script>
 
 <button id="restart" onclick="restart_sys()">RESTART Server</button>
+<!--button id="Find_DeltaIP" onclick="find_DELTA_IP()" title="STEP 1. Connect USB serial cable to J5 port in Delta encoder.&#013;STEP 2. Connect ethernet cable to Delta encoder.&#013;STEP 3. Power ON the Delta encoder and press this button to get IP when Delta encoder is ready (ACT green light is blinking).">Find Delta Encoder (4480E) IP address</button-->
 
