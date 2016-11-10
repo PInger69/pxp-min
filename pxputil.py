@@ -23,6 +23,9 @@ from struct import unpack
 from Tkconstants import LAST
 import re
 from __builtin__ import False
+from BmpImagePlugin import SAVE
+#import pxplog
+#dbg = pxplog.appLogger()
 
 SCF_HIDEMASTER      = 1 << 0 # hide master status in the debug
 SCF_HIDECMD         = 1 << 1 # prohibit command line status in the debug
@@ -338,7 +341,7 @@ class c_disk:
         """
         import shutil
         shutil.copy(src,dst)
-    def dirSize(self,path):
+    def dirSize(self,path, dbg_print=False):
         """ Recursively calculates size of a directory in bytes
             Args:
                 path(str): full path to the directory
@@ -347,13 +350,74 @@ class c_disk:
         """
         if((path.lower().find('.ds_store')>=0) or (not os.path.exists(path))):
             return 0
+        if (os.path.islink(path)):
+            return 0
         if(os.path.isfile(path)):
             return os.path.getsize(path)
-        # print path
+        #print path
         total_size = 0
         for dirname in os.listdir(path):
-            total_size += self.dirSize(path+'/'+dirname)
+            start_time = time.time()
+            csize = self.dirSize(path+'/'+dirname)
+            total_size += csize
+            if (dbg_print):
+                mdbg.log("===> dir:{} dirSize:{} elapsed time:{}".format(dirname, csize, time.time()-start_time))
         return total_size
+    def fix_old_mp4_filename(self, base_path='/var/www/html/events'): 
+        """
+        This adds main_00hq.mp4 link in case old mp4 file is present
+        """
+        try:
+            mdbg.log("************************************************************")
+            for dirname in os.listdir(base_path):
+                fix_path = base_path + "/" + dirname
+                fix_path = fix_path.encode('UTF-8')
+                if (os.path.isfile(fix_path +'/video/list.m3u8') and not os.path.isfile(fix_path +'/video/list00hq_m3u8')):
+                    cmd = "ln -s " + fix_path +'/video/list.m3u8 ' + fix_path +'/video/list00hq_m3u8'
+                    os.system(cmd)
+                    mdbg.log("fix_mp4_filename:{}".format(cmd))
+                if (os.path.isfile(fix_path +'/video/main.mp4') and not os.path.isfile(fix_path +'/video/main_00hq.mp4')):
+                    cmd = "ln -s " + fix_path +'/video/main.mp4 ' + fix_path +'/video/main_00hq.mp4'
+                    os.system(cmd)
+                    mdbg.log("fix_mp4_filename:{}".format(cmd))
+        except Exception as e:
+            mdbg.log("[---] fix_mp4_filename error:{}".format(e))
+
+    def fix_dirSize(self, base_path='/Volumes/Seagate Backup Plus Drive/pxp-backup'): # this adds 'evt_size' in event.json file when this is not present.
+        """
+        This should not be called from the server. This is only for fix the event.json file which doesn't have 'evt_size'
+        'evt_size' information is used when restore is performing to prevent the long run to get the folder size, which usually fail to return in time.
+        """
+        try:
+            mdbg.log("************************************************************")
+            total_time = 0
+            total_size = 0
+            length = len(os.listdir(base_path))
+            k = 0
+            for dirname in os.listdir(base_path):
+                start_time = time.time()
+                fix_path = base_path + "/" + dirname
+                fix_path = fix_path.encode('UTF-8')
+                if (os.path.isfile(fix_path +'/event.json')):
+                    cmd = "cp " + "'" + fix_path + "/event.json' " + "'" + fix_path + "/event.json.backup'"
+                    os.system(cmd)
+                    evt_json = self.file_get_contents(fix_path + '/event.json')
+                    evt_json = evt_json.replace(': null', ': ""')
+                    event = json.loads(evt_json)
+                    evtSize = self.dirSize(fix_path,dbg_print=True)
+                    event['evt_size'] = evtSize
+                    # save
+                    eventString = json.dumps(event)
+                    eventString = eventString.replace(': null',': ""') #jchoi: null cannot be loaded in python. changed to '' string 
+                    self.file_set_contents(fix_path + "/event.json",eventString)
+                    k+=1
+                    elapsed = time.time()-start_time
+                    mdbg.log("===> fixing: path:{} {}/{} size:{}, elapsed:{}".format(dirname + "/event.json", k, length, evtSize, elapsed))
+                    total_time += elapsed
+                    total_size += evtSize
+            mdbg.log("===> fix_dirSize FINISHED: total:{} file(s), total size:{}, elapsed:{}, base_path:{}".format(length, total_size, total_time, base_path))
+        except Exception as e:
+            mdbg.log("[---] fix_dirSize error:{}".format(e))
     def file_get_contents(self, filename):
         """ Reads an entire file
             Args:
@@ -422,6 +486,8 @@ class c_disk:
                 (list)
         """
         drives = []
+        if (dbg_print):
+            mdbg.log("======= Listout the attached all of drives =======================")
         try:
             if(osi.name=='mac'):
                 # on a mac, all attached volumes are in /Volumes
@@ -441,12 +507,17 @@ class c_disk:
                 if (dbg_print):
                     mdbg.log("mount: listdrivesout:{}  err:{}".format(listdrivesout, err))
                 for drive in listdrivesout.split('\n'):
+                    if (dbg_print):
+                        mdbg.log("drive found: {}".format(drive))
                     if(drive.startswith("/dev")): #this is a mounted drive. gets its mount point
                         try:
                             mountpoint = drive[drive.find('on /')+3:drive.rfind('(')-1]
                             if(mountpoint!='/'): # / is the main drive - skip it. have to figure out how to skip a secondary drive (if there is one)
                                 drives.append(mountpoint)
+                            else:
+                                mdbg.log("mountpoint: {}".format(mountpoint))
                         except: #this will happen if the format of the 'mount' output is wrong
+                            mdbg.log("[-->] mountpoint: error")
                             pass
                     # driveParts = drive.split()
                     # if(len(driveParts)>1 and driveParts[0].find('/dev')>=0 and driveParts[2]!='/'):
@@ -1415,6 +1486,8 @@ class c_ssdp:
                 if((st or (text and device.match(field,text))) and not (device.location in devices)):
                     #found a device that matches the search criteria
                     devices[device.location] = device
+#                 else:
+#                     mdbg.log("SSDP_NOT_FOUND:{}, {}, {}".format(device,field, text))
             except Exception as e:
                 pass
         return devices
@@ -1742,11 +1815,16 @@ class c_bonjour:
 
 # configuration file accessor (pxpconfig file, located in min folder)
 class c_pxpconfig:
+    """
+    pxpconfig file checker: all the options used in config file (usually setters and getters)
+    If the pxpconfig file is not in the min folder, it uses default settings...
+    """
     config = {}
     def __init__(self):
         self.reload()
     def reload(self):
         try:
+            #dbg.prn(dbg.MN,"++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
             self.config = {}
             #self.config = dict((line.strip().split(' = ') for line in file(c.approot + '/pxpconfig')))
             import os
@@ -1965,6 +2043,8 @@ class c_pxpconfig:
                 return True if self.config['cam_dlt']=='1' else False
             elif (code=='ph' and 'cam_pvh' in self.config):
                 return True if self.config['cam_pvh']=='1' else False
+            elif (code=='dc' and 'cam_ipc' in self.config):
+                return True if self.config['cam_ipc']=='1' else False
             return False
         except:
             return True
@@ -2047,8 +2127,21 @@ class c_pxpconfig:
             delta_cmd += "_" + str(delta_idx)
         if (delta_cmd in self.config):
             return "0" if self.config[delta_cmd]=='0' else self.config[delta_cmd].strip()
-        
-        return c.hbrake_conf 
+        return 0
+    def ipcam_conf(self, ipcam_idx=1, cmd='count'): # delat encoder manual setup
+        self.reload()
+        try:
+            if (cmd=="count"):
+                if ("ipc_count" in self.config):
+                    return 0 if self.config["ipc_count"]=='0' else int(self.config["ipc_count"])
+        except:
+            return 0
+        ipcam_cmd = 'ipc_'+ cmd
+        if (ipcam_idx>0):
+            ipcam_cmd += "_" + str(ipcam_idx)
+        if (ipcam_cmd in self.config):
+            return "0" if self.config[ipcam_cmd]=='0' else self.config[ipcam_cmd].strip()
+        return 0
 
 class c_ffmpeg(object):
     def __init__(self, cmd):
@@ -2306,6 +2399,11 @@ class c_misc:
         if(not q):# quality isn't specified - assume it's high quality
             q = 'hq'
         return n,q
+    def timestamp(self):
+        now = time.time()
+        localtime = time.localtime(now)
+        milliseconds = '%03d' % int((now - int(now)) * 1000)
+        return time.strftime('%Y/%m/%d %H:%M:%S', localtime) + "." + milliseconds
 class c_dbg(object):     
     DBG_NOTSET      = 0
     DBG_NORMAL      = 1<<0

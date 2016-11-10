@@ -39,15 +39,6 @@ class Controller:
 		#----------------------------------				
 		self.d['version']=c.ver
 	#this function is executed first
-	def dbg_func(self, fname):
-		if (pu.pxpconfig.check_dbg('ctrl')):				
-			words = pu.pxpconfig.pxp_ctrl_catch()
-			#pu.mdbg.log("-->controller.run-->FOUND:{}|".format(words)) 
-			for w in words.split("|"):
-				if (fname.strip().find(w.strip())==0):
-					#pu.mdbg.log("-->controller.run-->FOUND:{}".format(fname)) 
-					return True													
-		return False
 	def _run(self):
 		import os, sys
 		# get the method name that the user is trying to access
@@ -84,10 +75,9 @@ class Controller:
 			elif (functionName=="ajax"): #call method from the pxp model (ajax mode)
 				# function itself will be in the next parameter: e.g. min/ajax/tagset
 				functionName = pu.uri.segment(2,"")
-				#if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):	
-				pu.mdbg.log("-->controller.run1-->", functionName)								
-  				#if (self.dbg_func(functionName)):				
-   				#	pydevd.settrace()								
+				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):	
+					pu.mdbg.log("-->controller.run1-->", functionName)								
+   				#pydevd.settrace()								
 								
 				# check if user is running it from command line 
 				if len(sys.argv)>1:
@@ -99,9 +89,8 @@ class Controller:
 				# get address of the function that user is requesting 
 				# the function is either in this class (controller) 
 				# or it's an html page, in which case fn will be false
-				#if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
-				pu.mdbg.log("-->controller.run2-->", functionName)
- 				#if (self.dbg_func(functionName)):				
+				if (pu.pxpconfig.check_webdbg("controller_run") and not pu.pxpconfig.pxp_hide_cmdmsg(functionName)):		
+					pu.mdbg.log("-->controller.run2-->", functionName)
   				#pydevd.settrace()								
 				fn = getattr(self, functionName, None)
 				# check if user is logged in or not
@@ -129,8 +118,7 @@ class Controller:
 					result = fn(sess)
 				else:
 					# all the other functions can be called without parameters
- 					#if (self.dbg_func(functionName)):				
- 					# 	pydevd.settrace()													
+ 					#pydevd.settrace()													
 					result = fn()
 					#pu.mdbg.log("-->controller.result-->{}".format(pp.pformat(result)))
 				# check if the result of the function is a dictionary and output it

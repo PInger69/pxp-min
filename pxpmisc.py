@@ -18,6 +18,9 @@ tmr_misc = {}
 # This class helps to rebuild whole mp4 file from the TS files
 
 class MP4FixWorker (threading.Thread):
+    """
+    Rebuild mp4 file in case video file has been corrupted. Use TS file to rebuild.
+    """
     def __init__(self, threadId, event_path, camid, vq):
         threading.Thread.__init__(self)
         self.threadId = threadId
@@ -29,6 +32,9 @@ class MP4FixWorker (threading.Thread):
         self.progress = 0
     
     def log(self, *arguments, **keywords):
+        """
+        Thread base logging. 
+        """
         try:
             logFile = "/tmp/fix-" + self.getname() + ".txt"
             #logFile = c.wwwroot + self.event_path + "/video/" + self.getname() + ".txt"
@@ -41,9 +47,15 @@ class MP4FixWorker (threading.Thread):
             pass
     
     def getname(self):
+        """
+        build name with event path, cam ID and video quality 
+        """
         return "{}-{}-{}".format(self.event_path, self.camid, self.vq)
     
     def doFixNow(self):
+        """
+        Start rebuilding mp4 files 
+        """
         self.log("starting {}  time:{}".format(self.thread_name, time.ctime(time.time())))
         self.rebuild_mp4()
         self.log("finishes {}  time:{}".format(self.thread_name, time.ctime(time.time())))
@@ -52,6 +64,9 @@ class MP4FixWorker (threading.Thread):
         self.doFixNow()
 
     def rebuild_mp4(self):
+        """
+        Rebuild mp4 files using TS files 
+        """
         self.ret_status = False
         try:
             results = {}
@@ -92,6 +107,15 @@ class MP4FixWorker (threading.Thread):
         return self.ret_status
 
     def getseginfo(self, camid="00", vq="hq", event='live'):
+        """
+        Get ts segment information such as first and last index.
+        Input:
+            camid(str): leading zero based can ID string
+            vq(str): cam quality designator
+            event(str): event name
+        returns:
+            result(dict): segment information
+        """
         try:
             if (pu.pxpconfig.check_webdbg('param')):            
                 self.log("--> getseginfo: cam:{} vq:{} event:{}".format(camid, vq, event))
@@ -136,10 +160,18 @@ class MP4FixWorker (threading.Thread):
                         
             if (results['first_seg']):
                 if (os.path.exists(videoPath+results['first_seg'])):
-                    results['first_idx'] = int(results['first_seg'].split('.')[0].split('_')[2]) # get first index
+                    if (results['first_seg'].find("_")>=0):
+                        results['first_idx'] = int(results['first_seg'].split('.')[0].split('_')[2]) # get first index
+                    else: # old style segm0, segm1 etc.
+                        fidx = results['first_seg'].find('.')
+                        results['first_idx'] = int(results['first_seg'][4:fidx]) # old style ts file
             if (results['last_seg']):
                 if (os.path.exists(videoPath+results['last_seg'])):
-                    results['last_idx'] = int(results['last_seg'].split('.')[0].split('_')[2])  # get last index
+                    if (results['last_seg'].find("_")>=0):
+                        results['last_idx'] = int(results['last_seg'].split('.')[0].split('_')[2])  # get last index
+                    else:
+                        fidx = results['last_seg'].find('.')
+                        results['last_idx'] = int(results['last_seg'][4:fidx]) # old style ts file
             return results
         except Exception as e:
             msgstr=str(sys.exc_info()[-1].tb_lineno)+' '+str(e)
@@ -147,6 +179,15 @@ class MP4FixWorker (threading.Thread):
             return False
 
     def convert_ts2mp4(self, event_path, camid, vq):
+        """
+        Convert TS file to mp4 file using handbrake...
+        Input:
+            camid(str): 0 based cam ID
+            vq(str): camera video quqality
+            event(str): event name
+        returns:
+            None
+        """
         import subprocess
         tsfilename = event_path + "all_" + camid + vq + ".ts"
         (tsfilebase, fext) = os.path.splitext(tsfilename)
@@ -213,6 +254,9 @@ class MP4FixWorker (threading.Thread):
             pass            
 
     def concat_ts(self, last_idx, camid="00", vq="hq", event='live'):
+        """
+        Concatenate all of ts files into one single file to convert.
+        """
         self.log("concatenating ts files started...last index:{}".format(last_idx))
         try:
             videoPath = c.wwwroot + event + "/video/"
@@ -223,10 +267,16 @@ class MP4FixWorker (threading.Thread):
             all_ts = videoPath + "all_" + camid + vq + ".ts"
             if (os.path.exists(all_ts)):
                 os.system("rm " + all_ts)
-                
+            
+            old_style_ts = False
+            if (os.path.isfile(videoPath+"main.mp4") and os.path.isfile(videoPath+"list.m3u8")):
+                old_style_ts = True
+            
             progress_step = int(15.0/float(last_idx)) # 15% usage for this procedure   
             for i in xrange(last_idx):
                 segn = videoPath + camid + vq + "_segm_" + str(i) + ".ts"
+                if (old_style_ts):
+                    segn = videoPath + "segm" + str(i) + ".ts"
                 cmd = "cat " + segn + " >> " + all_ts
                 self.log("count:{}   cmd:{}".format(i, segn))
                 os.system(cmd)
@@ -237,9 +287,15 @@ class MP4FixWorker (threading.Thread):
         self.log("concatenating ts files ends...path:{}  file size:{} MB".format(all_ts, os.path.getsize(all_ts)/1e6))
 
     def rebuild_status(self):
+        """
+        Return status of building
+        """
         return self.ret_status
 
 class MP4Rebuilder(object):
+    """
+    MP4 rebuilder: it collects all of the events and initiate the process. 
+    """
     def __init__(self):
         super(MP4Rebuilder, self).__init__()
         self.worker = {}
@@ -256,6 +312,9 @@ class MP4Rebuilder(object):
             del tmr_misc['mp4fix_status']
     
     def add(self, event, camid, vq):
+        """
+        Collect event to rebuild with event name, camid and video quality
+        """
         must_add = False
         try:
             if (self.inhibit):
@@ -302,6 +361,9 @@ class MP4Rebuilder(object):
         return must_add
 
     def check_status(self,progress=False):
+        """
+        Return status of rebuilding status
+        """
         result = {}
         try:
             i = 0
@@ -327,11 +389,17 @@ class MP4Rebuilder(object):
             return {}
 
     def init(self):
+        """
+        Initializer
+        """
         self.worker = {}
         self.threadIndex = 1
         self.canDeleteCount = 0
         
-    def init_ifcan(self): # check if it can init
+    def init_ifcan(self): 
+        """
+        Check if it can init
+        """
         doneCount = 0
         for t in self.worker:
             if (self.worker[t]['status'] == 'done'):
@@ -341,6 +409,9 @@ class MP4Rebuilder(object):
         return False
     
     def can_run(self):
+        """
+        Check if option and maximum limit to run
+        """
         try:
             if (self.inhibit):
                 return False
@@ -370,6 +441,9 @@ class MP4Rebuilder(object):
             pu.mdbg.log("[---] error MP4Rebuilder.run: {}".format(e))
         
     def run_forground(self):
+        """
+        Not used (test only)
+        """
         try:
             for t in self.worker:
                 if (self.worker[t]['status'] != 'started' and self.worker[t]['status'] != 'done'):
@@ -382,6 +456,9 @@ class MP4Rebuilder(object):
 #-------------------------------------------
 
 class ExportEventWorker (threading.Thread):
+    """
+    Export event from the web UI
+    """
     def __init__(self, threadId, event_path, camid, vq):
         threading.Thread.__init__(self)
         self.threadId = threadId
@@ -439,6 +516,9 @@ class ExportEventWorker (threading.Thread):
         return self.ret_status
 
 class ExportEvent(object):
+    """
+    Event exporter from the web UI
+    """
     def __init__(self):
         super(ExportEvent, self).__init__()
         self.worker = {}
@@ -580,6 +660,9 @@ class ExportEvent(object):
 
 #-------------------------------------------
 class TestMuxWorker (threading.Thread):
+    """
+    Test Only
+    """
     def __init__(self):
         threading.Thread.__init__(self)
         self.p = False
@@ -636,6 +719,9 @@ class TestMuxWorker (threading.Thread):
                 self.p.send_signal(signal.SIGINT)
 
 class TestSegWorker (threading.Thread):
+    """
+    Test Only
+    """
     def __init__(self):
         threading.Thread.__init__(self)
         self.p = False
@@ -672,8 +758,15 @@ class TestSegWorker (threading.Thread):
             #self.p.kill()
             print('segmenter stopped')
 
-# Fix m3u8 (capping with #EXT-X-ENDLIST)
 def fix_m3u8():
+    """
+    Check if m3u8 file is capped properly for each event and it make sure capped properly.
+    Fix m3u8 (terminating with #EXT-X-ENDLIST)
+    Input:
+        None
+    Return:
+        None
+    """
     f =''
     try:
         for root, dirs, files in os.walk("/private/var/www/html/events"):

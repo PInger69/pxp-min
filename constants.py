@@ -13,7 +13,7 @@ pxpConfigFile 			= wwwroot+"_db/.pxpcfg"
 # ffmpeg used to capture streams and create mp4 files
 # also used to extract clips and create thumbnails
 ffname 					= "ffmpeg"
-ffbin 					= "/usr/bin/"+ffname
+ffbin 					= "/usr/bin/"+ffname # "/Users/dev/works/cpp/ffmpeg/"+ffname # "/usr/bin/"+ffname
 #ffbin 					= "/usr/local/bin/"+ffname
 # HLS segmenter - creates m3u8 file and .ts files
 # name used for starting/killing

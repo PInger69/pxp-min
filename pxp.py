@@ -1212,7 +1212,8 @@ def past_check_status():
 			fix_hid = ''
 		if (xpt_hid==None):
 			xpt_hid = ''
-		if (pu.pxpconfig.check_webdbg('param')):			
+		webdbg = pu.pxpconfig.check_webdbg('param')
+		if (webdbg):			
 			pu.mdbg.log("past_check_status-->param:{}  bkp_hid:{}  fix_hid:{}  xpt_hid:{}".format(param, bkp_hid, fix_hid, xpt_hid))
 		resp = pu.disk.sockSendWait(msg="PCS|"+param+"|"+bkp_hid+"|"+fix_hid+"|"+xpt_hid, addnewline=False) # PCS returns string via json.dumps()
 		resp = retry_pxpcmd('PCS',param,resp)
@@ -1222,7 +1223,7 @@ def past_check_status():
 			b2 = len(d['results']['bkp']['status'])>0
 			b3 = d['results']['usb']['status']==True
 			b4 = len(d['results']['xpt']['status'])>0
-			if (d['results']['status']==True and (b1 or b2 or b3 or b4)):
+			if (webdbg and d['results']['status']==True and (b1 or b2 or b3 or b4)):
 				pu.mdbg.log("past_check_status--> resp1:", resp)
 			return json.JSONEncoder().encode(d)
 		return json.JSONEncoder().encode(json.loads({'results':{'status':False}})) # failed
@@ -1317,6 +1318,7 @@ class Tag2XML(object):
 		return s
 
 # export all of tags to XML file
+
 def exportevt():
 	try:
 		# exportevt/?event=2016-06-01_11-10-29_ca1a59ffd98847917d80d9a8a60d5c4ca473fa84_local&vq=HQ&sidx=s_00		
@@ -2287,92 +2289,6 @@ class PXPWorker(threading.Thread):
 		ans['cookie'] = self.cookie
 		resp = pu.disk.sockSendWait("AUP|"+json.dumps(ans), addnewline=True, timeout=3)
 		pu.mdbg.log("PXPWORKER finished ------>cmd:{} cookie:{}".format(self.cmd, self.cookie))
-
-def appreq():
-	"""
-	To avoid the long wait for the request, user just sends this request and check appresp later to get the result.
-	This will prevents time out issue in client side in case long time processing task is requested.
-	cmd should have pxp command like tagset, and unique cookie must be provides to claim the take result.
-	
-	input:
-		inputs should be the same as cmd argument, for example, if cmd is tagset, it should have tagset input params should be provided.
-			Only added parts are 'cmd' and 'cookie'. These should be added when this command is called to start the command ana 
-			claim the result.
-	
-	Output:
-		Given command will be started and result will be stored in database to retieve later via appresp
-		
-	typical request: http://localhost/min/ajax/appreq/{"cmd":"tagset","cookie":"c-10","deviceid":"B983D5BA-B7D9-48BA-BB43-F1D39D5931A5","name":"LO Attack","user":"ae1e7198bc3074ff1b2e9ff520c30bc1898d038e","colour":"3AF20F","time":"13.469176","event":"2016-02-04_10-35-49_24816038a176786ea2fa6c19c7f4c9976c49ae81_local","requesttime":"793.534259"}	
-	"""
-	result = {"success":False,"msg":"","action":""}
-	io = pu.io
-	try:
-		param = str(io.get("tag")) # can be either POST or GET
-		if (param=="None"):
-			param = pu.uri.segment(3,"{}")
-		if (pu.pxpconfig.check_webdbg('param')):
-			pu.mdbg.log("appreq-->param:{}".format(param))
-	except Exception as e:
-		result['msg'] = str(e)
-		return result
-
-	background = True
-	try:
-		jsonParam = json.loads(param)
-		if ('cookie' in jsonParam and 'cmd' in jsonParam):
-			if (background):
-	 			#jsonParam['cmd']='tagset'
-	 			#jsonParam['cookie'] = 'c-10'
-	 			#jsonParam['param'] = {"cmd":"tagset","cookie":"c-10","deviceid":"B983D5BA-B7D9-48BA-BB43-F1D39D5931A5","name":"LO Attack","user":"ae1e7198bc3074ff1b2e9ff520c30bc1898d038e","colour":"3AF20F","time":"13.469176","event":"2016-02-04_10-35-49_24816038a176786ea2fa6c19c7f4c9976c49ae81_local","requesttime":"793.534259"}
-				#resp = pu.disk.sockSendWait("BRQ|"+jsonParam['cmd']+'|'+jsonParam['cookie']+'|'+param, addnewline=True, timeout=1)
-				pu.disk.sockSend("BRQ|"+jsonParam['cmd']+'|'+jsonParam['cookie']+'|'+param, addnewline=True)
-			else:
-				resp = pu.disk.sockSendWait("ARQ|"+param, addnewline=True, timeout=3)
-				if(not resp):
-					data = {}
-				else:
-					data = json.loads(resp)
-				result.update(data)
-				worker = PXPWorker(jsonParam['cmd'], jsonParam['cookie'], param)
-				worker.start()
-			pu.mdbg.log("appreq result--->{} started running in background!!".format(jsonParam['cookie']))
-			result['success'] = True
-			result['msg'] = "appreq cookie:{} status:OK".format(jsonParam['cookie'])
-	except Exception as e:
-		pu.mdbg.log("[---] error in appreq: {}".format(str(sys.exc_info()[-1].tb_lineno)+' '+str(e)))
-	pu.mdbg.log("appreq returned result--->{}".format(result))
-	return result
-
-def appresp():
-	"""
-	This will be called anytime when the client know it needs to have the result. (It also provides the progress)
-	input:
-		cmd: invoked command
-		cookie: one that have sent in appreq 
-	typical request: http://localhost/min/ajax/appresp/{"cmd":"tagset","cookie":"c-10"}
-	"""
-	param = pu.uri.segment(3,"{}") # always GET command
-	result = {"success":False,"msg":"","action":""}
-	try:
-		if (pu.pxpconfig.check_webdbg('param')):
-			pu.mdbg.log("appresp-->param:{}".format(param))
-		
-		jsonParam = json.loads(param)
-		if ('cookie' in jsonParam):
-			resp = pu.disk.sockSendWait("RSP|"+param, addnewline=True, timeout=1)
-			if(not resp):
-				data = {}
-			else:
-				data = json.loads(resp)
-			result.update(data)
-			data['data'] = resp
-			data['success'] = True
-			result['success'] = True
-			result['msg'] = "appresp cookie:{} status:OK".format(jsonParam['cookie'])
-			pu.mdbg.log("appresp result--->{}".format(result))
-	except Exception as e:
-		pu.mdbg.log("[---] error in appresp: {}".format(str(sys.exc_info()[-1].tb_lineno)+' '+str(e)))
-	return result
 
 def taglive(name,user):
 	""" Create a tag in a live event 'at live'
@@ -4864,7 +4780,7 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 	except Exception as e:
 		import sys
 		msgstr=str(sys.exc_info()[-1].tb_lineno)+' '+str(e)
-		pu.mdbg.log(msgstr)		
+		pu.mdbg.log("[---] "+msgstr)		
 		return _err(msgstr)
 
 def _time(format='%Y-%m-%d %H:%M:%S',timeStamp=False):
@@ -4939,8 +4855,8 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 			try:
 				f = open(listPath,"r")
 				seekTo = float(seekTo) # make sure this is not a string
-			except:
-				pu.mdbg.log("[---] _thumbName.1")
+			except Exception as e:
+				pu.mdbg.log("[---] _thumbName.1 err:{} listPath:{} seekTo:{}".format(str(e), listPath, seekTo))
 				return 0
 		
 			#starting from the top, add up the times until reached desired time - that's the file
@@ -5000,7 +4916,7 @@ def _thumbName(seekTo=0,number=False,event="live", results={}, totalTime=False,s
 	except Exception as e:
 		import sys
 		msgstr=str(sys.exc_info()[-1].tb_lineno)+' '+str(e)
-		pu.mdbg.log(msgstr)		
+		pu.mdbg.log("[---] "+msgstr)		
 		return False
 #end thumbname
 
