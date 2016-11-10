@@ -131,6 +131,7 @@ class debugLogger(object):
     FIX            = 1<<24 # MP4 repair
     MDB            = 1<<25 # SQLMDB
     DLT            = 1<<26 # Delta Camera
+    IPC            = 1<<27 # generic IP Camera
 
     #this property defines which of the above groups will be logged
     #KLL|ERR|MN|SRC|PCM|PPC
@@ -184,7 +185,7 @@ class debugLogger(object):
                     fp.write(dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"))
                     fp.write(' '+' '.join(map(str, (arguments))))
                     fp.write("\n")
-                if(kind & dbg.PXP):
+                if(kind & self.PXP):
                     pu.mdbg.log((''.join(map(str, (arguments)))))
             except Exception as e:
                 print "[---]prn:",e, sys.exc_info()[-1].tb_lineno
@@ -247,7 +248,8 @@ class debugLogger(object):
             self.AXS:"AXS",
             self.PXP:"PXP",
             self.MDB:"MDB",
-            self.DLT:"DLT"
+            self.DLT:"DLT",
+            self.IPC:"IPC"
         }
         cmdList = []
         # go through each command and add it to the display list if its bit is set in the user's command
@@ -280,10 +282,11 @@ class debugLogger(object):
         "DBG":self.DBG,
         "RRE":self.RRE,
         "MN": self.MN ,
-        "AXS":self.AXS ,
+        "AXS":self.AXS,
         "PXP":self.PXP, 
         "MDB":self.MDB,
-        "DLT":self.DLT
+        "DLT":self.DLT,
+        "IPC":self.IPC
         }
         level = 0
         if (cmds != ''):
@@ -291,8 +294,7 @@ class debugLogger(object):
                 if (cmd in names):
                     level |= names[cmd]
             self.setLogLevel(level)
-            self.prn(dbg.MN, "debug level set to:", cmds)
-
+            self.prn(self.MN, "debug level set to:", cmds)
 #end debugLogger class
 
 ###################
@@ -463,6 +465,7 @@ class backupEvent(object):
             evtSize = pu.disk.dirSize(originPath)
             self.total = evtSize
             dbg.prn(dbg.BKP,"event size:",evtSize)
+            eventData[0]['evt_size'] = evtSize  # jchoi: for restore, dirSize takes too much time to read and it failed to restore. Adding this info can help.
             
             
             # STEP3 -- Is there any backup drive attached to this machine???
@@ -511,6 +514,7 @@ class backupEvent(object):
                 pu.disk.mkdir(outputPath) # create the output directory
                 # save the event info
                 eventString = json.dumps(eventData[0])
+                eventString = eventString.replace(': null',': ""') #jchoi: null cannot be loaded in python. changed to '' string 
                 pu.disk.file_set_contents(outputPath+"/event.json",eventString)
                 if(not('bkp' in tmr)):
                     tmr['bkp']={ }
@@ -928,6 +932,7 @@ class backupManager(object):
             dbg.prn(dbg.BKP,"starting list...")
             for drive in drives:
                 if(not(os.path.exists(drive+backupEvent.autoDir) or os.path.exists(drive+backupEvent.manualDir))): #this drive does not have any pxp backups
+                    dbg.prn(dbg.BKP,"starting list...{} {}".format(drive+backupEvent.autoDir, drive+backupEvent.manualDir))
                     continue
                 # this drive contains a backup
                 self.backupDrive = drive.decode('UTF-8')
@@ -942,29 +947,35 @@ class backupManager(object):
                 allDirs = list(autoPath+x for x in autoDirs)
                 allDirs.extend(manuPath+x for x in manualDirs if autoPath+x not in allDirs)
                 eventDirs += allDirs
+                dbg.prn(dbg.BKP,"starting list...{}".format(eventDirs))
             #end for drive in drives
             for eventDir in eventDirs:
                 # get info about the events in each directory
+                dbg.prn(dbg.BKP,"eventDir list...{}".format(eventDir))
                 if(not os.path.exists(eventDir+'/event.json')):
                     continue
                 try:
                     event = json.loads(pu.disk.file_get_contents(eventDir.encode('UTF-8')+'/event.json'))
                     event['archivePath']=eventDir.encode('UTF-8')
-                    evtSize = pu.disk.dirSize(eventDir)
+                    if ('evt_size' in event): #JCHOI:To prevent getting folder size, we use save info while backup was doing.
+                        evtSize = event['evt_size']
+                    else:
+                        evtSize = pu.disk.dirSize(eventDir, dbg_print=True)
+                        #time.sleep(30) #<<----------- if dirSize() takes too long, it will return NOTING...!!!
                     event['size']=pu.disk.sizeFmt(evtSize)
                     # check if this event is in the existing events on the hdd
                     event['exists']=os.path.exists(c.wwwroot+event['datapath'])
                     self.archivedEvents[event['hid']]=copy.copy(event) #save for later in case user wants to restore an event
                     events.append(event)
                 except Exception as e:
-                    dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpmgr.foreventdir:",e,sys.exc_info()[-1].tb_lineno)
+                    dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpmgr.for_eventdir:",e,sys.exc_info()[-1].tb_lineno)
             return events
         except Exception as e:
             dbg.prn(dbg.BKP|dbg.ERR,"[---]bkpmgr.archlist", e, sys.exc_info()[-1].tb_lineno)
     def autobackup(self):
         """ Automatically back up all events (if there's a drive with pxp-autobackup folder on it)"""
         try:
-            dbg.prn(dbg.BKP,"autobackup-->")
+            #dbg.prn(dbg.BKP,"autobackup-->")
             if((int(time.time()) - self.lastActive)<10): #has been idle for less than 10 seconds, wait some more
                 dbg.prn(dbg.BKP,"busy... idle for:",(int(time.time())-self.lastActive))
                 # the machine is busy (there's most likely a live game going on) make sure there are no events being backed up right now
@@ -1110,7 +1121,7 @@ class backupManager(object):
                 (list): HIDs of events that are in the backup/restore queue
         """
         try:
-            dbg.prn(dbg.BKP,"list-->")
+            #dbg.prn(dbg.BKP,"list-->")
             result = []
             events = copy.deepcopy(self.events)
             for hid in events:
@@ -1122,7 +1133,7 @@ class backupManager(object):
     def process(self):
         """ Process the queue - start a backup according to priority, if there's nothing backed up at the moment, remove completed backups """
         try:
-            dbg.prn(dbg.BKP,"process-->")
+            #dbg.prn(dbg.BKP,"process-->")
             if(len(self.priorities)<=0 or (enc.code & enc.STAT_SHUTDOWN)): 
                 #there are no events in the queue or the server is being shut down
                 return
@@ -1503,28 +1514,6 @@ class commander:
             if(dataParts[0]=='STK' and len(dataParts)>=2): # write duration
                 pu.mdbg.log("check status starting ======> {}".format(dataParts[1]))
                 srcMgr.checkStat(dataParts[1])
-            if(dataParts[0]=='BRQ' and len(dataParts)>=4): # APP REQ in background
-                pu.mdbg.log("BRQ--> cmd:{} cookie:{} param:{}".format(dataParts[1], dataParts[2], dataParts[3]))
-                global pxpworker
-                sqlmdb.addreq(dataParts[3].strip()) # segment(3) param
-                helper = pxphelper.PXPHeler(dataParts[1], dataParts[2], dataParts[3]) # cmd,cookie,param
-                # cleanup pxpworker if everything is done ------------------
-                cleanup_pxp_workers()
-                # start worker ---------------------------------------------
-                pxpworker.append(helper)
-                helper.start()
-                doneCount = cleanup_pxp_workers()
-                pu.mdbg.log("BRQ--> {}/{} is done in workers".format(doneCount, len(pxpworker)))        
-            if(dataParts[0]=='ARQ' and len(dataParts)>=2): # APP REQ
-                sqlmdb.addreq(dataParts[1].strip()) # segment(3) param
-            if(dataParts[0]=='RSP' and len(dataParts)>=2): # APP RESP
-                return sqlmdb.find_ans(dataParts[1].strip())
-            if(dataParts[0]=='AUP' and len(dataParts)>=2): # APP UPDATE RESULTS
-                sqlmdb.update_result(dataParts[1].strip())
-            if(dataParts[0]=='APR' and len(dataParts)>=2): # APP PROGRESS 
-                sqlmdb.update_progress(dataParts[1].strip())
-            if(dataParts[0]=='ADP' and len(dataParts)>=2): # APP Dump
-                sqlmdb.dump()
             if(dataParts[0]=='STP'): #stop encode
                 srcMgr.encCapStop()
             if(dataParts[0]=='PSE'): #pause encode
@@ -1707,7 +1696,8 @@ class encoderStatus:
                 
             self.status = self.statusTxt(self.code)
             if(dbgLastStatus!=self.code): #only output if status changed
-                dbg.prn(dbg.ENC,"status: ",self.status,' ',bin(self.code))
+                dbg.prn(dbg.ENC,"enc_status: {:14s} {:016b}  written:{}".format(self.status, self.code, autoWrite))
+                #dbg.prn(dbg.ENC,"status: ",self.status,' ',bin(self.code))
             if(autoWrite):
                 self.statusWrite()
         except Exception as e:
@@ -1936,10 +1926,15 @@ class encDevice(object):
         mp4entry = " udp://127.0.0.1:"
         if (pu.pxpconfig.use_mp4tcp()):
             mp4entry = " tcp://127.0.0.1:"
-        capcmd = c.ffbin+" -i " + camURL + latency \
-                + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-                + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
-                + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) #+ cap_conf
+#        capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
+#                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+#                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
+#                 + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+        # AXIS 4K
+        capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
+                + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+                + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
+                + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
         # Delta Only        
 #         capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
 #                 + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
@@ -2073,7 +2068,254 @@ class encDevice(object):
         self.dev_mp4path = mp4_path
         self.cur_evtpath = evt_path
         pass
-        
+
+class encIPcam(encDevice):
+    """
+    Generic IP camera class:
+    Currently it supports only manually configured camera. For this to be used all of camera settings should be configured 
+    from the camera admin page. All of necessary parameters of camera such as IP, MAC, stream URL should be provided 
+    from the configuration file (pxpconfig). When the number of camera is zero, it is regarded as no camera found. 
+    (ipc_count, ipc_ILA1, ipc_MAC1 etc)
+    """
+    def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False):
+        """
+        Read all of camera parameters from the pxpconfig and load into the config params for immitating camera discovery.
+        Inputs:
+            ip(str): camera IP
+            vq(str): "HQ" or "LQ"
+            uid(str): user id (not used)
+            pwd(str): password (not used)
+            realm(str): camera commnication realm (not used)
+            mac(str): MAC address separated by ':'
+        Returns:
+            None
+        """
+        self.ccBitrate = False # can change bitrate
+        self.model = "IPCam"
+        self.manual_search_try_count = 0
+        self.ipcam_device_list = []
+        self.findingInProgress = False
+        self.IPCamConfig = {}
+        self.camIndex = False
+        if(ip):
+            super(encIPcam,self).__init__(ip, vq, uid=uid, pwd=pwd, realm=realm, mac=mac)
+            ipcam_count = pu.pxpconfig.ipcam_conf(cmd='count')
+            for i in range(ipcam_count):
+                self.IPCamConfig['MAC'] = pu.pxpconfig.ipcam_conf(i+1,'MAC')
+                self.IPCamConfig['IP']  = pu.pxpconfig.ipcam_conf(i+1,'ILA')
+                self.IPCamConfig['URI'] = pu.pxpconfig.ipcam_conf(i+1,'URI')    
+                if (ip==self.IPCamConfig['IP'].strip()):
+                    self.camIndex = i
+                    break
+            if (0<=self.camIndex and self.camIndex<ipcam_count):    
+                self.IPCamConfig['MASK']    = pu.pxpconfig.ipcam_conf(0,'ILM')
+                self.IPCamConfig['GATEWAY'] = pu.pxpconfig.ipcam_conf(0,'ILG')        
+                self.IPCamConfig['RES']     = pu.pxpconfig.ipcam_conf(0,'RES')        
+    def find_manually(self):
+        # Limit to apply setting after the discovery begins: max 6 times
+        if (self.manual_search_try_count > 5):
+            return self.ipcam_device_list
+        # Inialize the device list...
+        self.ipcam_device_list = []
+        ipcam_found = {}
+        self.manual_search_try_count += 1
+        try:
+            # Read the network params from the config file and apply them.
+            ipcam_count = pu.pxpconfig.ipcam_conf(cmd='count')
+            for i in range(ipcam_count):
+                ipcam_found = {}
+                ipcam_found['MAC']     = pu.pxpconfig.ipcam_conf(i+1, 'MAC')
+                ipcam_found['IP']      = pu.pxpconfig.ipcam_conf(i+1, 'ILA')
+                ipcam_found['URI']     = pu.pxpconfig.ipcam_conf(i+1, 'URI')
+                ipcam_found['MASK']    = pu.pxpconfig.ipcam_conf(0, 'ILM')
+                ipcam_found['GATEWAY'] = pu.pxpconfig.ipcam_conf(0, 'ILG')        
+                # Add this device into device list so discovery can use this.
+                already_found = False
+                for d in self.ipcam_device_list:
+                    if ('MAC' in d and d['MAC'] == ipcam_found['MAC']):
+                        already_found = True
+                if (not already_found and len(ipcam_found)>0):
+                    self.ipcam_device_list.append(ipcam_found)
+                # Final message dump for clarification.
+                dbg.prn(dbg.IPC, "-->ipc.find_ipcam_manually...index:{}".format(i))
+                time.sleep(2)
+        except Exception as e:
+            if (self.manual_search_try_count<0):
+                self.manual_search_try_count -= 1
+            dbg.prn(dbg.IPC|dbg.ERR, "[---]ipc.find_ipcam_manually error:", e, sys.exc_info()[-1].tb_lineno)
+        return self.ipcam_device_list
+    def discover(self, callback): # 'self' is not defined until it hits __init__, do not use self.XXX class attributes
+        """ Find any new devices using bonjour protocol. 
+            Args:
+                callback(function): called when a device is found 
+            Returns:
+                none
+            Automatic discovery is not supported for this camera and only manual setting will be used.
+            This is just an place holder to 
+        """
+        try:
+            if(enc.code & enc.STAT_SHUTDOWN):
+                return
+            if(enc.code & enc.STAT_LIVE):
+                dbg.prn(dbg.IPC, "encIPCam.discovery is disabled due to live mode...")
+                return
+            if (self.findingInProgress):
+                dbg.prn(dbg.IPC, "ipc.find_ipcam: skipped...")
+                return
+            self.findingInProgress = True
+            self.manual_search = pu.pxpconfig.ipcam_conf(cmd='count') > 0
+            if (self.manual_search):
+                dev_found = self.find_manually()
+                dbg.prn(dbg.IPC, "encIPCam.discovering...with manual settings...cam_count:{}".format(len(dev_found)))
+                if (dev_found and len(dev_found)>0):
+                    for found in dev_found:
+                        ipcam_MAC = found['MAC']
+                        serial_no = ""       # 071D3F0D8D4D
+                        modelname = "ipcam"  # IPD-D41C02-BS series     
+                        devIP = found['IP'] 
+                        if(not devIP): # did not get ip address of the device
+                            continue
+                        params = self.getParams(devIP) # not used, get all the parameters from the IPcam's home page
+                        if(found['IP'] and found['MAC']):
+                            output = {}
+                            output['ip'] = devIP
+                            output['type'] = 'dc_enc'
+                            output['port'] = 554
+                            output['url'] = "rtsp://"+found['URI'] # "rtsp://"+devIP+"/stream1"
+                            output['devClass'] = encIPcam
+                            output['vid-quality'] = 'HQ'
+                            output['username'] = False 
+                            output['password'] = False 
+                            output['realm'] = False
+                            output['mac'] = found['MAC'] 
+                            output['model'] = "IPCam" + "." + output['vid-quality'] + "." + devIP
+                            callback(output)
+            self.findingInProgress = False
+        except Exception as e:
+            dbg.prn(dbg.IPC|dbg.ERR,"[---]encIPcam.discover",e, sys.exc_info()[-1].tb_lineno)
+    def getParams(self,ip=False, vq='HQ'):
+        """ Gets new parameters from a generic IP device
+            Args:
+                ip(str): ip address of the device (if using on a class without instantiating)
+            Returns:
+                (dictionary): any parameters that were acquired
+        """
+        params = {
+            "rtsp_url"          : False,
+            "rtsp_port"         : False,
+            "inputResolution"   : False,
+            "streamResolution"  : False,
+            "streamFramerate"   : False,
+            "streamBitrate"     : False,
+            "connection"        : False #whether there is connection with this device at all
+        }
+        try:
+            if ('IP' in self.IPCamConfig and 'URI' in self.IPCamConfig):
+                if(not ip):
+                    ip = self.IPCamConfig['IP']
+                params['rtsp_url'] = self.IPCamConfig['URI']
+                rtsp_ip, rtsp_port = self.parseURI(params['rtsp_url'])
+                params['streamBitrate'] = 1000
+                params['rtsp_port'] = rtsp_port
+                params['connection'] = True
+                if ('RES' in self.IPCamConfig and self.IPCamConfig['RES'].find("x")>=0):
+                    params['inputResolution'] = self.IPCamConfig['RES'].split("x")[1]
+                else:
+                    params['inputResolution'] = "1080?p25"
+                if ('RES' in self.IPCamConfig and self.IPCamConfig['RES'].find("p")>=0):
+                    params['streamResolution'] = self.IPCamConfig['RES'].split("p")[1]
+                else:
+                    params['streamResolution'] = "25?"
+        except Exception as e:
+            dbg.prn(dbg.IPC|dbg.ERR,"[---]encIPCam.getParams",e,sys.exc_info()[-1].tb_lineno)
+        return params
+    def parseURI(self,url):
+        """extracts ip address and port from a uri.
+        the url is usually in this format: "http://X.X.X.X:PORT/"
+        e.g. from http://192.168.1.103:5953/
+        will return 192.168.1.103 and 5953
+        """
+        addr  = ""
+        parts = []
+        ip    = False
+        try:
+            parts = url.split('/')
+            #extract ip address with port
+            if(len(parts)>2):
+                addr = parts[2] #this contains X.X.X.X:PORT
+            else:
+                addr = parts[0] #it is possible the mtURL is "X.X.X.X:PORT/" (no http), then parts[0] will still be X.X.X.X:PORT
+            # extract the ip address 
+            addr = addr.split(':')
+            if(len(addr)>1):
+                ip = addr[0]
+                port = addr[1]
+            else:
+                ip = False
+                port = False
+        except Exception as e:
+            dbg.prn(dbg.IPC|dbg.ERR,"[---]encIPCam.parseURI",e,sys.exc_info()[-1].tb_lineno)
+        return ip, port
+    def setVideoInputType(self, vit):
+        self.vit = vit
+    def setBitrate(self,bitrate):
+        """ Set device bitrate is in kbps 
+            Args:
+                bitrate(int): new bitrate in kbps
+            Returns:
+                (str): response from the url request
+        """
+        try:
+            result = False
+            dbg.prn(dbg.IPC,"IPC.setbitrate: Cannot change: bitrate:{} ip:{}".format(bitrate, self.ip))
+            return result
+        except Exception as e:
+            dbg.prn(dbg.ERR|dbg.IPC,"[---]IPC.setBitrate:", e, sys.exc_info()[-1].tb_lineno)
+        return result
+    def setFramerate(self,framerate):
+        """ Set device frame rate is in fps 
+            Args:
+                framerate(int): new frame rate in fps
+            Returns:
+                (str): response from the url request
+        """
+        try:
+            result = False
+            dbg.prn(dbg.IPC,"IPC.setframerate: framerate:{} ip:{} vq:{}".format(framerate, self.ip, self.vidquality))
+            return result
+        except Exception as e:
+            dbg.prn(dbg.ERR|dbg.IPC,"[---]IPC.setFramerate:", e, sys.exc_info()[-1].tb_lineno)
+        return result
+    def update(self):
+        """ Requests encoding parameters of the device and updates local class properties"""
+        # get the device parameters
+        try:
+            if(enc.code & enc.STAT_SHUTDOWN): #exit immediately if there's a shutdown going on
+                return
+            params = self.getParams(vq=self.vidquality)
+            # dbg.prn(dbg.IPC, params, "IPC.update")
+            if(params and params['connection']):
+                self.resolution = params['inputResolution']
+                self.isCamera = self.resolution!=False
+                self.bitrate = params['streamBitrate']
+                self.framerate = params['streamFramerate']
+                self.rtspURL = params['rtsp_url']
+            else:
+                dbg.prn(dbg.IPC,"update FAIL!")
+                self.isOn = False
+                self.isCamera = False
+                self.resolution = False
+                self.bitrate = False
+                self.framerate = False
+                self.rtspURL = False
+                self.initialized = False
+        except Exception as e:
+            dbg.prn(dbg.IPC|dbg.ERR,"[---]encIPcam.update",e, sys.exc_info()[-1].tb_lineno)
+    def startRec(self):
+        pass        
+    def stopRec(self):
+        pass        
+            
 class encAxis(encDevice):
     def __init__(self, ip=False, vq="HQ", uid=False, pwd=False, realm=False, mac=False):
         super(encAxis,self).__init__(ip, vq, uid="root", pwd="admin", realm=realm, mac=mac)               
@@ -2109,9 +2351,7 @@ class encAxis(encDevice):
                 return
             global sockCmd
             global devaddingnow
-            
-            if (pu.mdbg.checkscf(sockCmd, pu.SCF_SHOWBONJ)):
-                dbg.prn(dbg.MN, "-->Start looking for AXIS camera.....")
+            dbg.prn(dbg.AXS, "-->Start looking for AXIS camera.....")
             
             #to find ALL ssdp devices simply enter ssdp:all as the target
             devs  = pu.ssdp.discover(text="Portable SDK",field='server',case=True) # why Portable SDK??!!
@@ -2124,7 +2364,7 @@ class encAxis(encDevice):
                             self.realm = 'AXIS_' + self.serial
                             
                         if (pu.mdbg.checkscf(sockCmd, pu.SCF_SHOWBONJ)):
-                            dbg.prn(dbg.MN, "-->AXIS:recs-->{0}".format(dev))
+                            dbg.prn(dbg.AXS, "-->AXIS:recs-->{0}".format(dev))
                             
                         devIP, devPT = self.parseURI(dev.location)
                         if(not devIP): #did not get ip address of the device
@@ -2801,13 +3041,13 @@ class encDelta(encDevice):
         """
         resp = []
         try:
-            if (not dev):
-                ip = self.ip
-            else:
-                ip = dev.ip
-            if (not ip):
-                return resp
             if (self.manual_search):
+                if (not dev):
+                    ip = self.ip
+                else:
+                    ip = dev.ip
+                if (not ip):
+                    return resp
                 if (cmd.find('VIT=')>=0): # debug only
                     dbg.prn(dbg.DLT, "[VIT sending...]")
                 resp = self.telnet_sendcmd(ip, cmd)
@@ -3128,7 +3368,8 @@ class encDelta(encDevice):
                 if (not already_found and len(delta_found)>0):
                     self.delta_device_list.append(delta_found)
                 # Final message dump for clarification.
-                dbg.prn(dbg.DLT, "-->dt.find_delta_manually: IMO:{} ILA:{} MAC:{} ILM:{} ILG:{}".format(IMO_resp, ILA_resp, mac_addr, ILM_resp, ILG_resp))
+                dbg.prn(dbg.DLT, "-->dt.find_delta_manually...{}: IMO:{} ILA:{} MAC:{} ILM:{} ILG:{}".format(i, IMO_resp, ILA_resp, mac_addr, ILM_resp, ILG_resp))
+                time.sleep(2) # prevent too frequent discovery happened. (sometimes this causes spawning 2 same proc)
         except Exception as e:
             if (self.manual_search_try_count<0):
                 self.manual_search_try_count -= 1
@@ -4558,6 +4799,7 @@ class source:
                 return False
             self.device = devClass(ip, vq, uid, pwd, realm, mac)
             self.device.model = modelname
+            # see if Monarch HDX or Monarch DX...very nasty
             if (modelname.find('Monarch HDX')>=0):
                 self.device.isHDX = True
             self.ffcap_cmd = False
@@ -4591,8 +4833,8 @@ class source:
             tmr['src'][str(self.id)+'alarm'] = TimedThread(self.device.alarmChk,period=2)
             # monitor device parameters
             tmr['src'][str(self.id)+'param'] = TimedThread(self.device.update,period=5)
-            dbg.prn(dbg.SRC, "[###]{0}[{1}] made -------------".format(modelname, idx))
-
+            
+            dbg.prn(dbg.SRC, "[###] ip:{}  model:{}  idx:{}  id:{} made -------------".format(ip, modelname, idx, self.id))
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC, "[---]source.init", e, sys.exc_info()[-1].tb_lineno)
     #end init
@@ -4607,6 +4849,7 @@ class source:
             else:
                 cmd = self.device.buildCapCmd(self.device.baseRTSPURL, self.ports['chk'],self.ports['mp4'],self.ports['hls'])
                 dbg.prn(dbg.SRC, "capture uses no proxy - model:{} url:{}".format(self.device.model, self.device.baseRTSPURL))
+            dbg.prn(dbg.SRC, "capture device:{} baseRTSPURL:{} xfbURL:{}".format(self.device.model, self.device.baseRTSPURL, self.xfbURL))
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRC,"[---]src.buildcapcmd err:".format(e))
             cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
@@ -4814,7 +5057,6 @@ class source:
                 self.device.initialized = False
                 return #there is nothing to do beyond this point without an RTSP url
             
-            
             #make sure live555 is up and running and no changes were made to the ip address
             if(enc.busy() and not (enc.code & enc.STAT_STOP) and self.rtspURL != oldURL):
                 # there is an encode going on
@@ -4831,9 +5073,7 @@ class source:
                 # start the ffmpeg process
                 procMan.padd(name=c.CAPTURE+self.device.vidquality, devID=self.device.ip, cmd=capCMD, keepAlive=True, killIdle=True, forceKill=True, threshold=5, srcidx=self.idx)
             #end if stream_url_changed !!!
-            
-            
-            
+
             # get the port (used to connect to rtsp stream to check its state)
             # the url should be in this format: rtsp://192.168.3.140:8554/proxyStream
             # to get the port:
@@ -4880,8 +5120,8 @@ class source:
                 self.device.isOn = (data.find('RTSP/1.0 200 OK')>=0)
                 try:
                     show_message = pu.pxpconfig.show_pingcam_check()
-                    if (not self.device.isOn):
-                        if (pu.pxpconfig.use_ping_camcheck()):
+                    if (pu.pxpconfig.use_ping_camcheck()):
+                        if (not self.device.isOn):
                             self.device.isOn = pu.io.ping(self.device.ip)
                             if (show_message):
                                 dbg.prn(dbg.SRC,"-->check cam with ping now...ip:{}  status:{}  url:{}  model:{}".format(self.device.ip, self.device.isOn, self.rtspURL, self.device.model))
@@ -5251,6 +5491,9 @@ class sourceManager:
         enc.statusSet(enc.STAT_LIVE)
         
     def build_m3u8(self, cidx, cvq, m3u8_file=""):
+        """
+        Build m3u8 file in the event folder when the structured folder system is used.
+        """
         templ_file = c.wwwroot + "_db/list_templ.m3u8"
         if (m3u8_file==""):
             m3u8_file = c.live_video + "list_" + cidx + cvq + ".m3u8"
@@ -5548,15 +5791,13 @@ class sourceManager:
                         startSuccess = startSuccess and procMan.padd(cmd=ffrecs['rec_'+str(idx)],name="record_"+postfix, devID="rec_"+str(idx),  \
                                 forceKill=False, modelname="rec_"+str(idx))
                         dbg.prn(dbg.DBG, "ENC_REC_START----> record_{} cmd:{}".format(postfix, ffrecs['rec_'+str(idx)]))
-
                 # update cams table                
-                # db = pu.db(c.wwwroot+"_db/pxp_main.db")
-                # sqlcmd = "INSERT INTO `cams` (`hid`, `camip`, `vq`, `camurl`, `error`, `mac`, `starttime`, `name`, `rts`, `chk`, `mp4`) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-                # db.query(sqlcmd, (evt_hid, src.device.ip, src.device.vidquality, src.device.ip, 'sucess', \
-                #     src.device.mac, "datetime('now','localtime')", src.device.model, \
-                #     src.ports['hls'], src.ports['chk'], src.ports['mp4']))
-                # db.close()
-            #end for idx in sources........................................................
+#                 db = pu.db(c.wwwroot+"_db/pxp_main.db")
+#                 sqlcmd = "INSERT INTO `cams` (`hid`, `camip`, `vq`, `camurl`, `error`, `mac`, `starttime`, `name`, `rts`, `chk`, `mp4`) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+#                 db.query(sqlcmd, (evt_hid, src.device.ip, src.device.vidquality, src.device.ip, 'sucess', \
+#                     src.device.mac, "datetime('now','localtime')", src.device.model, \
+#                     src.ports['hls'], src.ports['chk'], src.ports['mp4']))
+#                 db.close()
 
             # ======== start segmenter after ffmpegs are all started...by Andrei
             dbg.prn(dbg.SRM, "ENC_REC_START----> segmenterLater:{}".format(segmenterLater))
@@ -7214,10 +7455,6 @@ def DataHandler(data,addr):
                     #start encode, stop encode, pause encode, resume encode
                     nobroadcast = True
                     encControl.enq(data)
-                if(dataParts[0]=='ARQ' or dataParts[0]=='RSP' or dataParts[0]=='ADP' or dataParts[0]=='AUP' or dataParts[0]=='APR'):
-                    #appreq
-                    nobroadcast = True
-                    encControl.enq(data)
                 if(dataParts[0]=='BRQ'):
                     #appreq in background
                     nobroadcast = True
@@ -7388,190 +7625,6 @@ def SockHandler(sock,addr):
     except:
         pass
 
-####################################################################################
-
-class c_sqlmdb(object):
-    def __init__(self):
-        self.db = False
-        self.cur = False
-        self.reqId = 0
-        self.cookies = {}
-        self.deletion_timeout = 90.0
-
-    def init_db(self):
-        try:
-            self.delete_req(cleanup=True)
-        except Exception as e:
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.init_db --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
-
-    def addreq(self, param):
-        success = False
-        try:
-            if (len(param)>0):
-                jsonParam = json.loads(param.strip())
-                if ('cmd' in jsonParam and 'cookie' in jsonParam):
-                    cookie = jsonParam['cookie'].strip()
-                    if (not self.found_req(cookie)):
-                        req_time = time.time()
-                        progress = 0
-                        cmd = ""
-                        event = ""
-                        req_user = ""
-                        req_dev = ""
-                        result = ""
-                        req_count = 0
-                        if ('cmd' in jsonParam):
-                            cmd = jsonParam['cmd']
-                        if ('user' in jsonParam):
-                            req_user = jsonParam['user']
-                        if ('event' in jsonParam):
-                            event = jsonParam['event']
-                        if ('device' in jsonParam):
-                            event = jsonParam['device']
-                        db = pu.db(c.wwwroot+"_db/pxp_cmd.db")
-                        sql = "INSERT INTO `appreq` (`reqId`,`cmd`,`cmd_param`,`req_time`,`req_user`,`req_dev`,`progress`,`event`,`cookie`,`req_count`,`result`) VALUES(?,?,?,?,?,?,?,?,?,?,?)"
-                        success = db.query(sql, (self.reqId,cmd,param,req_time,req_user,req_dev,progress,event,cookie,req_count,result))
-                        if (success):
-                            self.cookies[cookie] = {}
-                            self.cookies[cookie]['token']=cookie
-                            self.cookies[cookie]['req_count']=req_count
-                            self.cookies[cookie]['result']=result
-                            self.cookies[cookie]['replied']=0
-                            pu.mdbg.log("sqlmdb.addreq done ----> cookie:{} reqId:{}".format(cookie, self.reqId))
-                            self.reqId += 1
-                        db.commit()
-                        db.close()
-                        self.delete_req(cleanup=False) # delete every records req time is greater than 90 seconds
-                    else:
-                        # found cookie...update reqest counter then.
-                        self.update_req(cookie)
-                    return cookie if success else ""
-        except Exception as e:
-            self.db.rollback()
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.addreq --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
-            return ""
-
-    def find_ans(self, param):
-        ans = {}
-        ans_found = 0
-        try:
-            if (len(param)>0):
-                jsonParam = json.loads(param.strip())
-                if ('cookie' in jsonParam):
-                    if (self.found_req(jsonParam['cookie'])):
-                        ans = self.cookies[jsonParam['cookie']]['result']
-                        ans_found = 1
-                        pu.mdbg.log("sqlmdb.find_ans found ----> cookie:{}  answer:{}".format(jsonParam['cookie'], ans))
-            self.cookies[jsonParam['cookie']]['replied'] = ans_found
-            return ans 
-        except Exception as e:
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.find_ans --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
-            return ans
-
-    def delete_req(self,cleanup=False):
-        db = pu.db(c.wwwroot+"_db/pxp_cmd.db")
-        if (cleanup):
-            sql = "DELETE FROM `appreq`"
-            success = db.query(sql,'')
-            self.cookies = {}
-            self.reqId = 0
-        else:
-            sql = "DELETE FROM `appreq` WHERE (?-`req_time`)>" + str(self.deletion_timeout)
-            success = db.query(sql, (time.time(),))
-        db.commit()
-        db.close()
-        return success
-
-    def update_result(self, param):
-        try:
-            if (pu.pxpconfig.check_webdbg('param')):
-                pu.mdbg.log("sqlmdb.update_result-->param:{}".format(param))
-            if (len(param)>0):
-                jsonParam = json.loads(param.strip())
-                self.update_req(cookie=jsonParam['cookie'], result=json.dumps(param))
-                return True
-        except Exception as e:
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.update_result --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
-            return False
-
-    def update_progress(self,param):
-        try:
-            #if (pu.pxpconfig.check_webdbg('param')):
-            #    pu.mdbg.log("sqlmdb.update_progress-->param:{}".format(param))
-            pu.mdbg.log("sqlmdb.update_progress-->param:{}".format(param))
-            db = pu.db(c.wwwroot+"_db/pxp_cmd.db")
-            pu.mdbg.log("sqlmdb.progress -> param:{}".format(param.strip()))
-            data = param.strip().split(':')
-            sql = "UPDATE `appreq` SET `progress`=? WHERE `cookie`=?"
-            success = db.query(sql, (int(data[0]), data[1]))
-            db.commit()
-            db.close()
-            return success
-        except Exception as e:
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.update_progress --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
-            return False
-    
-    def update_req(self, cookie, result=False):
-        success = False        
-        db = pu.db(c.wwwroot+"_db/pxp_cmd.db")
-        if (not result):
-            sql = "UPDATE `appreq` SET `req_count`=? WHERE `cookie`=?"
-            if (cookie in self.cookies):
-                self.cookies[cookie]['req_count'] += 1
-            success = db.query(sql, (self.cookies[cookie]['req_count'], self.cookies[cookie]['token']))
-            db.commit()
-            db.close()
-            if (pu.pxpconfig.check_webdbg('param')):
-                pu.mdbg.log("sqlmdb.update_req-->cookie:{}  count:{}".format(cookie, self.cookies[cookie]['req_count']))
-        else:
-            sql = "UPDATE `appreq` SET `result`=? WHERE `cookie`=?"
-            if (cookie in self.cookies):
-                self.cookies[cookie]['result'] = result
-                success = db.query(sql, (result.strip(), self.cookies[cookie]['token']))
-            db.commit()
-            db.close()
-            if (pu.pxpconfig.check_webdbg('param')):
-                pu.mdbg.log("sqlmdb.update_req done ----> cookie:{} result:{}".format(self.cookies[cookie]['token'], result))
-        return success
-
-    def found_req(self, cookie):
-        try:
-            db = pu.db(c.wwwroot+"_db/pxp_cmd.db")
-            sql = "SELECT * FROM `appreq` WHERE `cookie`=?"
-            success = db.query(sql, (cookie,))
-            rows = db.getasc()
-            if (len(rows)>0):
-                if (not cookie in self.cookies):
-                    self.cookies[cookie] = {}
-                self.cookies[cookie]['token'] = rows[0]['cookie']
-                self.cookies[cookie]['req_count'] = rows[0]['req_count']
-                self.cookies[cookie]['result'] = rows[0]['result']
-            else:
-                self.cookies = {}
-            db.close()
-            if (pu.pxpconfig.check_webdbg('param')):
-                if len(rows) > 0:
-                    pu.mdbg.log("sqlmdb.found_req ----> cookie:{}  count:{}".format(cookie, self.cookies[cookie]['req_count']))
-                else:
-                    pu.mdbg.log("sqlmdb.found_req ----> cookie:{}  NOT FOUND".format(cookie))
-            if (success):
-                return True if len(rows) > 0 else False
-        except Exception as e:
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.found_req --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
-        return False
-
-    def dump(self):
-        try:
-            db = pu.db(c.wwwroot+"_db/pxp_cmd.db")
-            sql = "SELECT * FROM `appreq` ORDER BY `req_time` DESC"
-            success = db.query(sql,'')
-            if (success):
-                rows = db.getrows()
-                for row in rows:
-                    pu.mdbg.log("sqlmdb-->{}".format(row))
-            db.close()
-        except Exception as e:
-            dbg.prn(dbg.ERR|dbg.PXP,"[---] sqlmdb.dump --> err:{} lineno:{}".format(e, sys.exc_info()[-1].tb_lineno))
 
 # devices that will be discovered on this system
 devEnabled = {
@@ -7590,9 +7643,12 @@ devEnabled = {
     ,"dt":{ #delta
         "class":encDelta
     }
-    # , "ax":{ #axis
-    #       "class":encAxis
-    # }
+    , "ax":{ #axis
+          "class":encAxis
+    }
+    , "dc":{ #dummy IPCam 
+          "class":encIPcam
+    }
 #     ,"db":{
 #          "class":encDebug
 #     }
@@ -7601,6 +7657,7 @@ tmr = {}
 tmr['misc'] = [] #contains miscellaneous threads (that might have been killed already or still alive but useless)
 # initialize logging class
 dbg = debugLogger()
+#dbg = pxplog.appLog()
 appg = appGlobal()
 
 if __name__=='__main__': # will enter here only when executing this file (if it is included from another process, this IF condition will be false)
@@ -7618,11 +7675,6 @@ if __name__=='__main__': # will enter here only when executing this file (if it 
             dbg.prn(dbg.MN, "first instance of pxpservice")
         enc = encoderStatus()
         encControl = commander() #encoder control commands go through here (start/stop/pause/resume)
-        #-----------------------------------
-        # requests for in-memory database
-        #-----------------------------------
-        sqlmdb = c_sqlmdb()
-        sqlmdb.init_db()
 
         dbg.prn(dbg.MN,"---APP START--", c.ver)
         procMan = procmgr()
