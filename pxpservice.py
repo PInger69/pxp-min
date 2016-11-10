@@ -1930,16 +1930,17 @@ class encDevice(object):
                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
                 + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) #+ cap_conf
-
-#        capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
-#                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-#                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
-#                 + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
-        # AXIS 4K
-        #capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
-        #        + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-        #        + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
-        #        + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+            
+#         capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
+#                  + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+#                  + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
+#                  + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+#         # AXIS 4K
+#         if (self.model.find("AXIS")>=0):
+#             capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
+#                     + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+#                     + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
+#                     + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
         # Delta Only        
 #         capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
 #                 + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
@@ -5595,6 +5596,9 @@ class sourceManager:
                     dbg.log(dbg.SRM, "SOURCE_IDX-->{}/{} error:number of sources changed during iteration".format(idx, len(self.sources)))
                     break
                 src = self.sources[idx]
+                
+                if (src.device.model.find("AXIS")>=0):
+                    ffCapCmdTpl = "{ff} -fflags +genpts -rtsp_transport udp -i {url} -codec copy -f mpegts udp://127.0.0.1:{xfi}"
                 
                 if(not(src.device.isCamera and src.device.isOn)):#skip devices that do not have a video stream available
                     dbg.log(dbg.SRM, "CHECK SOURCE_IDX-->{}/{} idx:{} model:{} ip:{} vq:{} url:{} ports:{} (cam:{} on:{} mac:{})".format(idx, len(self.sources), src.idx, src.device.model, src.device.ip, src.device.vidquality, src.rtspURL, src.ports, src.device.isCamera, src.device.isOn, src.device.mac)) 
