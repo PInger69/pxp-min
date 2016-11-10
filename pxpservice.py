@@ -1926,15 +1926,20 @@ class encDevice(object):
         mp4entry = " udp://127.0.0.1:"
         if (pu.pxpconfig.use_mp4tcp()):
             mp4entry = " tcp://127.0.0.1:"
+        capcmd = c.ffbin+" -i " + camURL + latency \
+                + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+                + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
+                + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) #+ cap_conf
+
 #        capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
 #                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
 #                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
 #                 + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
         # AXIS 4K
-        capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
-                + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-                + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
-                + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+        #capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
+        #        + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+        #        + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
+        #        + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
         # Delta Only        
 #         capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
 #                 + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
