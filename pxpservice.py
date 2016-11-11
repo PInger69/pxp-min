@@ -2404,7 +2404,7 @@ class encAxis(encDevice):
                                         # prepare fake LQ cam URL for the next addition
                                         # rtsp://root:admin@192.168.2.102:554/axis-media/media.amp?videocodec=jpeg&resolution=640x480&date=1&clock=1&text=1
                                         lowq_port = output['port']
-                                        lowq_url = "rtsp://" + devIP + ":" + str(output['port']) + "/axis-media/media.amp?videocodec=h264&resolution=640x480&date=0&clock=0&text=0"
+                                        lowq_url = "rtsp://" + devIP + ":" + str(output['port']) + "/axis-media/media.amp?videocodec=h264&resolution=640x360&date=0&clock=0&text=0"
                                         if 'url' in output:
                                             del output['url']  
                                         if 'port' in output:

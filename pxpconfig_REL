@@ -37,7 +37,8 @@ dlt_ILA_2 = 192.168.5.126
 dlt_MAC_2 = 00:0f:5b:04:60:6e
 dlt_ILM = 255.255.255.0
 dlt_ILG = 192.168.5.1
-# IPC (dummy IP camera settings) rtsp://192.168.5.126:554/mpeg4
+#--------------------------
+# IPC (dummy IP camera settings, i.e rtsp://192.168.5.126:554/mpeg4)
 ipc_count = 2
 ipc_ILA_1 = 192.168.5.123
 ipc_URI_1 = 192.168.5.123/stream1
@@ -48,16 +49,16 @@ ipc_MAC_2 = 00:00:00:00:00:02
 ipc_ILM = 255.255.255.0
 ipc_ILG = 192.168.5.1
 ipc_RES = 1920x1080p25
-#---show settings page options
-show_pingcam_check = 1
-show_webplayer = 1
-show_tcpopt = 1
-show_option = 1
+#--------------------------
+show_pingcam_check = 0
+show_webplayer = 0
+show_tcpopt = 0
+show_option = 0
 alert_mail = wuzexsLoysah3dzEyuCTxtDj
 alert_pass = lqyipNfjyKQ=
 #--------------------------
 #|PPC|SRM|MDB
-pxp_dbg_level = KLL|ERR|MN|SRM|PCM
+pxp_dbg_level = KLL|ERR|MN|BKP|SRM|PCM|SRC|ENC
 pxp_hide_cmdmsg = syncme|getvideoinfo|encoderstatjson|service|past_check_status
 pxp_svc_src_debug = 0
 pxp_svc_srm_debug = 0
