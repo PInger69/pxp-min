@@ -1926,11 +1926,11 @@ class encDevice(object):
         mp4entry = " udp://127.0.0.1:"
         if (pu.pxpconfig.use_mp4tcp()):
             mp4entry = " tcp://127.0.0.1:"
+        # use XFB
         capcmd = c.ffbin+" -i " + camURL + latency \
                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
-                + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) #+ cap_conf
-            
+                + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) #+ cap_conf            
 #         capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
 #                  + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
 #                  + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
@@ -1941,17 +1941,18 @@ class encDevice(object):
 #                     + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
 #                     + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
 #                     + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
-        # Delta Only        
-#         capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
-#                 + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
-#                 + " -fflags +igndts -codec copy -map 0:v -f mpegts " + mp4entry + str(camMP4) \
-#                 + " -fflags +igndts -codec copy -map 0:v" \
-#                 + " -vf drawtext=\"fontfile=/Library/Fonts/Arial.ttf: timecode='00\:00\:00\:00':r=24.976:x=10:y=10:fontsize=62:fontcolor=lightgreen: box=1: boxcolor=0x00000099\"" \
-#                 + " -f mpegts" \
-#                 + "     -c:v libx264 -preset ultrafast -tune zerolatency -r 29 -s 720x480 -pix_fmt yuv420p -b:v 1000k -minrate 1000k -maxrate 1000k -bufsize 1835k" \
-#                 + "     -x264opts keyint=50:bframes=0:ratetol=1.0:ref=1 -profile main -level 3.1" \
-#                 + "     -c:a copy" \
-#                 + " udp://127.0.0.1:" + str(camHLS) + "?pkt_size=1316"
+#         # Delta Only
+#         if (self.model.find("Delta")>=0):        
+#             capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
+#                     + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
+#                     + " -fflags +igndts -codec copy -map 0:v -f mpegts " + mp4entry + str(camMP4) \
+#                     + " -fflags +igndts -codec copy -map 0:v" \
+#                     + " -vf drawtext=\"fontfile=/Library/Fonts/Arial.ttf: timecode='00\:00\:00\:00':r=24.976:x=10:y=10:fontsize=62:fontcolor=lightgreen: box=1: boxcolor=0x00000099\"" \
+#                     + " -f mpegts" \
+#                     + "     -c:v libx264 -preset ultrafast -tune zerolatency -r 29 -s 720x480 -pix_fmt yuv420p -b:v 1000k -minrate 1000k -maxrate 1000k -bufsize 1835k" \
+#                     + "     -x264opts keyint=50:bframes=0:ratetol=1.0:ref=1 -profile main -level 3.1" \
+#                     + "     -c:a copy" \
+#                     + " udp://127.0.0.1:" + str(camHLS) + "?pkt_size=1316"
         return capcmd
     def discover(self):
         """ To implement in device-specific class """
@@ -2355,6 +2356,9 @@ class encAxis(encDevice):
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
                 return
+            if(enc.code & enc.STAT_LIVE):
+                dbg.prn(dbg.AXS, "encAxis.discovery is disabled due to live mode...")
+                return
             global sockCmd
             global devaddingnow
             dbg.prn(dbg.AXS, "-->Start looking for AXIS camera.....")
@@ -2370,7 +2374,7 @@ class encAxis(encDevice):
                             self.realm = 'AXIS_' + self.serial
                             
                         if (pu.mdbg.checkscf(sockCmd, pu.SCF_SHOWBONJ)):
-                            dbg.prn(dbg.AXS, "-->AXIS:recs-->{0}".format(dev))
+                            dbg.prn(dbg.AXS, "-->AXIS:recs-->{}".format(dev))
                             
                         devIP, devPT = self.parseURI(dev.location)
                         if(not devIP): #did not get ip address of the device
@@ -7064,8 +7068,9 @@ class procmgr:
     def __init__(self):
         self.procs = {} #processes in the system
     def dbgprint(self):
-        #return
         global sockCmd
+        if(sockCmd&pu.SCF_HIDECMD!=0):
+            return
         procs = self.procs.copy()
         live555Count = 0
         segmentCount = 0
