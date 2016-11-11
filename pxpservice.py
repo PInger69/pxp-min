@@ -2474,8 +2474,12 @@ class encAxis(encDevice):
                                     params['MACAddress'] = ethParams['root.Network.eth0.MACAddress']
                             else: #login not required
                                 params['streamFramerate']="30"
-                            params['inputResolution']=res[1]+'p'+params['streamFramerate']
-                            params['streamResolution']=res[1]+'p'                                
+                            if (self.vidquality == 'LQ'):
+                                params['inputResolution']='360p'+params['streamFramerate']
+                                params['streamResolution']='360p'                                
+                            else:
+                                params['inputResolution']=res[1]+'p'+params['streamFramerate']
+                                params['streamResolution']=res[1]+'p'                                
                             params['connection']=True
         except Exception as e:
             dbg.prn(dbg.AXS|dbg.ERR,"[---]encAxis.getParams", e, sys.exc_info()[-1].tb_lineno)
