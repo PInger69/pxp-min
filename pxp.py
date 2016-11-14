@@ -627,6 +627,7 @@ def rec_stat(params=False):
 	recstat_param = params
 	if (not params):
 		recstat_param = pu.uri.segment(3,"{}") # always GET command
+	#param:{"sidx":"*", "event":"live", "srclen":2, "evtpath":"f1aa0f0e67930d6d3ae5ad129a1df421916bba2a_local"}
 	result = {"success":False, "msg":""}
 	sIdx = "00hq"
 	event = 'live'
@@ -650,6 +651,7 @@ def rec_stat(params=False):
 			srclen = 0
 		else:
 			srclen = param['srclen']
+		evt_path = param['evtpath']
 		
 		try:
 			resp = pu.disk.sockSendWait(msg="FCT|"+event,addnewline=False) # get feed count
@@ -696,16 +698,43 @@ def rec_stat(params=False):
 								continue
 							info = os.stat(d + sidx + '_segm_0.ts')
 							#result['atime-'+sidx]=info[7]
-							result['ctime-'+sidx]=info[9]
+							result[str('ctime-'+sidx)]=info[9]
 							count += 1			
 							if (pu.pxpconfig.check_webdbg('param')):			
 								pu.mdbg.log("rec_stat--> f:{} sidx:{}  videopath:{} info:{}".format(f, sidx, videoPath, result))
 		#result['freedisk'] = pu.disk.diskusage()
 		if (srclen>0):
-			result['success'] = (srclen==count)
+			result["success"] = (srclen==count)
 		else:
-			result['success'] = True
-		result['msg'] = "{} of result(s) found".format(count)
+			result["success"] = True
+		result["msg"] = "{} of result(s) found".format(count)
+
+        #-----------------------------------------------------------------------------------------
+		# Now we need to add rec_stat into database so downloaded events can use those data
+		# Right now, 'extra' field in events table is used for save data. 
+		rec_stat_str = str(result) # should be converted with str() for json.loads...
+		rec_stat_str = rec_stat_str.replace("False", '0')
+		rec_stat_str = rec_stat_str.replace("True", '1')
+		rec_stat_str = rec_stat_str.replace("'", '"')
+		try:
+			db = pu.db(c.wwwroot+"_db/pxp_main.db")
+			sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+			db.query(sql,(evt_path,))
+			eventData = db.getasc()
+			db.close()
+			if(len(eventData)>0):
+				#eventPath = c.wwwroot+eventData[0]['datapath']
+				db = pu.db(c.wwwroot+"_db/pxp_main.db")
+				sql = "UPDATE `events` SET `extra`=? WHERE `hid`=?"
+				success = db.query(sql,(rec_stat_str, evt_path))
+				db.close()
+				if (success):
+					pu.mdbg.log("{} rec_stat db updated...".format(rec_stat_str))
+				else:
+					pu.mdbg.log("{} rec_stat db update FAILED...".format(rec_stat_str))
+		except Exception as e:
+			pu.mdbg.log("[---] rec_stat db update FAILED...{}".format(str(sys.exc_info()[-1].tb_lineno)+' '+str(e)))
+			pass
 	except Exception as e:
 		pu.mdbg.log("[---] error in rec_stat: {}".format(str(sys.exc_info()[-1].tb_lineno)+' '+str(e)))
 	return result
@@ -3607,7 +3636,8 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 					  IFNULL(events.hid,'000') AS `hid`, \
 					  strftime('%Y-%m-%d_%H-%M-%S',events.date) AS `dateFmt`, \
 					  leagues.sport AS `sport`, events.datapath, \
-					  events.deleted AS `deleted` \
+					  events.deleted AS `deleted`, \
+					  IFNULL(events.extra,'{\"success\":0, \"msg\":\"\"}') AS `extra` \
 				FROM `events` \
 				LEFT JOIN `leagues` ON events.league=leagues.name \
 				" + query + "\
@@ -3649,6 +3679,15 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 			evtName = str(row['datapath'])
 			evtDir = c.wwwroot+evtName
 			result[i]['name']=evtName
+ 			rec_stat_str = str(row['extra'])
+ 			rec_stat_str = rec_stat_str.replace("'", '"')
+ 			if (rec_stat_str==""):
+ 				z = json.loads('{\"success\":0, \"msg\":\"\"}')
+ 			else:
+ 			 	z = json.loads(rec_stat_str)
+			result[i]['rec_stat'] = z
+			pu.mdbg.log("_listEvents------> extra_rec_stat:{}".format(rec_stat_str))
+			
 			# check if there is a streaming file (playlist) exists
 			# add any stream playlists to the sources in this format:
 
@@ -3658,6 +3697,7 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 				result[i]['vid'] = firstSrc
 				result[i]['vid_2'] = sources
 				result[i]['num_vid'] = len(sources)
+				
 			# find all mp4 files and add them to the list of downloadable files
 			sources, firstSrc = _listEvtSources(evtName,srcType='main')
 			if(sources):
@@ -3672,6 +3712,7 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 					result[i]['live'] = firstSrc
 					result[i]['live_2'] = sources
 					result[i]['num_live'] = len(sources)
+
 			# get full folder size
 			if(evtName==liveName):
 				evtDir = c.wwwroot+'live'
@@ -3845,7 +3886,7 @@ def _listEvtSources(evtName, srcType='list'):
 		return (sources,sources[firstSource]['hq']) #return a tuple - dictionary of all found sources and the first available source (for old system compatibility)
 	except Exception as e:
 		em = str(e) + ' ' + str(sys.exc_info()[-1].tb_lineno)
-		pu.mdbg.log("[---] _listEvtSources:done (reason:{})".format(em))
+		pu.mdbg.log("[---] _listEvtSources:done (reason:{}  firstSource:{})".format(em, firstSource))
 		#pu.mdbg.log("[---] _listEvtSources:", em)
 		#pu.mdbg.log("[---] _listEvtSources: evtName:{}  firstSource:{}  sources:{}".format(evtName, firstSource, sources))
 		return (False, _err(em + " -- listEvtSources"))
@@ -3878,6 +3919,7 @@ def _listTeams():
 #end listTeams
 
 def _log(string):
+
 	print(string)
 	os.system("echo '"+string+"' >>"+c.wwwroot+"convert.txt")
 def _logSql( ltype,lid=0,uid=0,dbfile="",db=False,ms=False):

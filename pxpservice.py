@@ -1926,22 +1926,17 @@ class encDevice(object):
         mp4entry = " udp://127.0.0.1:"
         if (pu.pxpconfig.use_mp4tcp()):
             mp4entry = " tcp://127.0.0.1:"
-        # use XFB
-        capcmd = c.ffbin+" -i " + camURL + latency \
-                + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-                + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
-                + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) #+ cap_conf            
-#         capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
-#                  + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-#                  + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
-#                  + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
-#         # AXIS 4K
-#         if (self.model.find("AXIS")>=0):
-#             capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
-#                     + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
-#                     + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
-#                     + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
-#         # Delta Only
+        capcmd = c.ffbin+" -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL + latency \
+                 + " -fflags +igndts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+                 + " -fflags +igndts " + mp4conf + mp4entry + str(camMP4) \
+                 + " -fflags +igndts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+        # AXIS 4K
+        if (self.model.find("AXIS")>=0):
+            capcmd = c.ffbin+" -fflags +genpts -rtsp_transport " + protocol + " -i " + camURL + latency \
+                    + " -fflags +genpts -codec copy -f h264 udp://127.0.0.1:" + str(chkPRT) \
+                    + " -fflags +genpts " + mp4conf + mp4entry + str(camMP4) \
+                    + " -fflags +genpts -codec copy -f mpegts udp://127.0.0.1:" + str(camHLS) + cap_conf
+        # Delta Only
 #         if (self.model.find("Delta")>=0):        
 #             capcmd = "/Users/dev/works/cpp/ffmpeg/ffmpeg -fflags +igndts -rtsp_transport " + protocol + " -i " + camURL \
 #                     + " -fflags +igndts -codec copy -map 0:v -f mpegts udp://127.0.0.1:" + str(chkPRT) \
@@ -2406,7 +2401,7 @@ class encAxis(encDevice):
                                         output['model'] = self.model + "." + output['vid-quality']
                                         callback(output)
                                         # prepare fake LQ cam URL for the next addition
-                                        # rtsp://root:admin@192.168.2.102:554/axis-media/media.amp?videocodec=jpeg&resolution=640x480&date=1&clock=1&text=1
+                                        # rtsp://root:admin@192.168.2.102:554/axis-media/media.amp?videocodec=jpeg&resolution=640x360&date=1&clock=1&text=1
                                         lowq_port = output['port']
                                         lowq_url = "rtsp://" + devIP + ":" + str(output['port']) + "/axis-media/media.amp?videocodec=h264&resolution=640x360&date=0&clock=0&text=0"
                                         if 'url' in output:
@@ -4792,7 +4787,6 @@ class source:
                           hls : udp port where m3u8 segmenter receives MPEG-TS data, 
                           chk : udp port that is used to check whether packets are coming in, 
                           rtp : port used to connect to the rtsp server (for source validation)
-                          xfb : X-Failover Backup port - used to ensure stream continuity (this is where data will be received from)
                 encType(str)  : type of source/encoder (e.g. td_cube, ph_glass, mt_monarch)
                 url(str)      : rtsp source url (must specify url or preview)
                 preview(str)  : url of the preview rtp stream (must specify url or preview)
@@ -4802,7 +4796,6 @@ class source:
             self.ports          = ports
             self.type           = encType
             self.rtspURL        = False # this is the public (proxied) rtsp URL - a stream that anyone on the network can view
-            self.xfbURL         = False # udp://... url after passing through the XFB
             self.previewURL     = False
             self.id             = int(time.time()*1000000) #id of each device is gonna be a time stamp in microseconds (only used for creating threads)
             self.ipcheck        = '127.0.0.1' #connect to this ip address to check rtsp - for now this will be simply connecting to the rtsp proxy, constant pinging of the RTSP on the device directly can cause problems
@@ -4837,8 +4830,7 @@ class source:
                 self.device.rtspURL = preview
                 self.device.baseRTSPURL = preview
             self.device.updatedb()
-            if('xfo' in ports):
-                self.xfbURL = "udp://127.0.0.1:"+str(ports['xfo'])
+
             if(not 'src' in tmr):
                 tmr['src']={}
             # monitor the stream
@@ -4858,85 +4850,22 @@ class source:
     def buildCapCmd(self):
         """ creates an ffmpeg capture command for this source using device's buildCapCmd method """
         try:
-            if (pu.pxpconfig.use_proxy() or not self.device.baseRTSPURL):
-                cmd = self.device.buildCapCmd(self.xfbURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
-            else:
-                cmd = self.device.buildCapCmd(self.device.baseRTSPURL, self.ports['chk'],self.ports['mp4'],self.ports['hls'])
-                dbg.prn(dbg.SRC, "capture uses no proxy - model:{} url:{}".format(self.device.model, self.device.baseRTSPURL))
-            dbg.prn(dbg.SRC, "capture device:{} baseRTSPURL:{} xfbURL:{}".format(self.device.model, self.device.baseRTSPURL, self.xfbURL))
+            cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
+            if (not pu.pxpconfig.use_proxy()):
+                if (self.device.baseRTSPURL):
+                    cmd = self.device.buildCapCmd(self.device.baseRTSPURL, self.ports['chk'],self.ports['mp4'],self.ports['hls'])
+                    dbg.prn(dbg.SRC, "capture uses no proxy - model:{} url:{}".format(self.device.model, self.device.baseRTSPURL))
+                else:
+                    cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
         except Exception as e:
-            dbg.prn(dbg.ERR|dbg.SRC,"[---]src.buildcapcmd err:".format(e))
+            dbg.prn(dbg.ERR|dbg.SRC,"[---]src.buildcapcmd err:{} cmd:{}".format(e,cmd))
             cmd = self.device.buildCapCmd(self.rtspURL,self.ports['chk'],self.ports['mp4'],self.ports['hls'])
         return cmd
     def clearport(self):
         self.sIN.close()
         self.sIN = False
-    def camPortMon_resusable(self):
-        """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
-        try:
-            dbg.prn(dbg.SRC,"starting camportmon_reusable for {} {}".format(self.idx, self.ports['chk']))
-            host = '127.0.0.1'          #local ip address
-            self.sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #Create a socket object
-            self.sIN.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            portIn = self.ports['chk']
-            err = True
-            while (err and not (enc.code & enc.STAT_SHUTDOWN)):
-                try:
-                    self.sIN.bind((host, portIn)) #Bind to the port
-                    err = False
-                except (socket.error, KeyboardInterrupt), msg:
-                    self.sIN.close()
-                    self.sIN = False
-                    time.sleep(1)
-                    err = True
-                    dbg.prn(dbg.ERR|dbg.SRC,"portmon cannot start {} {} {}".format(portIn, socket.error, msg))
-                    pass
-            #end while err
-            dbg.prn(dbg.SRC,".............bound.................{} {} {}".format(self.idx, self.ports['chk'], self.isEncoding), )
-            self.sIN.setblocking(0)
-            self.sIN.settimeout(0.5)
-            timeStart = time.time()
-            while ((enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED)) and self.isEncoding):
-                try:
-                    if((enc.code & enc.STAT_PAUSED)): #the encoder is paused - do not check anything
-                        time.sleep(0.2) #reduce the cpu load
-                        continue
-                    data, addr = self.sIN.recvfrom(65535)
-                    if(len(data)<=0):
-                        continue
-                    #pxp status should be 'live' at this point
-                    if((enc.code & enc.STAT_START) and (time.time()-timeStart)>2):
-                        enc.statusSet(enc.STAT_LIVE,autoWrite=False)
-                except (socket.error, KeyboardInterrupt), msg:
-                    # only gets here if the connection is refused or interrupted
-                    # sys.stdout.write('.')
-                    dbg.prn(dbg.ERR|dbg.SRC,"^.^  port:{}  sock:{}  msg:{}".format(portIn, socket.error, msg))
-                    #print '^.^   port:{0}'.format(portIn)
-                    try:
-                        timeStart = time.time()                            
-                        if(enc.code & enc.STAT_LIVE):
-                            # only set encoder status if there is a live event 
-                            # to make sure the monitor runs an RTSP check on the stream
-                            self.device.isOn=False
-                            # start file monitor to add EXT-X-DISCONTINUITY
-                            if(not(str(self.id)+'_filemon' in tmr['src'])):
-                                tmr['src'][str(self.id)+'_filemon'] = TimedThread(self.fileSegMon)
-                        time.sleep(1) #wait for a second before trying to receive data again
-                    except (Exception,KeyboardInterrupt) as e:
-                        self.sIN.close()
-                        self.sIN = False
-                        dbg.prn(dbg.ERR|dbg.SRC,"TT.TT  err:{}".format(e))
-                        pass
-                except (Exception,KeyboardInterrupt) as e:
-                    dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon_reusable err: ",e,sys.exc_info()[-1].tb_lineno)
-            #end while
-        except (Exception, KeyboardInterrupt) as e:
-            self.sIN.close()
-            self.sIN = False
-            dbg.prn(dbg.ERR|dbg.SRC,"[---]camportmon_reusable err: ", e, sys.exc_info()[-1].tb_lineno)
-        self.sIN.close()
-        self.sIN = False
-        dbg.prn(dbg.SRC,"camportmon_reusable exited normally")
+    def camPortCheckMon(self):
+        pass
     def camPortMon(self):
         """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
         try:
@@ -4980,7 +4909,7 @@ class source:
                         if(enc.code & enc.STAT_LIVE):
                             # only set encoder status if there is a live event 
                             # to make sure the monitor runs an RTSP check on the stream
-                            # self.device.isOn=False #don't restart anything - just enable filemon
+                            self.device.isOn=False
                             # start file monitor to add EXT-X-DISCONTINUITY
                             if(not(str(self.id)+'_filemon' in tmr['src'])):
                                 tmr['src'][str(self.id)+'_filemon'] = TimedThread(self.fileSegMon)
@@ -5254,14 +5183,12 @@ class sourceManager:
         self.hlsBase = 22600 #ffmpeg captures rtsp stream and outputs MPEG-TS here
         self.chkBase = 22700 #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
         self.rtpBase = 8500  #rtsp proxy port - when live555 starts, it will try to run on this port, if that doesn't work, i'll try +1 port and so on
-        self.xfiBase = 20000 #X-Failover Backup main input port - this is where XFB will try to pull the main stream from
-        self.xfbBase = 21000 #X-Failover Backup blue screen port - this is where XFB will get the backup stream if XFI port fails
-        self.xfoBase = 22000 #X-Failover Backup output port - the XFB will output data on this port
+        # be careful not to overlap the port number whatever the reason is.
         self.mp4BaseByType = {'sn_snc':22100, 'td_cube':22400, 'sn_axis':22700, 'mt_monarch':23100, 'ph_glass':23400, 'dt_enc':23700} 
         self.hlsBaseByType = {'sn_snc':22200, 'td_cube':22500, 'sn_axis':22800, 'mt_monarch':23200, 'ph_glass':23500, 'dt_enc':23800} 
         self.chkBaseByType = {'sn_snc':22300, 'td_cube':22600, 'sn_axis':22900, 'mt_monarch':23300, 'ph_glass':23600, 'dt_enc':23900} 
-        self.rtpBaseByType = {'sn_snc':10100, 'td_cube': 8500, 'sn_axis':14100, 'mt_monarch':15100, 'ph_glass':16100, 'dt_enc':17100} 
-        #self.rtpBaseByType = {'sn_snc':8500, 'td_cube':8500, 'sn_axis':8500, 'mt_monarch':8500, 'ph_glass':8500} 
+        self.rtpBaseByType = {'sn_snc':10100, 'td_cube': 8500, 'sn_axis':14100, 'mt_monarch':15100, 'ph_glass':16100, 'dt_enc':17100}
+        #self.rtpBaseByType = {'sn_snc':8500, 'td_cube':8500, 'sn_axis':8500, 'mt_monarch':8500, 'ph_glass':8500}
         #self.mp4BaseByType = {'sn_snc':22500, 'td_cube':22500, 'sn_axis':22500, 'mt_monarch':22500, 'ph_glass':22500} 
         #self.hlsBaseByType = {'sn_snc':22600, 'td_cube':22600, 'sn_axis':22600, 'mt_monarch':22600, 'ph_glass':22600} 
         #self.chkBaseByType = {'sn_snc':22700, 'td_cube':22700, 'sn_axis':22700, 'mt_monarch':22700, 'ph_glass':22700} 
@@ -5279,9 +5206,7 @@ class sourceManager:
         self.rec_stat_worker = False
         self.checkStatDone = True    
         self.evt_path = ''
-        self.ffcaps = {} #ffmpeg commands to capture data from XFB and push it to mp4 recorders, HLS segmenters, and whomever else
-        self.xfbcaps = {} #ffmpeg commands to capture data from the device and push it to XFB
-        self.xfbcmds = {} #xfb utility commands
+        self.ffcaps = {}
 
     def alarms(self):
         """ return an array of devices that have alarms set off 
@@ -5368,9 +5293,6 @@ class sourceManager:
                     "mp4":self.mp4Base+2*idx,
                     "hls":self.hlsBase+2*idx,
                     "chk":self.chkBase+2*idx,
-                    "xfo":self.xfoBase+2*idx,
-                    "xfb":self.xfbBase+2*idx,
-                    "xfi":self.xfiBase+2*idx,
                     "rts":self.rtpBase+(2*idx*50), # each camera has 100 rtsp/rtp proxy ports - in case it needs to restart the live555 instance and it doesn't have a proxy port available, it can increment it
                 }
             # override port number to make distinct port number camera to camera.
@@ -5380,10 +5302,17 @@ class sourceManager:
             try:
                 if ('type' in inputs):
                     cam_type = inputs['type']
-                    ports['mp4'] = self.mp4BaseByType[cam_type]+2*idx
-                    ports['hls'] = self.hlsBaseByType[cam_type]+2*idx
-                    ports['chk'] = self.chkBaseByType[cam_type]+2*idx
-                    ports['rts'] = self.rtpBaseByType[cam_type]+(2*idx*50)
+                    if (cam_type in self.mp4BaseByType):
+                        ports['mp4'] = self.mp4BaseByType[cam_type]+2*idx
+                        ports['hls'] = self.hlsBaseByType[cam_type]+2*idx
+                        ports['chk'] = self.chkBaseByType[cam_type]+2*idx
+                        ports['rts'] = self.rtpBaseByType[cam_type]+(2*idx*50)
+                    else:
+                        ports['mp4'] = self.mp4Base+2*idx
+                        ports['hls'] = self.hlsBase+2*idx
+                        ports['chk'] = self.chkBase+2*idx
+                        ports['rts'] = self.rtpBase+(2*idx*50)
+                        dbg.log(dbg.SRC, "-->adddev (different cam_type used:{}  HQ found IP:{} VQ:{} idx:{} ports:{}".format(cam_type, ip, vq, idx, ports))
             except:
                 pass
                 
@@ -5534,7 +5463,7 @@ class sourceManager:
                 return False
                 
             self.checkStatDone == False
-            self.evt_path = evt_hid
+            self.evt_path = evt_hid # 6f0e8bbc998f69b48c883a75b4a8b6b403e7ba02_local
             
             dbg.log(dbg.SRM, "EVENT_STARTS =========================================> SRC_LEN:{0} EVT_HID:{1}".format(len(self.sources), evt_hid))                    
             enc.statusSet(enc.STAT_START)            
@@ -5588,25 +5517,12 @@ class sourceManager:
             
             precmdopt = pu.pxpconfig.pre_rec_conf()
             postcmdopt = pu.pxpconfig.post_rec_conf()
-                                                 
-            # command line for ffmpeg that captures from camera itself and forwards data to XFB
-            ffCapCmdTpl = "{ff} -fflags +igndts -rtsp_transport udp -i {url} -codec copy -f mpegts udp://127.0.0.1:{xfi}"
-            # start XFB command 
-            #   xfbin - path to the xfb binary
-            #   xfi - input port (output of ffCapCmdTpl)
-            #   xfb - backup port (where filler data is coming in)
-            #   xfo - output port
-            xfbCmdTpl = "{xfbin} -t {timeout} {xfi} {xfb} {xfo}"
-            xfbStreams = [] #list of urls where backup streams will be pushed
-
+                                     
             for idx in xrange(len(self.sources)):
                 if(idx>=len(self.sources)): #would only go here if number of sources changed during iteration. there are checks to prevent this
                     dbg.log(dbg.SRM, "SOURCE_IDX-->{}/{} error:number of sources changed during iteration".format(idx, len(self.sources)))
                     break
                 src = self.sources[idx]
-                
-                if (src.device.model.find("AXIS")>=0):
-                    ffCapCmdTpl = "{ff} -fflags +genpts -rtsp_transport udp -i {url} -codec copy -f mpegts udp://127.0.0.1:{xfi}"
                 
                 if(not(src.device.isCamera and src.device.isOn)):#skip devices that do not have a video stream available
                     dbg.log(dbg.SRM, "CHECK SOURCE_IDX-->{}/{} idx:{} model:{} ip:{} vq:{} url:{} ports:{} (cam:{} on:{} mac:{})".format(idx, len(self.sources), src.idx, src.device.model, src.device.ip, src.device.vidquality, src.rtspURL, src.ports, src.device.isCamera, src.device.isOn, src.device.mac)) 
@@ -5638,12 +5554,7 @@ class sourceManager:
                 camMP4  = str(src.ports['mp4']) #ffmpeg captures rtsp from camera and outputs h.264 stream to this port
                 camHLS  = str(src.ports['hls']) #ffmpeg captures rtsp form camera and outputs MPEG-TS to this port
                 chkPRT  = str(src.ports['chk']) #port where a monitor is sitting and checking if packets are arriving, doesn't matter the format
-                #xfb backup stream - blue screen (or filler) video - includes all ffmpeg output parameters
-                xfbStreams.append("-c copy -f mpegts udp://127.0.0.1:"+str(src.ports['xfb']))
 
-                self.xfbcaps[src.device.ip+'.'+postfix] = ffCapCmdTpl.format(ff=c.ffbin,url=src.rtspURL,xfi=src.ports['xfi'])
-                self.xfbcmds[src.device.ip+'.'+postfix] = xfbCmdTpl.format(xfbin=c.approot+"xfb", timeout=150, \
-                                                                xfi=src.ports['xfi'], xfb=src.ports['xfb'], xfo=src.ports['xfo'])
                 # if(len(self.sources)<2):
                 #     listSuffix = ""
                 #     # there is only one camera - no need to set camIdx for file names
@@ -5743,30 +5654,14 @@ class sourceManager:
                 if (pu.pxpconfig.use_split_event_folder()):
                     #os.system("ln -s " + cpath + "/" + "list" + listSuffix + ".m3u8 " + c.live_video + "list" + listSuffix + ".m3u8 >/dev/null 2>/dev/null")
                     self.build_m3u8(sidx, vidq)
-                # start ffmpeg capture for XFB
-                procMan.padd(cmd=self.xfbcaps[src.device.ip+'.'+postfix],name="xfcap_"+postfix, devID="xfcap_"+str(idx), forceKill=True,modelname="xfcap_"+str(idx))
-                dbg.prn(dbg.SRC, "ENC_REC_START----> xfbcap:{} cmd:{}".format(src.device.ip, self.xfbcaps[src.device.ip+'.'+postfix]))
-                # XFB process itself
-                procMan.padd(cmd=self.xfbcmds[src.device.ip+'.'+postfix],name="xfbin_"+postfix, devID="xfbin_"+str(idx), forceKill=True,modelname="xfbin_"+str(idx))
-                dbg.prn(dbg.SRC, "ENC_REC_START----> xfbbin:{} cmd:{}".format(src.device.ip, self.xfbcmds[src.device.ip+'.'+postfix]))
 
             #end for ------------------------------------------------------------- 
-            
-            # start bluescreen capture utility - it'll need all the xfb ports for all of the sources
-            # only need 1 ffmpeg to push data to all the required ports. since it's pushing to UDP ports
-            # it doesn't matter if any of the listeners go down - it won't affect the rest of the process
-            # dbg.prn(dbg.SRC,"ENC_REC_START-----> loss_filler:{}".format(xfbStreams))
-            fillCmdTpl = "{ff} -stream_loop -1 -re -i filler.ts {xfb_streams}"
-            fillCmd = fillCmdTpl.format(ff = c.ffbin, xfb_streams = " ".join(xfbStreams))
-            procMan.padd(cmd = fillCmd, name="loss_filler", devID="loss_filler", forceKill = True, modelname="loss_filler")
-
+                
             if (len(ffmp4Out) > 0): 
                 ffMP4recorder = ffmp4Ins + ffmp4Out
             else:
                 ffMP4recorder = ""
-
-            time.sleep(2) #wait for previous ffmpeg's to start - ensure that recording will start at the same time
-
+                
             # start the HLS segmenters and rtsp/rtmp captures
             segmenterLater = pu.pxpconfig.use_segment_later()
             startSuccess = True
@@ -5866,6 +5761,15 @@ class sourceManager:
             if (not startSuccess): #the start didn't work, stop the encode
                 self.encCapStop() #it will be force-stopped automatically in the stopcap function
                 
+            # for backwards compatibility (with older app versions) add list.m3u8
+            #os.system("ln -s "+c.wwwroot+"live/video/list"+oldSupportSuffix+".m3u8 "+c.wwwroot+"live/video/list.m3u8 >/dev/null 2>/dev/null")
+
+#             for i in xrange(self.total_cams):
+#                 hq_s = c.live_video + str(i).zfill(2) + "hq_segm*.ts"
+#                 lq_s = c.live_video + str(i).zfill(2) + "lq_segm*.ts"
+#                 dbg.prn(dbg.SRM, hq_s, len(glob.glob(hq_s)))
+#                 dbg.prn(dbg.SRM, lq_s, len(glob.glob(lq_s)))
+                
             # Create file links for m3u8 and mp4 files ---------------------
             try:
                 if (startSuccess and pu.pxpconfig.use_split_event_folder()):
@@ -5896,6 +5800,11 @@ class sourceManager:
             except Exception as e:
                 dbg.prn(dbg.ERR|dbg.SRM,"[---]link-creation-error: ", e, sys.exc_info()[-1].tb_lineno)
                 pass
+        
+#             if (startSuccess):
+#                 self.rec_stat_worker = pxphelper.PXPHeler('rec_stat', 'c-eventstart', '{"sidx":"*","event":"live"}') # cmd,cookie,param
+#                 self.rec_stat_worker.start()
+
         except Exception as e:
             dbg.prn(dbg.ERR|dbg.SRM,"[---]encCapStart: ", e, sys.exc_info()[-1].tb_lineno)
             self.encCapStop() #it will be force-stopped automatically in the stopcap function
@@ -5928,7 +5837,18 @@ class sourceManager:
             
             # stop all captures
             dbg.prn(dbg.SRM,"stopping segment and capture")
-                        
+            
+            # this is used for forwarding blue screen (without it the mp4 file will be corrupt)
+            ffBlue = c.ffbin + " -loop 1 -y -re -i " + c.approot + "bluescreen.jpg"
+            
+            #TEST SIGINT BEGIN    
+#             if (not USE_BLUE):
+#                 procMan.psend_sigint('record')
+#                 time.sleep(5)
+#                 timeStart = time.time()
+#                 while(((time.time()-timeStart)<20) and not procMan.palive(name="record")):
+#                     time.sleep(1)
+            #TEST END
                                     
             # TRY STOPPPING CAPTURE_HQ/LQ and SEGMENT_HQ/LQ GENTLY            
             procMan.pstop(name=c.SEGMENT+"HQ")
@@ -5936,16 +5856,34 @@ class sourceManager:
             procMan.pstop(name=c.SEGMENT+"LQ")
             procMan.pstop(name=c.CAPTURE+"LQ")
             
+            # build the bluescreen forwarder command
+            blueCmd = {}
+            blueCmdCount = 0
             for idx in xrange(len(self.sources)):
                 if(idx>=len(self.sources)):
                     break
                 src = self.sources[idx]
                 if(not src.isEncoding):
                     continue
+
                 if (src.device.model.find("Monarch")>=0):
-                    src.StopDeviceRecord()                
+                    src.StopDeviceRecord()
+                
                 self.sources[idx].isEncoding = False
-            #end for
+                if (pu.pxpconfig.use_mp4tcp()):
+                    ffBlue += " -r 30 -vcodec libx264 -an -f mpegts tcp://127.0.0.1:"+str(src.ports['mp4'])
+                else:
+                    ffBlue += " -r 30 -vcodec libx264 -an -f mpegts udp://127.0.0.1:"+str(src.ports['mp4'])
+                    
+                if ((idx%EVERY_BLUE) == (EVERY_BLUE-1)):
+                    blueCmd[str(blueCmdCount)] = ffBlue
+                    #dbg.prn(dbg.DBG, "ENC_REC_STOP----> record cmd:{}".format(ffBlue))
+                    blueCmdCount += 1
+                    ffBlue = c.ffbin+" -loop 1 -y -re -i " + c.approot + "bluescreen.jpg"
+            #end while
+            if (len(blueCmd) <= 0 and len(self.sources)>0):
+                blueCmd[str(blueCmdCount)] = ffBlue
+                blueCmdCount += 1
                 
             # FORCED TO STOP CAPTURE_HQ/LQ and SEGMENT_HQ/LQ            
             timeout = 20            # how many seconds to wait for process before force-stopping it
@@ -5953,7 +5891,6 @@ class sourceManager:
             #while((procMan.palive("capture_HQ") or procMan.palive("segment_HQ") or procMan.palive("capture_LQ") or procMan.palive("segment_LQ")) and (not (enc.code & enc.STAT_SHUTDOWN)) and (time.time()-timeStart)<timeout):
             while((procMan.palive("capture_HQ") or procMan.palive("segment_HQ") or procMan.palive("capture_LQ") or procMan.palive("segment_LQ")) and (not (enc.code & enc.STAT_SHUTDOWN)) and (time.time()-timeStart)<timeout):
                 time.sleep(1)
-            # couldn't stop 
             if((time.time()-timeStart)>=timeout): #timeout reached
                 if(procMan.palive(c.CAPTURE+"HQ")): #force-stop the capture ffmpeg
                     procMan.pstop(name=c.CAPTURE+"HQ", force=True)
@@ -5963,8 +5900,53 @@ class sourceManager:
                     procMan.pstop(name="segment_HQ", force=True)
                 if(procMan.palive("segment_LQ")): #force-stop the segmenter
                     procMan.pstop(name="segment_LQ", force=True)
-            dbg.prn(dbg.SRM,"stopped")
-            # Kill RECORD ffmpeg
+
+
+
+            dbg.prn(dbg.SRM,"stopped, forwarding the bluescreen")
+            #time.sleep(3);
+            # Launch JPG injection command
+            if (USE_BLUE):
+                # to stop mp4 recorder need to push blue screen to that ffmpeg first, otherwise udp stalls and ffmpeg produces a broken MP4 file
+                timeout = 5
+                for bidx in xrange(len(blueCmd)):
+                    if (str(bidx) in blueCmd):                  
+                        procMan.padd(cmd=blueCmd[str(bidx)], name="blue", devID="BLUE_"+str(bidx), keepAlive=True, killIdle=True, forceKill=True)
+                        timeout += 1
+                        dbg.prn(dbg.SRM,"injecting...bluescreen: {}".format(bidx))
+                #time.sleep(timeout+1)
+                timeStart = time.time()
+                if (len(blueCmd)>0):
+                    result = {}
+                    for bidx in xrange(len(blueCmd)):
+                        result[str(bidx)] = False
+                    count = 0
+                    while(((time.time()-timeStart)<timeout)):
+                        for bidx in xrange(len(blueCmd)):
+                            if (not procMan.palive(name="blue", devID="BLUE_"+str(bidx))):
+                                time.sleep(1)
+                                result[str(bidx)] = False
+                            else:
+                                result[str(bidx)] = True
+                                dbg.prn(dbg.SRM,"injecting good...bluescreen: {}".format(bidx))
+                        # Is every blue cmd launched ??
+                        test = True
+                        for bidx in xrange(len(blueCmd)):
+                            test &= result[str(bidx)]
+                        if (test):
+                            break # all of blue commands are launched.
+                        else:
+                            count += 1
+                            dbg.prn(dbg.SRM,"waiting for injection done...{}".format(count))
+            time.sleep(3); # 1 --> 5
+
+#           procMan.padd(cmd=ffBlue, name="blue", devID="ALL", keepAlive=True, killIdle = True, forceKill=True)
+#                 time.sleep(5)
+#                 timeStart = time.time()
+#                 while(((time.time()-timeStart)<timeout) and not procMan.palive(name="blue")):
+#                     time.sleep(1)
+                
+            # Kill RECORD ffmpeg            
             dbg.log(dbg.SRM,"------- stopping mp4 recorder")
             procMan.pstop(name='record_HQ',force=force)
             procMan.pstop(name='record_LQ',force=force)
@@ -5979,17 +5961,20 @@ class sourceManager:
                 procMan.pstop(name='record_LQ', force=True)
             dbg.log(dbg.SRM,"------- mp4 record stopped")
 
+
+            # Kill JPG injection ffmpeg
+            if (USE_BLUE):
+                procMan.pstop(name='blue')
+                timeStart = time.time()
+                while(procMan.palive("blue") and not (enc.code & enc.STAT_SHUTDOWN) and (time.time()-timeStart)<timeout): #wait for bluescreen ffmpeg to stop
+                    time.sleep(1)
+                if((time.time()-timeStart)>=timeout):#timeout reached
+                    procMan.pstop(name='blue', force=True)
+                dbg.prn(dbg.SRM,"bluescreen stopped")
+
             # STOP ALL of LIVE555 (for good measure)
             os.system("killall -9 live555 >/dev/null 2>/dev/null")
-            # stop the ffmpeg that was capturing video and pushing it to the XFB
-            procMan.pstop(name="xfcap_LQ")
-            procMan.pstop(name="xfcap_HQ")
-            # stop the lost-signal filler
-            procMan.pstop(name="loss_filler")
-            # stop the xfb itself
-            procMan.pstop(name="xfbin_LQ")
-            procMan.pstop(name="xfbin_HQ")
-
+            
             dbg.log(dbg.SRM, "EVENT_STOPS ENDS =========================================>")                    
         except Exception as e:
             dbg.prn(dbg.SRM|dbg.ERR,"[---]encCapStop: ",e,sys.exc_info()[-1].tb_lineno)
@@ -6077,14 +6062,13 @@ class sourceManager:
 
             # rec_stat check after starting event: retry until it get proper data
             if ((enc.code & enc.STAT_LIVE) and not self.evt_stat and not self.rec_stat_worker):
-                self.rec_stat_worker = pxphelper.PXPHeler('rec_stat', 'c-eventstart', '{"sidx":"*","event":"live","srclen":' + str(self.total_feeds) + '}') # cmd,cookie,param
+                self.rec_stat_worker = pxphelper.PXPHeler('rec_stat', 'c-eventstart', '{"sidx":"*","event":"live","srclen":' + str(self.total_feeds) + ',"evtpath":"' + self.evt_path  + '"}') # cmd,cookie,param
                 self.rec_stat_worker.start()
             else:
                 if ((enc.code & enc.STAT_LIVE) and self.rec_stat_worker and self.rec_stat_worker.done):
                     self.evt_stat = self.rec_stat_worker.rec_stat
                     if (self.evt_stat['success']):
                         self.rec_stat_worker = False # done, no more try...
-                        dbg.prn(dbg.ERR|dbg.SRM, "REC_STAT-->{}".format(self.evt_stat))
                     else:
                         self.rec_stat_worker = False # for retrying purpose
                         self.evt_stat = False
@@ -6741,7 +6725,7 @@ def serverInfo():
 
 def speak(msg):
     """ speaks passed text (only on 192.168.3.100 ip address)"""
-    if(pu.io.myIP()=='192.168.2.143'):
+    if(pu.io.myIP()=='192.168.5.115'):
         os.system("say -v Veena "+str(msg))
 
 def pxpTTKiller(ttObj={},name=False):
@@ -7068,9 +7052,8 @@ class procmgr:
     def __init__(self):
         self.procs = {} #processes in the system
     def dbgprint(self):
+        #return
         global sockCmd
-        if(sockCmd&pu.SCF_HIDECMD!=0):
-            return
         procs = self.procs.copy()
         live555Count = 0
         segmentCount = 0
@@ -7791,3 +7774,8 @@ if __name__=='__main__': # will enter here only when executing this file (if it 
         dbg.prn(dbg.ERR|dbg.MN, "MAIN ERRRRR????????? {0} {1}".format(e, sys.exc_info()[-1].tb_lineno))
     dbg.prn(dbg.MN,'---APP STOP---')
 #emd if main
+
+
+
+    
+
