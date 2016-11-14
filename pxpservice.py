@@ -2324,29 +2324,29 @@ class encAxis(encDevice):
         if(ip):
             self.ccBitrate = True
             self.model = "AXIS"            
-    def discoverBonjour(self, callback):
-        def discovered(results):
-            recs = pu.bonjour.parseRecord(results['txtRecord'])
-            output = {}
-            if(recs['sm']=='AXS'):
-                return
-            if(not 'sn' in recs): #this happens for Teradek Clip
-                recs['sn']='media'
-            streamURL = recs['sm'].lower()+'://'+results['ip']+":"+str(results['port'])+'/'+recs['sn']
-            # check if this is a preview or a full rez stream
-            if(recs['sn'].lower().find('quickview')>=0):# this is a preview stream
-                output['preview']=streamURL
-                output['preview-port']=results['port']
-                output['vid-quality'] = 'LQ'
-            else:
-                output['url']=streamURL
-                output['port'] = results['port']
-                output['vid-quality'] = 'HQ'
-            output['ip'] = results['ip']
-            output['type'] = "td_cube"
-            output['devClass'] = encTeradek
-            callback(output)        
-        pu.bonjour.discover(regtype="_axis-video._tcp", callback=discovered)
+#     def discoverBonjour(self, callback):
+#         def discovered(results):
+#             recs = pu.bonjour.parseRecord(results['txtRecord'])
+#             output = {}
+#             if(recs['sm']=='AXS'):
+#                 return
+#             if(not 'sn' in recs): #this happens for Teradek Clip
+#                 recs['sn']='media'
+#             streamURL = recs['sm'].lower()+'://'+results['ip']+":"+str(results['port'])+'/'+recs['sn']
+#             # check if this is a preview or a full rez stream
+#             if(recs['sn'].lower().find('quickview')>=0):# this is a preview stream
+#                 output['preview']=streamURL
+#                 output['preview-port']=results['port']
+#                 output['vid-quality'] = 'LQ'
+#             else:
+#                 output['url']=streamURL
+#                 output['port'] = results['port']
+#                 output['vid-quality'] = 'HQ'
+#             output['ip'] = results['ip']
+#             output['type'] = "td_cube"
+#             output['devClass'] = encTeradek
+#             callback(output)        
+#         pu.bonjour.discover(regtype="_axis-video._tcp", callback=discovered)
     def discover(self, callback): # Axis
         try:
             if(enc.code & enc.STAT_SHUTDOWN):
@@ -4864,8 +4864,110 @@ class source:
     def clearport(self):
         self.sIN.close()
         self.sIN = False
-    def camPortCheckMon(self):
-        pass
+    def camPortSplitData(self):
+        """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
+        import binascii
+        import subprocess
+        try:
+            dbg.prn(dbg.SRC,"starting camPortSplitData for {} {}".format(self.idx, self.ports['chk']))
+            host = '127.0.0.1'          #local ip address
+            
+            try:            
+                sOUT = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sOUT.setblocking(1)
+                sOUT.settimeout(5)
+            except (KeyboardInterrupt,socket.error), msg:
+                sOUT.close()
+                sOUT = False
+                dbg.prn(dbg.SRC,"[---] camPortSplitData")
+                return
+            
+            sIN = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) #Create a socket object
+            sIN.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            portIn = self.ports['chk']
+            err = True
+            while (err and not (enc.code & enc.STAT_SHUTDOWN)):
+                try:
+                    sIN.bind((host, portIn)) #Bind to the port
+                    err = False
+                except socket.error, msg:
+                    time.sleep(1)
+                    err = True
+                    dbg.prn(dbg.ERR|dbg.SRC,"camPortSplitData cannot start {} {} {}".format(portIn, socket.error, msg))
+            #end while err
+            dbg.prn(dbg.SRC,".............bound.................{} {} {}".format(self.idx, self.ports['chk'], self.isEncoding), )
+#             sIN.setblocking(0)
+#             sIN.settimeout(0.5)
+            sIN.setblocking(1)
+            sIN.settimeout(5)
+            timeStart = time.time()
+            
+            datastream = bytearray(65535)
+            rem_stream = bytearray()
+            len_dout = 0
+            sum_recv = 0
+            sent_count = 0
+            while ((enc.code & (enc.STAT_LIVE | enc.STAT_START | enc.STAT_PAUSED)) and self.isEncoding):
+                try:
+                    if((enc.code & enc.STAT_PAUSED)): #the encoder is paused - do not check anything
+                        time.sleep(0.2) #reduce the cpu load
+                        continue
+                    #data, addr = sIN.recvfrom(65535)
+                    #if(len(data)<=0):
+                    #    continue
+                    nRecv = sIN.recv_into(datastream)
+                    if(nRecv<=0):
+                        continue
+                    # split data here...
+                    
+                    len_dout = len(datastream)
+                    sum_recv += len_dout
+                    if (self.device.vidquality == "HQ"):
+                        q = len_dout/188
+                        q_188  = q * 188
+                        r = len_dout - q_188
+                        # send data every 188 bytes
+                        print "188 x {} bytes sent to {}...".format(q, portIn+1)
+                        sent_count = 0
+                        for i in xrange(q):
+                            sent_count += sOUT.sendto(datastream[i*188:i*188+188], (host,portIn+1))
+                        if (sent_count != q_188):
+                            print "sent error ------------->"
+                        # remaining data should also be sent
+                        sent_count += sOUT.sendto(datastream[-r:], (host,portIn+1))
+                        print "{} bytes remaining...".format(len(rem_stream))
+                        print "=========================="
+                    datastream = bytearray()
+                    
+                    # back to normal business for cam port monitoring...
+                    # pxp status should be 'live' at this point
+                    if((enc.code & enc.STAT_START) and (time.time()-timeStart)>2):
+                        enc.statusSet(enc.STAT_LIVE,autoWrite=False)
+                except socket.error, msg:
+                    # only gets here if the connection is refused or interrupted
+                    # sys.stdout.write('.')
+                    dbg.prn(dbg.ERR|dbg.SRC,"^.^  port:{}  sock:{}  msg:{}".format(portIn, socket.error, msg))
+                    #print '^.^   port:{0}'.format(portIn)
+                    try:
+                        timeStart = time.time()                            
+                        if(enc.code & enc.STAT_LIVE):
+                            # start file monitor to add EXT-X-DISCONTINUITY
+                            if(not(str(self.id)+'_filemon' in tmr['src'])):
+                                tmr['src'][str(self.id)+'_filemon'] = TimedThread(self.fileSegMon)
+                        time.sleep(1) #wait for a second before trying to receive data again
+                    except Exception as e:
+                        dbg.prn(dbg.ERR|dbg.SRC,"TT.TT  err:{}".format(e))
+                        pass
+                except Exception as e:
+                    dbg.prn(dbg.ERR|dbg.SRC,"[---]camPortSplitData err: ",e,sys.exc_info()[-1].tb_lineno)
+            #end while
+        except Exception as e:
+            dbg.prn(dbg.ERR|dbg.SRC,"[---]camPortSplitData err: ", e, sys.exc_info()[-1].tb_lineno)
+        sIN.close()
+        sIN = False
+        sOUT.close()
+        sOUT = False
+        dbg.prn(dbg.SRC,"camPortSplitData exited normally")
     def camPortMon(self):
         """ monitor data coming in from the camera (during live) - to make sure it's continuously receiving """
         try:
@@ -6062,7 +6164,8 @@ class sourceManager:
 
             # rec_stat check after starting event: retry until it get proper data
             if ((enc.code & enc.STAT_LIVE) and not self.evt_stat and not self.rec_stat_worker):
-                self.rec_stat_worker = pxphelper.PXPHeler('rec_stat', 'c-eventstart', '{"sidx":"*","event":"live","srclen":' + str(self.total_feeds) + ',"evtpath":"' + self.evt_path  + '"}') # cmd,cookie,param
+                input_param = '{"sidx":"*", "event":"live", "srclen":' + str(self.total_feeds) + ', "evtpath":"' + self.evt_path  + '"}'
+                self.rec_stat_worker = pxphelper.PXPHeler('rec_stat', 'c-eventstart', input_param) # cmd,cookie,input_param
                 self.rec_stat_worker.start()
             else:
                 if ((enc.code & enc.STAT_LIVE) and self.rec_stat_worker and self.rec_stat_worker.done):

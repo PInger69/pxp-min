@@ -711,11 +711,8 @@ def rec_stat(params=False):
 
         #-----------------------------------------------------------------------------------------
 		# Now we need to add rec_stat into database so downloaded events can use those data
-		# Right now, 'extra' field in events table is used for save data. 
-		rec_stat_str = str(result) # should be converted with str() for json.loads...
-		rec_stat_str = rec_stat_str.replace("False", '0')
-		rec_stat_str = rec_stat_str.replace("True", '1')
-		rec_stat_str = rec_stat_str.replace("'", '"')
+		# Right now, 'extra' field in events table is used for save data.
+		rec_stat_str = json.dumps(result) 
 		try:
 			db = pu.db(c.wwwroot+"_db/pxp_main.db")
 			sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
@@ -3680,7 +3677,6 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 			evtDir = c.wwwroot+evtName
 			result[i]['name']=evtName
  			rec_stat_str = str(row['extra'])
- 			rec_stat_str = rec_stat_str.replace("'", '"')
  			if (rec_stat_str==""):
  				z = json.loads('{\"success\":0, \"msg\":\"\"}')
  			else:
