@@ -6172,6 +6172,26 @@ class sourceManager:
                     self.evt_stat = self.rec_stat_worker.rec_stat
                     if (self.evt_stat['success']):
                         self.rec_stat_worker = False # done, no more try...
+                        dbg.prn(dbg.SRM, "rec_stat_success:{}".format(str(self.evt_stat)))
+                        # save camera settings into events:
+                        camsettings_str = json.dumps(self.toJSON()) 
+                        try:
+                            db = pu.db(c.wwwroot+"_db/pxp_main.db")
+                            sql = "SELECT * FROM `events` WHERE `hid` LIKE ?"
+                            db.query(sql,(self.evt_path,))
+                            eventData = db.getasc()
+                            db.close()
+                            if(len(eventData)>0):
+                                db = pu.db(c.wwwroot+"_db/pxp_main.db")
+                                sql = "UPDATE `events` SET `camsettings`=? WHERE `hid`=?"
+                                success = db.query(sql,(camsettings_str, self.evt_path))
+                                db.close()
+                                if (success):
+                                    pu.mdbg.log("{} evt_camsettings db updated...".format(camsettings_str))
+                                else:
+                                    pu.mdbg.log("{} evt_camsettings db update FAILED...".format(camsettings_str))
+                        except Exception as e:
+                            pu.mdbg.log("[---] evt_camsettings db update FAILED...{}".format(str(sys.exc_info()[-1].tb_lineno)+' '+str(e)))
                     else:
                         self.rec_stat_worker = False # for retrying purpose
                         self.evt_stat = False
@@ -7822,10 +7842,10 @@ if __name__=='__main__': # will enter here only when executing this file (if it 
         tmr['cleanupEvts']  = TimedThread(removeOldEvents,period=10)
         #start the threads for forwarding the blue screen to udp ports (will not forward if everything is working properly)
 
-        db = pu.db(c.wwwroot+"_db/pxp_main.db")
-        sql = "DELETE FROM `camsettings`"
-        success = db.query(sql,'')
-        db.close()
+#         db = pu.db(c.wwwroot+"_db/pxp_main.db")
+#         sql = "DELETE FROM `camsettings`"
+#         success = db.query(sql,'')
+#         db.close()
 
         #register what happens on ^C:
         signal.signal(signal.SIGINT, pxpCleanup)

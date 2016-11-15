@@ -710,8 +710,8 @@ def rec_stat(params=False):
 		result["msg"] = "{} of result(s) found".format(count)
 
         #-----------------------------------------------------------------------------------------
-		# Now we need to add rec_stat into database so downloaded events can use those data
-		# Right now, 'extra' field in events table is used for save data.
+		# Now we need to add rec_stat data into database so downloaded events can use those.
+		# Right now, 'extra' field in events table is used.
 		rec_stat_str = json.dumps(result) 
 		try:
 			db = pu.db(c.wwwroot+"_db/pxp_main.db")
@@ -720,9 +720,8 @@ def rec_stat(params=False):
 			eventData = db.getasc()
 			db.close()
 			if(len(eventData)>0):
-				#eventPath = c.wwwroot+eventData[0]['datapath']
 				db = pu.db(c.wwwroot+"_db/pxp_main.db")
-				sql = "UPDATE `events` SET `extra`=? WHERE `hid`=?"
+				sql = "UPDATE `events` SET `recstat`=? WHERE `hid`=?"
 				success = db.query(sql,(rec_stat_str, evt_path))
 				db.close()
 				if (success):
@@ -3634,7 +3633,7 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 					  strftime('%Y-%m-%d_%H-%M-%S',events.date) AS `dateFmt`, \
 					  leagues.sport AS `sport`, events.datapath, \
 					  events.deleted AS `deleted`, \
-					  IFNULL(events.extra,'{\"success\":0, \"msg\":\"\"}') AS `extra` \
+					  IFNULL(events.recstat,'{\"success\":0, \"msg\":\"\"}') AS `extra` \
 				FROM `events` \
 				LEFT JOIN `leagues` ON events.league=leagues.name \
 				" + query + "\
