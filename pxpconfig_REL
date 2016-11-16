@@ -2,29 +2,27 @@ auto_start = 1
 ignore_video_settings = 0
 make_extra_log = 1
 virtual_lq_enabled = 1
-show_pingcam_check = 0
 #--------------------------
 enable_mp4_convert = 0
 lq_mp4_enabled = 0
 fix_mp4_background = 0
 #--------------------------
-#pre_rec_conf = 0
-#post_rec_conf = 0
-#segment_conf = 0
 use_tcp = 0
 use_mp4tcp = 0
-#hbrake_conf = -i {} -o {} --preset=\"Android Tablet\"
+#--------------------------
 hbrake_conf = -i {} -o {} -e x264 -q 20 -B 160
+use_ffbrake = 0
+hbbrake_timeout = 300
 #--------------------------
 use_ping_camcheck = 0
 use_split_event_folder = 1
-# should be used with setting enable_mp4_convert on
+# Should be used with setting enable_mp4_convert on
 use_mp4align = 0
 use_segment_later = 0
 use_proxy = 1
 #--------------------------
 cam_axs = 0
-cam_snc = 1
+cam_snc = 0
 cam_tdk = 1
 cam_mtr = 0
 cam_dlt = 0
@@ -71,7 +69,7 @@ pxp_svc_show_camproc_msg = 0
 pxp_svc_show_detailed_proc_msg = 0
 pxp_svc_show_params = 0
 pxp_svc_show_bonj = 0
-pxp_svc_usbdrv_msg = 0
+pxp_svc_usbdrv_msg = 1
 pxp_web_param = 0
 pxp_web_tagset = 0
 pxp_web_tagmod = 0

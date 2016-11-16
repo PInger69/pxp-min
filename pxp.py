@@ -651,8 +651,16 @@ def rec_stat(params=False):
 			srclen = 0
 		else:
 			srclen = param['srclen']
-		evt_path = param['evtpath']
-		
+		if ('evtpath' in param):
+			evt_path = param['evtpath']
+		else:
+			if (event == 'live'):
+				evt = pu.disk.file_get_contents(c.wwwroot+'live/evt.txt')
+				if (evt):
+					epath = evt.split("_")
+					if (len(epath)>2):
+						evt_path = epath[1]+"_"+epath[2]
+						pu.mdbg.log("rec_stat-->evt_path_pickedup:{}".format(evt_path))
 		try:
 			resp = pu.disk.sockSendWait(msg="FCT|"+event,addnewline=False) # get feed count
 			pu.mdbg.log("rec_stat-->FCT:{}".format(resp))
@@ -712,6 +720,7 @@ def rec_stat(params=False):
         #-----------------------------------------------------------------------------------------
 		# Now we need to add rec_stat data into database so downloaded events can use those.
 		# Right now, 'extra' field in events table is used.
+		#/private/var/www/html/events/live/
 		rec_stat_str = json.dumps(result) 
 		try:
 			db = pu.db(c.wwwroot+"_db/pxp_main.db")

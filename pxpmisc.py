@@ -45,6 +45,21 @@ class MP4FixWorker (threading.Thread):
                 fp.write("\n")
         except Exception as e:
             pass
+
+    def error_log(self, *arguments, **keywords):
+        """
+        Thread base logging. 
+        """
+        try:
+            logFile = "/tmp/fix-error-" + self.getname() + ".txt"
+            #logFile = c.wwwroot + self.event_path + "/video/" + self.getname() + ".txt"
+            #logFile = c.wwwroot + "/_db" + self.getname() + ".txt"
+            with open(logFile,"a") as fp:
+                fp.write(dt.fromtimestamp(time.time()).strftime("%Y-%m-%d %H:%M:%S.%f"))
+                fp.write(' '+' '.join(map(str, (arguments))))
+                fp.write("\n")
+        except Exception as e:
+            pass
     
     def getname(self):
         """
@@ -69,6 +84,9 @@ class MP4FixWorker (threading.Thread):
         """
         self.ret_status = False
         try:
+            if (os.path.exists("/tmp/fix-" + self.getname() + ".txt")):
+                cmd = 'rm -f ' + "/tmp/fix-" + self.getname() + ".txt"
+                os.system(cmd)
             results = {}
             self.progress = 0
             
@@ -102,7 +120,7 @@ class MP4FixWorker (threading.Thread):
             self.ret_status = True
             self.progress = 100
         except Exception as e:
-            self.log("[---] rebuild_mp4 {} {}".format(e,sys.exc_info()[-1].tb_lineno))
+            self.log("[---] rebuild_mp4 {} {}".format(str(e),sys.exc_info()[-1].tb_lineno))
             
         return self.ret_status
 
@@ -196,14 +214,23 @@ class MP4FixWorker (threading.Thread):
             os.system("rm " + mp4_path)
         try:
             self.log("convert file from:{}  to:{}".format(tsfilename, mp4_path))
-            hbrake_param = " -i {} -o {} --preset=\"Android Tablet\"".format(tsfilename, mp4_path)
+            hbrake_param = "-i {} -o {} --preset=\"Android Tablet\"".format(tsfilename, mp4_path)
             if (pu.pxpconfig.hbrake_conf()):
                 hbrake_param = pu.pxpconfig.hbrake_conf()
-            hbcmd = c.handbrake + " " + hbrake_param.format(tsfilename, mp4_path)
-            self.log('hb_cmd---->'+hbcmd)
+                if (hbrake_param.find("{}")>=0):
+                    hbrake_param = hbrake_param.format(tsfilename, mp4_path)
+            hbcmd = c.handbrake + " " + hbrake_param
+            hbbrake_timeout = pu.pxpconfig.hbbrake_timeout()
+            self.log('hb_cmd---->{}  hb_slowness_detection_timeout:{}'.format(hbcmd, hbbrake_timeout))
             
             #hbcmd = c.handbrake + " -i {} -o {} --preset=\"Android Tablet\"".format(tsfilename, mp4_path)
             #subprocess.check_call(hbcmd, shell=True)
+            
+            # ffmpeg command test only         
+            if (pu.pxpconfig.use_ffbrake()):   
+                ffmpeg_param = "-y -i {} -f mp4 {}".format(tsfilename, mp4_path)
+                return self.convert_via_ffmpeg(ffmpeg_param)
+            
             
             hb_cmd = hbcmd.split(' ')
             hbproc = subprocess.Popen(hb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -214,8 +241,17 @@ class MP4FixWorker (threading.Thread):
             #
             percent_templ = re.compile("([A-z0-9: ]*[,]+)([ ]+)([.0-9][0-9. ]+[%]+)", re.I)
             line = ''
+            error_line = ''
+            use_stderr = False
+            slowness_mark = False
+            old_progress = 0
             while hbproc.poll() is None:
                 out = hbproc.stdout.read(1)
+                if (use_stderr):
+                    err = hbproc.stderr.read(1)
+                    error_line += err
+                    if (err == '\r' or err == '\n'):
+                        self.error_log('error-out:'+error_line)
                 #sys.stdout.write(out)
                 line += out
                 if (out == '\r'):
@@ -223,10 +259,31 @@ class MP4FixWorker (threading.Thread):
                         percent = percent_templ.match(line)
                         if (percent != None):
                             if (isinstance(percent.group(3), basestring)):
-                                self.progress = cur_progress + int(float(percent.group(3).split(' ')[0])/100.0*75.0) # 75% usage for this procedure
-                        self.log('out:'+line+ '---->' + str(self.progress))
+                                float_progress = float(percent.group(3).split(' ')[0])
+                                self.progress = cur_progress + int(float_progress/100.0*75.0) # 75% usage for this procedure
+                        self.log('out:'+line+ '---->' + str(self.progress) + "  " + str(float_progress))
+                        # check slowness of progress
+                        if (old_progress == float_progress):
+                            if (not slowness_mark):
+                                slowness_mark = time.time()
+                        else:
+                            slowness_mark = False
+                        if (slowness_mark and (time.time()-slowness_mark) > hbbrake_timeout): # 5 min
+                            sys.stdout.flush()
+                            self.log('out: TOO SLOW PROGRESS stopped at {}%  hb_pid:{} killed'.format(str(float_progress), hbproc.pid))
+                            hbproc.kill()
+                            hbproc = False
+                            time.sleep(3)
+                            ffmpeg_param = "-y -i {} -f mp4 {}".format(tsfilename, mp4_path)
+                            self.log('trying to use ffmpeg instead now...') 
+                            self.convert_via_ffmpeg(ffmpeg_param)
+                            break            
+                        old_progress = float_progress
+                        # end of check slowness of progress
                     line = ''
                 sys.stdout.flush()            
+                if (use_stderr):
+                    sys.stderr.flush()            
 
 #             hb_cmd = hbcmd.split(' ')
 #             hbproc = subprocess.Popen(hb_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -250,8 +307,87 @@ class MP4FixWorker (threading.Thread):
             self.log("OSError!!, next file")
             pass            
         except Exception as e:
-            self.log('[---] convert_ts2mp4:' + e)
+            self.log('[---] convert_ts2mp4:' + str(sys.exc_info()[-1].tb_lineno) + " " + str(e))
             pass            
+
+    def parse_timestamp(self, time_stamp): # 00:00:00.99
+        total_time = 0
+        duration = time_stamp.split(".")
+        msec = duration[1]
+        sec = duration[0].split(":")
+        if (len(sec)>=3):
+            total_time = int(sec[0])*3600+int(sec[1])*60+int(sec[2])
+        return total_time
+
+    def update_ffmpeg_duration(self, stderrLine):
+        """
+        Check if following line is generated from the ffmpeg lines...
+        Duration: 00:00:12.68, start: 1.933333, bitrate: 521 kb/s
+        """
+        try:
+            self.log('ffmpeg-out:'+stderrLine)
+            st = stderrLine.find("Duration:")
+            if (st>=0):
+                ed = stderrLine.find(",")
+                if ((st+9)>=0 and ed>=0 and ed>st):
+                    total_time = self.parse_timestamp(stderrLine[(st+9):ed])
+                    self.log('ffmpeg-out: total_time==>{}  timestamp:{}'.format(str(total_time),stderrLine[(st+9):ed]))
+                    return total_time
+        except Exception as e:
+            self.log('[---] update_ffmpeg_duration:' + str(sys.exc_info()[-1].tb_lineno) + " " + str(e))
+        return False
+    
+    def update_ffmpeg(self, c_progress, stderrLine, total_time):
+        """
+        Check if following line is generated from the ffmpeg lines...
+        frame=   52 fps=0.0 q=29.0 size=      64kB time=00:00:01.77 bitrate= 296.5kbits/s dup=3 drop=0 speed=3.43x    
+        """
+        try:
+            if (stderrLine.find("frame=")>=0 and total_time):
+                st = stderrLine.find("time=")
+                ed = stderrLine.find("bitrate")
+                if (st>=0 and ed>=0 and (ed-1)>(st+5)):
+                    ctime = self.parse_timestamp(stderrLine[(st+5):(ed-1)])
+                    self.progress = c_progress + int((ctime / total_time) * 100 * 0.75)
+                    self.log('ffmpeg-out: c_time==>{}/{} progress:{} timestamp:{}'.format(str(ctime), str(total_time),str(self.progress), stderrLine[(st+5):(ed-1)]))
+        except Exception as e:
+            self.log('[---] update_ffmpeg:' + str(sys.exc_info()[-1].tb_lineno) + " " + str(e))
+        return self.progress
+
+    def convert_via_ffmpeg(self, cmdparam):
+        try:
+            self.log("**********************************************************************")
+            self.log("**********************************************************************")
+            self.log("*** FFMPEG CONVERSION ************************************************")
+            self.log("**********************************************************************")
+            self.log("**********************************************************************")
+            c_progress = self.progress
+            total_time = False
+            cmd = c.ffbin + " " + cmdparam
+            self.log("ff_cmd:{}".format(cmd))
+            ffmpeg_cmd = cmd.split(' ')
+            import subprocess
+            ffmpeg_proc = subprocess.Popen(ffmpeg_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            error_line = ''
+            start_time = time.time()
+            while ffmpeg_proc.poll() is None:
+                err = ffmpeg_proc.stderr.read(1)
+                if (err == '\r' or err == '\n'):
+                    self.log('ffmpeg-out:{}'.format(error_line))
+                    if (not total_time):
+                        duration = self.update_ffmpeg_duration(error_line) 
+                        total_time = duration
+                    else:
+                        self.update_ffmpeg(c_progress, error_line, total_time)
+                    error_line = ''
+                else:
+                    error_line += err
+                if (time.time()-start_time>60 and not total_time):
+                    self.log('Cannot convert_via_ffmpeg because "Duration" is not found')
+                    break;
+                sys.stderr.flush()
+        except Exception as e:
+            self.log('[---] convert_via_ffmpeg:' + str(sys.exc_info()[-1].tb_lineno) + " " + str(e))
 
     def concat_ts(self, last_idx, camid="00", vq="hq", event='live'):
         """
@@ -278,7 +414,7 @@ class MP4FixWorker (threading.Thread):
                 if (old_style_ts):
                     segn = videoPath + "segm" + str(i) + ".ts"
                 cmd = "cat " + segn + " >> " + all_ts
-                self.log("count:{}   cmd:{}".format(i, segn))
+                self.log("count:{}/{}   cmd:{}".format(i, last_idx, segn))
                 os.system(cmd)
                 self.progress += int(progress_step)
         except Exception as e:

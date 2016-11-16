@@ -2065,6 +2065,20 @@ class c_pxpconfig:
         if ('hbrake_conf' in self.config):
             return c.hbrake_conf if self.config['hbrake_conf']=='0' else self.config['hbrake_conf'].strip()
         return c.hbrake_conf 
+    def use_ffbrake(self): # handbrake command line option
+        try:
+            if ('use_ffbrake' in self.config):
+                return True if self.config['use_ffbrake']=='1' else False
+            return False
+        except:
+            return False 
+    def hbbrake_timeout(self): # handbrake command line option
+        try:
+            if ('hbbrake_timeout' in self.config):
+                return self.config['hbbrake_timeout']
+            return 300 # default 5 min 
+        except:
+            return 300 
     def use_segment_later(self): # launch segmenter later when every feeds are ready
         try:
             if ('use_segment_later' in self.config):
