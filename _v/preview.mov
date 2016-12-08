@@ -1,7 +1,0 @@
-<?xml version="1.0"?>
-<?quicktime type="application/x-quicktime-media-link"?>
-
-<embed
-src="rtsp://192.168.5.114:554/Stream1"
-autoplay="true" type="video/quicktime" controller="true" quitwhendone="false" loop="false"
-name="test file"></embed>
