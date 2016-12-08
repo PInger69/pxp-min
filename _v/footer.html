@@ -168,7 +168,7 @@
 	function ajaxCamStatus(){
 		// check if the camera is connected and set the status accordingly
 		timestamp = new Date();
-                camstat_timeout=4000;
+        camstat_timeout=4000;
 		$.ajax({
 		  timeout:camstat_timeout,
 		  url: 'ajax/getvideoinfo/'+timestamp.getTime(),

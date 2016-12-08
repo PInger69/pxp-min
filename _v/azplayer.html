@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<title>Azure Media Player</title>
+<meta name="description" content="">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+
+<link href="http://amp.azure.net/libs/amp/latest/skins/amp-default/azuremediaplayer.min.css" rel="stylesheet">
+<script src="http://amp.azure.net/libs/amp/latest/azuremediaplayer.min.js"></script>
+<script>
+    amp.options.flashSS.swf = "http://amp.azure.net/libs/amp/latest/techs/StrobeMediaPlayback.2.0.swf"
+    amp.options.flashSS.plugin = "http://amp.azure.net/libs/amp/latest/techs/MSAdaptiveStreamingPlugin-osmf2.0.swf"
+    amp.options.silverlightSS.xap = "http://amp.azure.net/libs/amp/latest/techs/SmoothStreamingPlayer.xap"
+</script>
+
+
+<!--*****START OF Azure Media Player Scripts*****-->
+    <!--Note: DO NOT USE the "latest" folder in production. Replace "latest" with a version number like "1.0.0"-->
+    <!--EX:<script src="//amp.azure.net/libs/amp/1.0.0/azuremediaplayer.min.js"></script>-->
+    <!--Azure Media Player versions can be queried from //amp.azure.net/libs/amp/latest/docs/changelog.html-->
+<!--link href="http://amp.azure.net/libs/amp/latest/skins/amp-default/azuremediaplayer.min.css" rel="stylesheet"-->
+<!--script src="http://amp.azure.net/libs/amp/latest/azuremediaplayer.min.js"></script-->
+<!--*****END OF Azure Media Player Scripts*****-->
+
+</head>
+<body>
+
+<video id="vid1" class="azuremediaplayer amp-default-skin amp-big-play-centered" tabindex="0">  </video>
+
+<script>
+        var myPlayer = null;
+
+        if (!!myPlayer) {
+            myPlayer.dispose();
+        }
+
+        var myOptions = {
+            "nativeControlsForTouch": false,
+            "logo": { "enabled": false },
+            autoplay: true,
+            controls: true,
+            width: "800",
+            height: "475",
+            poster: ""
+        };
+        myPlayer = amp("vid1", myOptions);
+
+        myPlayer.addEventListener(amp.eventName.play, _ampEventHandler);
+        myPlayer.addEventListener(amp.eventName.ended, _ampEventHandler);
+
+
+        myPlayer.currentTime(30);
+
+        myPlayer.src([
+        {
+        src: "http://mymedia2svc.streaming.mediaservices.windows.net/ce12a70c-d8e3-4274-be53-50cd2dc2ab16/main_00hq.ism/Manifest",
+        type: "application/vnd.ms-sstr+xml"
+        },
+        ]);
+
+        function _ampEventHandler(evt) {
+                        if ("play" == evt.type) {
+                             // $('#video-viewport').css("opacity", "1");
+                        }
+                        if ("ended" == evt.type) {
+                              myPlayer.play();
+                        }
+        }
+
+</script>
+
+
+<!--video id="azuremediaplayer"
+       class="azuremediaplayer amp-default-skin amp-big-play-centered"
+       controls autoplay
+       width="800"
+       height="475"
+       poster=""
+       data-setup='{"logo": { "enabled": false }, "techOrder": ["azureHtml5JS", "flashSS", "silverlightSS", "html5"], "nativeControlsForTouch": false}' tabindex="0">
+    <source src="http://mymedia2svc.streaming.mediaservices.windows.net/ce12a70c-d8e3-4274-be53-50cd2dc2ab16/main_00hq.ism/Manifest" />
+    <p class="amp-no-js">To view this video please enable JavaScript, and consider upgrading to a web browser that supports HTML5 video</p>
+</video-->
+
+<!--video id="azuremediaplayer" class="azuremediaplayer amp-default-skin amp-big-play-centered" controls autoplay width="800" height="475" poster="" data-setup='{"logo": { "enabled": false}, "techOrder": ["azureHtml5JS", "flashSS", "silverlightSS", "html5"], "nativeControlsForTouch": true' tabindex="0">
+    <source src="http://mymedia2svc.streaming.mediaservices.windows.net/ce12a70c-d8e3-4274-be53-50cd2dc2ab16/main_00hq.ism/Manifest" type="application/vnd.ms-sstr+xml" />
+    <p class="amp-no-js">To view this video please enable JavaScript, and consider upgrading to a web browser that supports HTML5 video</p>
+</video-->
+
+
+</body>
+</html>

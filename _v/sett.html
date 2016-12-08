@@ -132,12 +132,23 @@ show_option = iff(int(settings['misc']['show_option']), True, False)
 			</div>
 		</section>
 	</div>
+    <div class="row">
+        <section name="misc"> 
+            <div class="col_2">
+                Use ffmpeg to rebuild video clips
+            </div> 
+            <div class="col_10">
+                <input type="checkbox" name="use_ffbrake" @iff(int(settings['misc']['use_ffbrake']),'checked','')/>
+                <ajaxSpin></ajaxSpin>
+            </div>
+        </section>
+    </div>
 
 @end
 </div>
 
 <div id="misc_options">
-    <p><b>Miscellaneous Options</b></p>
+    <p><b>Miscellaneous Options (Tentative)</b></p>
     <table border="1">
     <tr>
         <td width="50%">

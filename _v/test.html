@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<title>.min (v1.1.8)</title>
+	<meta http-equiv="cache-control" content="max-age=0" />
+	<meta http-equiv="cache-control" content="no-cache" />
+	<meta http-equiv="expires" content="0" />
+	<meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT" />
+	<meta http-equiv="pragma" content="no-cache" />
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+	<meta name="description" content="" />
+	<link rel="shortcut icon" href="css/img/favicon.png" type="image/png"/>
+	<script type="text/javascript" src="js/jquery.min.js"></script>
+	<script type="text/javascript" src="js/prettify.js"></script>
+	<script type="text/javascript" src="js/kickstart.js"></script>
+	<script type="text/javascript" src="js/jquery.timer.js"></script>
+	<link rel="stylesheet" type="text/css" href="css/kickstart.css" media="all" />
+	<link rel="stylesheet" type="text/css" href="css/style.css" media="all" />
+</head>
+<body>
+
+<div class="grid">
+	<div id="wrap" class="clearfix">
+
+
+
+
+
+
+<div id="alert-message" class="notice success">
+    <i class="icon-ok icon-large"></i>
+    Please make sure to shutdown computer after making backup to unmount the USB drive
+    <div class="cw_3" style="float:right;">
+        <button class="ejectbtn small blue cw_10"><span>Unmount</span></button>
+    </div>
+    <a href="#close" class="icon-remove"></a>
+</div>
+
+
+<div class="col_12">
+	<div class="row bold">
+		<div class="col_2">Date</div>
+		<div class="col_2">Home team</div>
+		<div class="col_2">Visitor team</div>
+		<div class="col_2">League</div>
+		<div class="col_1">Camera#</div>
+		<div class="col_1">Quality</div>
+		<div class="col_1">Video</div>
+		<div class="col_3">
+			<div class="cw_4 right">
+				&nbsp;
+			</div>
+			<div class="cw_4 right">
+				<button id="download" class="green small cw_12" type="reset">
+					<i class="icon-download-alt"></i>
+				</button>
+			</div>
+			<div class="cw_1 right">
+				<input type="checkbox" control="chkAll" class="chkAll">
+			</div>
+			<div class="cw_3" style="float:right;">
+				<button class="removeSel small red cw_12">
+					<i class="icon-remove"></i>
+				</button>
+			</div>
+		</div>
+	</div>
+
+
+
+
+        <div class="row border-top" id="row_1">
+    		<div class="col_2">
+    			(1) 2015-10-23 14:27:07
+    		</div>
+    		<div class="col_2 word-break">
+    			Akron
+    		</div>
+    		<div class="col_2 word-break">
+    			 Alliance
+    		</div>
+    		<div class="col_2 word-break">
+    			ACHA 1
+    		</div>
+    		<div class="col_1 word-break"><!-- S_INDEX (1/n)-->
+                s_00
+    		</div>
+    		<div class="col_1 word-break"><!-- VQ -->
+                HQ
+    		</div>
+    		<div class="col_21 vidColumn"><!-- PLAY or LIVE -->
+                    <a class="media" href="http://localhost/events/2015-10-23_14-27-07_198ebc99e24a96d8cfcf0d569bd9def03cf0299f_local/video/main_00hq.mp4">play</a> (    2.74MB)
+    		</div>
+    		<div class="col_2">
+    			<div class="cw_1 right backup-holder">
+    			    <a href="#" class="backupEvt large" num1_mp4="1" eventID="198ebc99e24a96d8cfcf0d569bd9def03cf0299f_local"><i class="icon-save"></i></a>
+    			</div>
+    			<div class="cw_10 center">
+    		             <input type="checkbox" class="center" num1_mp4="1" event="2015-10-23_14-27-07_198ebc99e24a96d8cfcf0d569bd9def03cf0299f_local" eventID="198ebc99e24a96d8cfcf0d569bd9def03cf0299f_local">
+    			</div>
+    			<div class="cw_1 right">
+    			     <a href="#" class="removeEvt large red" num1_mp4="1" event="2015-10-23_14-27-07_198ebc99e24a96d8cfcf0d569bd9def03cf0299f_local" eventID="198ebc99e24a96d8cfcf0d569bd9def03cf0299f_local"><i class="icon-remove"></i></a>
+    			</div>
+    		</div>
+    	</div>
+
+</div>
+
+
+<div id="videoWnd" class="wnd-container hide">
+	<div class="wnd">
+		<video id="videoPlayer" class="video-js vjs-default-skin" autoplay width="853" height="480" controls preload="auto" data-setup="{}">
+
+		</video>
+		<!-- <div id="vidPlayer"></div> -->
+		<a href="#close" class="icon-remove"></a>
+	</div>
+</div>
+
+
+<link href="css/video-js.css" rel="stylesheet">
+<script src="js/video.js"></script>
+
+<script type="text/javascript">
+var dlQueue = []; //queue used for processing multiple downloads
+var rmQueue = []; //queue used for processing multiple deletions
+var rmBtnHtml = "";
+var dnRetries = 0; //number of download retries
+function Backuper (params) {
+	this.hid = params.hid;
+	this.holder = params.holder;
+    // this.STAT_INIT = 0    //event initialized
+    // this.STAT_START= 1<<0 //backup started
+    // this.STAT_DONE = 1<<1 //backup done (success)
+    // this.STAT_FAIL = 1<<2 //backup done (fail)
+    // this.STAT_NOEVT= 1<<3 //event doesn't exist
+
+	this.status = 0;
+	return this;
+	// var holder = obj.parents('.backup-holder');
+	//
+	// ajaxCall("evtbackup/?event="+$(obj).attr('eventID'),null,function() {
+	// 	holder.html('<i class="icon-ok green large"></i>')
+	// });
+}
+
+Backuper.prototype.start = function() {
+	var self = this;
+	//display loading animation until copy starts
+	this.holder.html('<img src="css/img/ajax-loader.gif"/>');
+	// start the download
+	ajaxCall("evtbackup/?event="+this.hid,"",
+		function(){
+			self.progress(); //start getting progress for the backup when server sends a response
+		});
+};
+
+Backuper.prototype.progress = function() {
+	var self = this;
+	url = 'ajax/evtbackupstatus/?event='+self.hid+'&r='+Math.random();
+	console.log(url);
+	$.ajax({
+		url: url,
+		dataType: 'json'
+		// data: {event: self.hid}
+	})
+	.done(function(data) {
+		self.status = data[0];
+		if((data[0]^16) && (data[0]&(2|4))){
+			self.done();
+		}
+		else{//still backing up
+			if(data[0]&1){ //backup started
+				if(self.holder.find('.backup-meter').length<=0){ //just started backing up - display progress bar
+					self.holder.html('<div class="meter animate backup-meter"><span style="width: 0%"><span></span></span></div>');
+				}
+				else{
+					// update progress bar to the new progress
+					pbarWidth(self.holder.find('.backup-meter > span'),data[1]);
+				}
+			}
+			setTimeout(function(){
+				self.progress();
+			},1000);
+		}
+	})
+	.fail(function(jqxhr) {
+		this.status = -1;
+	})
+	.always(function() {
+	});
+};
+
+function ejectDrive(holder) {
+    if (confirm("Eject USB Drive for now") == true) {
+        holder.html('<i>' + 'Ejecting...Please wait' + '</i>');
+    } else {
+        holder.html('<a class="icon-ok green large" href="aaa/bbb/ccc"></a>');
+    }
+}
+
+Backuper.prototype.done = function() {
+	console.log(this.status);
+	if(this.status==2){
+	    //----------------------------------------------------------------------------------
+	    // when finished copying, show eject button on the top
+	    //
+		this.holder.html('<a id="eject-button" class="icon-ok green large" href=""></a>');
+        $("#alert-message").show();
+        $("#eject-button").click(function() {
+            $("#eject-button").attr("href", "#");
+        });
+	}
+	else{
+		if(this.status & (1<<6)){
+			this.holder.html('not enough space');
+		}
+		else if(this.status & (1<<5)){
+			this.holder.html('no drives found');
+		}
+		else{
+			this.holder.html('error '+this.status);
+		}
+	}
+};
+
+function getProgress() {
+	// get download progress
+	$.ajax({
+		url: 'ajax/dlprogress',
+		type: 'GET',
+		success: function(data, textStatus, xhr){
+
+			// response received for progress, get the % value
+			data = eval("("+data+")");
+			progress = parseInt(data['progress']);
+			// set the progress bar width based on percentage
+			pbarWidth(dlQueue[0].find('.meter > span'),progress);
+			errorCode = parseInt(data['status']);
+			if(progress>=100 || errorCode){ //file has finished or there was an error
+				processQueue(true,errorCode);// file has finished - move on to the next one
+			}
+			else{
+				setTimeout(getProgress,1000);//keep getting the progress every second until complete
+			}
+		}//end success
+	});
+}
+
+function rmQueueNext() {
+	//remove the event that was just deleted
+	deletedEvt = rmQueue.shift();
+
+	// remove event row from the table
+	if ( $(deletedEvt).parents('.row2').length > 0 ) {
+        $(deletedEvt).parents('.row2').hide();
+	}
+	else $(deletedEvt).parents('.row').hide();
+
+	if(rmQueue.length<1){
+    	$('.removeSel').html(rmBtnHtml);
+		return;
+	}
+	evtToDelete = rmQueue[0];
+
+    if ($(evtToDelete).parents('.row').length > 0) {
+	   $(evtToDelete).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+	}
+	else $(evtToDelete).parents('.row2').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+
+	// send the call to delete the event
+	ajaxCall("evtdelete/?name="+$(evtToDelete).attr('event')+"&event="+$(evtToDelete).attr('eventID'),"",rmQueueNext);
+}
+// process download queue
+function processQueue(itemDone, itemError) {
+	if(itemDone==undefined) itemDone=false;
+	if(itemError==undefined) itemError=0;
+	if(itemDone) { //just finished downloading an element - remove the progress bar
+		switch(itemError){
+			case -1: //idevcopy app crashed - retry download
+				dnRetries++;
+				if(dnRetries>3){
+					status = 'Error - please retry';
+				}
+			break;
+			case false:
+			case 0:
+				status = '<i class="icon-ok green large"></i>';
+			break;
+			case 1:
+				status = 'not enough space';
+			break;
+			case 4:
+				status = 'connect iPad via USB';
+			break;
+			case 7:
+				dnRetries++;
+				if(dnRetries>3){
+					status = 'make sure you clicked TRUST this computer';
+				}
+				else{
+					itemError = -1; //to make sure it retires downloading it
+				}
+			break;
+			default:
+				status='error ('+itemError+')';
+			break;
+		}
+		if(itemError>=0){
+			dnRetries = 0;
+			dlQueue[0].html(status); //either an error occurred or the progress has finished - put the status instead of the progress bar
+			dlQueue.shift(); //remove the item that was completed (always the first one in the queue)
+		}
+	}
+	if(itemError>=0){
+		if(dlQueue.length<=0) {//no more items in the queue - all downloads are complete
+			$('#download').removeAttr('disabled');
+			$('#download').html('<i class="icon-download-alt"></i>');
+			return;
+		}
+		// grab the next video in the queue (first element)
+		vid = dlQueue[0].find('input'); //dlqueue contains div's that contain checkboxes - hence the .find() method
+		// get the name of the event (for ipad)
+		evt = $(vid).attr('event');
+		// replace checkbox with a progress bar
+		dlQueue[0].html('<div class="meter animate"><span style="width: 0%"><span></span></span></div>'); //replace the checkbox
+	}
+	// send a request to download the file
+	$.ajax({
+	  url: 'ajax/prepdown',
+	  data: {'event':evt},
+	  success: function(data, textStatus, xhr){
+	  	console.log(data);
+		// $.ajax({
+		//   url: 'dlstart.php',
+		//   data: {'event':evt},
+		//   success: function(data, textStatus, xhr){
+
+		//     //called when successful - start checking for progress after 1 second
+	    setTimeout(getProgress,2000);
+		//   }
+		// });
+	  }
+	});
+}//end processQueue
+
+function pbarWidth(obj,width) {
+	obj.animate({
+			width: width+'%'
+		}, 500);
+}
+
+////////////////////////////////////////////////////////////////////
+function checkusb()
+{
+    $.ajax({
+        url: 'ajax/usbmounted',
+        dataType: 'json'
+    })
+    .done(function(data) {
+        res = false;
+        if(!data.hasOwnProperty('results')) {
+            return res; // there are no results...
+        }
+        var d = data.results;
+        console.log("check_usb-->" + d.status);
+        if (d.status==true) {
+                $("#alert-message").show();
+                res = true;
+        }
+        else {
+                $("#alert-message").hide();
+        }
+        //setTimeout(checkusb,2000);
+        return res;
+    })
+    .fail(function(jqxhr) {
+        console.log("check_usb failed");
+    })
+    .always(function() {
+    });
+    return false;
+}
+var usbfindertimer = $.timer(function() { checkusb(); });
+
+function getejcstat()
+{
+    console.log("check eject status-->");
+    $.ajax({
+        url: 'ajax/ejtprogress',
+        dataType: 'json',
+        data: {"a1": 'ejt', "a2": '4'} // input args for ejtprogress
+    })
+    .done(function(data) {
+        if (!data.hasOwnProperty('results')) {
+            return false;
+        }
+        var d = data.results;
+        if (d!=null || d!=undefined) {
+            console.log(d.msg + " " + d.progress + " " + d.status);
+            if (d.status==1) {
+                $("#alert-message").hide();
+                ejttimer.stop();
+            }
+            else if (d.status==2) {
+                alert('Unmount failed. Please try again.');
+                ejttimer.stop();
+            }
+            return true;
+        }
+    })
+    .fail(function(jqxhr) {
+        console.log("ejecting usb drive failed");
+    })
+    .always(function() {
+    });
+}
+var ejttimer = $.timer(function() { getejcstat(); });
+
+
+function fOnLoad (argument) {
+    $("#alert-message").hide();
+	// warn user about exiting the page if the download is in progress
+	window.onbeforeunload = function(e){
+		if(dlQueue.length>0){
+		    return 'If you leave this page, not all files may be downloaded and progress will not be updated for the current download.';
+		}
+	}
+
+	//------------------check eject USB drive stuffs....
+	// hide message bar initially
+    // kick in the usb drive finder timer
+	usbfindertimer.set({ time : 2000, autostart : true });
+	usbfindertimer.play();
+	// eject button is pressed...
+    $('.ejectbtn').click(function (e){
+        if(dlQueue.length<=0)
+        {
+            $("#eject-button").attr("href", "#"); // prevent refresh screen
+            if(confirm("Unmount USB Drive for now ?")==true) {
+                usbfindertimer.stop();
+                ajaxCall("ejectusbdrv/?name=usb","","");
+                ejttimer.set({ time:2000, autostart:true });
+            }
+        }
+    });
+    //-------------------------------------------------
+
+	// attach a click to the close button on a window
+	$(document).on('click', '.wnd a[href$="close"]', function(e){
+		e.preventDefault();
+		$('html').find('.overlay').fadeOut(function (e) {
+			$(this).remove();
+		});
+		$(this).parents('.wnd-container').fadeOut();
+		videojs("#videoPlayer").pause();
+		// jwplayer("vidPlayer").stop();
+	});
+	// attach media player to any media links (allows graceful breakdown for js-disabled cases)
+    $('.media').click(function (e){
+    	e.preventDefault();
+	    self = this;
+	    // html overlay
+	    $('html').prepend("<div class='overlay hide'></div>");
+	    $('.overlay').fadeIn();
+	    // player window
+	    $('#videoWnd').fadeIn();
+	   	var vidType = $(self).attr('href').indexOf('.m3u8')>0?'application/x-mpegURL':'video/mp4';
+	   	// remove any old videos
+	   	$('#videoWnd video').find('source').remove();
+	   	// add new video
+	    $('#videoWnd video').append('<source src="'+$(self).attr('href')+'" type="'+vidType+'">');
+		videojs("#videoPlayer").play();
+    	return false;
+    });
+    // clicked download button
+    $('#download').click(function(){
+    	if(dlQueue.length>0 || rmQueue.length>0){ //do not allow download when download or deletion is in progress
+    		return;
+    	}
+        usbfindertimer.stop();
+        //ejttimer.stop();
+
+    	$(this).attr('disabled','disabled'); //make sure user cannot click download again
+    	$(this).html('<img src="css/img/ajax-loader.gif"/>')
+    	// go through every checked video (checkbox) and add it to the queue
+    	$('input[download]:checked[control!=chkAll]').each(function (){
+    		// add the parent div element of the checkbox to the queue (since checkbox will be replaced by progress bar)
+    		dlQueue.push($(this).parent('div'));
+    	}).attr('disabled','disabled');
+    	console.log(dlQueue.length);
+    	// start download
+    	processQueue();
+    });
+    $('.removeSel').click(function (e){
+    	e.preventDefault();
+    	if(dlQueue.length>0 || rmQueue.length>0){
+    		return;
+    	}
+    	// remove selected events
+    	if(confirm('This will delete all the selected events. Are you sure?')){
+	    	$('input:checked[control!=chkAll]').each(function (){
+	    		rmQueue.push(this);
+	    	});
+	    	if(rmQueue.length>0){
+		    	rmBtnHtml = $(this).html();
+		    	$(this).html('<img src="css/img/ajax-loader.gif"/>');
+		    	if ($(rmQueue[0]).parents('.row').length>0) {
+		           $(rmQueue[0]).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+		    	}
+		    	else $(rmQueue[0]).parents('.row2').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+
+				// send the call to delete the event
+				ajaxCall("evtdelete/?name="+$(rmQueue[0]).attr('event')+"&event="+$(rmQueue[0]).attr('eventID'),"",rmQueueNext);
+			}
+    	}//if confirm
+    });//removeSel.click
+    $('.removeEvt').click(function (e) {
+    	e.preventDefault();
+    	if(dlQueue.length>0 || rmQueue.length>0){
+    		return;
+    	}
+    	var tableRow = this;
+    	if(confirm('This will delete the event and the video. Are you sure?')){
+            //alert($(tableRow).attr('num1_mp4'));
+            if ($(tableRow).parents('.row').length>0) {
+                cur_row = $(tableRow).parents('.row');
+            }
+            else cur_row = $(tableRow).parents('.row2');
+
+            //alert(cur_row.attr('id'));
+            rid = cur_row.attr('id');
+            if ($(this).parents('.row').length>0) {
+	    	  $(this).parents('.row').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+	    	}
+	    	else $(this).parents('.row2').find('.vidColumn').html('<img src="css/img/ajax-loader.gif"/>');
+
+    		ajaxCall("evtdelete/?name="+$(tableRow).attr('event')+"&event="+$(tableRow).attr('eventID'),"",
+    			function(){
+    				//$(tableRow).parents('.row').hide();
+                    s = "0";
+    				idx = rid.indexOf('_');
+    				if (idx > 0)
+    				    s = rid.substring(idx+1);
+    				start_idx = parseInt(s,10);
+    				num_mp4 = parseInt($(tableRow).attr('num1_mp4'),10);
+    				if (s>0 && num_mp4>1)
+    				{
+        				for (i=start_idx; i<start_idx+num_mp4; i++)
+        				{
+        				    $('#row_'+i).hide();
+        				}
+    				}
+    				else
+    				{
+    				    if ($(tableRow).parents('.row').length>0) {
+    				        $(tableRow).parents('.row').hide();
+    				    }
+    				    else $(tableRow).parents('.row2').hide();
+    				}
+    		});
+    		// remove event row from the table
+    		// $(this).parents('.row').hide();
+    	}
+    	return false;
+    });//removeEvt.click
+    $('.backupEvt').click(function(event) {
+        usbfindertimer.stop();
+        //ejttimer.stop();
+
+    	var hid = $(this).attr('eventID');
+    	var holder = ($(this).parents('.row').length>0) ? $(this).parents('.row').find('.vidColumn') : $(this).parents('.row2').find('.vidColumn');
+    	var backup = new Backuper({
+    		hid:hid,
+    		holder:holder
+    	});
+    	backup.start();
+
+    });
+    $('.chkAll:checkbox').change(function () {
+    	if($(this).is(":checked")){
+    		$(":checkbox").attr("checked","checked");
+    	}
+    	else{
+    		$(":checkbox").removeAttr("checked");
+    	}
+    	return false;
+    });
+}//fOnLoad
+</script>
+<!-- ===================================== START FOOTER ===================================== -->
+		<div class="clear"></div>
+		<div id="footer">
+		&copy; 2015 Avoca Technologies Inc.
+		</div>
+	</div><!-- END WRAP -->
+</div><!-- END GRID -->
+<script type="text/javascript">
+	var reloadPending = false;
+	var cameraStateTmr = null;     	//timer variable (used to reset it if need be)
+	var encStatus = "ready"; 	//encoder status
+	var btnHtml = "";   	//html for the submit button prior to clicking
+	var ajaxInProgress = false;	//whether the page can be reloaded - true if there is an ajax call in progress
+	var shutDownCounter = 0; //counts after receiving an error from the server (happens when server goes offline)
+	var shuttingDown = false;
+	function ajaxSubmit(form, callback){
+		if(callback==undefined){
+			callback = false;
+		}
+		// $(form).find('input, select').removeClass('alert');
+		// show the loading wheel
+		// $(form).find('#loader').show();
+		//reset the warning on the form
+		// $(form).find("#msg").html('');
+
+		timestamp = new Date(); //added to prevent response caching on Safari (great job Apple! #fail )
+		$(form).find('.warning').hide();
+		action = $(form).attr('action');
+		post_data = $(form).serialize()+"&timestamp="+timestamp.getTime();
+		ajaxInProgress = true;
+		$.ajax({
+		    url: 'ajax/'+action,
+		    type: 'POST',
+		    data: post_data,
+			complete: function(xhr, textStatus) {
+			},
+		    success: function(data, textStatus, xhr){
+				//response from the server received
+				ajaxInProgress = false;
+				try{
+					rez = eval("("+data+")");//parse json
+				}
+				catch(e){
+					rez = { };
+					rez.success = false;
+					rez.msg = data;
+					rez.action = '';
+				}
+				if(rez.success){
+					if(callback){
+						eval(callback+"();");
+					}
+				}
+				else{
+					$(form).find('.warning .status').html(rez.msg);
+					$(form).find('.warning').show();
+				}//if rez.success else
+				// reset the submit button state to what it was before the submission
+				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
+		    },//on success
+		    error: function(xhr, textStatus, errorThrown){
+				//called when there is an error
+				ajaxInProgress = false;
+				$(form).find('button[type="submit"]').html(btnHtml).removeAttr('disabled');
+		    }
+		});
+	}//ajaxSubmit
+	function ajaxCall(action,params,callback,ajaxbtn){
+		if(ajaxbtn==undefined){
+			ajaxbtn = false;
+		}
+		if(params==undefined){
+			params = "";
+		}
+		if(callback==undefined){
+			callback = false;
+		}
+		if(ajaxbtn){
+			action = ajaxbtn.attr('action');
+			params = ajaxbtn.attr('param');
+			var btnHTML = ajaxbtn.html();
+			// disable the ajax button to prevent further submissions
+			ajaxbtn.attr('disabled','disabled');
+			// show loader image
+			ajaxbtn.html('<img src="css/img/ajax-loader.gif"/>');
+		}
+
+		try{
+			//params contains the list of IDs of elements whose values should be passed as parameters
+			// perform the ajax request
+			//eval("("+params+")");
+			pr = params.split(',');
+		}
+		catch(e){
+			pr = new Array();
+		}
+		// return;
+		ajaxInProgress = true;
+		shuttingDown = action=='encshutdown';
+		params = {};
+		for(elem in pr){
+			params[pr[elem]] = $('#'+pr[elem]).val();
+		}
+		timestamp = new Date();
+		// determine if parameters already have a question mark (sending GET params)
+		getParams = action.indexOf('?') != -1;
+		$.ajax({
+		  // timeout:5000,
+		  url: 'ajax/'+action+(getParams?'&':'?')+'timestamp='+timestamp.getTime(),
+		  data: params,
+		  complete: function(xhr, textStatus) {
+		  	console.log(textStatus)
+		  },
+		  success: function(data, textStatus, xhr) {
+		  	console.log(data);
+		    ajaxInProgress = false;
+		    result = { };
+		    try{
+		    	result = eval("("+data+")");
+		    }
+		    catch(e){
+		    	result['success'] = false;
+		    }
+		    if (result!=null && !result['success'] && shuttingDown){
+		  		shuttingDown = false;
+		  		alert('user permissions do not allow encoder shut down');
+		  		window.location.reload();
+		    }
+		    if (result!=null)
+		    {
+    	    	switch(result['action']){
+    	    		case 'reload':
+    	    			window.location.reload();
+    	    		break;
+    	    		case 'popup':
+    	    			if(result['msg']){
+    		    			alert(result['msg']);
+    	    			}
+    	    		break;
+    	    		default :
+    	    		break;
+    	    	}
+	    	}
+		    if(result!=null && result['success'] && callback!=false){
+		    	callback();
+		    }
+		    if (ajaxbtn){
+		    	ajaxbtn.removeAttr("disabled");
+		    	ajaxbtn.html(btnHTML);
+		    }
+		  },
+		  error: function(xhr, textStatus, errorThrown) {
+		    ajaxInProgress = false;
+		    if (ajaxbtn){
+		    	ajaxbtn.removeAttr("disabled");
+		    	ajaxbtn.html(btnHTML);
+		    }
+		  	// if (shuttingDown){
+		  	// 	shuttingDown = false;
+		  	// 	alert('user permissions do not allow encoder shut down');
+		  	// }
+
+		  }
+		});
+	}
+	// periodically get the camera status
+	function ajaxCamStatus(){
+		// check if the camera is connected and set the status accordingly
+		timestamp = new Date();
+		$.ajax({
+		  timeout:4000,
+		  url: 'ajax/getvideoinfo/'+timestamp.getTime(),
+		  complete: function(xhr, textStatus) {
+
+		  },
+		  success: function(data, textStatus, xhr) {
+
+			try{
+				rez = eval("("+data+")");//parse json
+			}
+			catch(e){
+				rez = { };
+				rez.success = false;
+				rez.msg = data;
+			}
+			if (rez.success){
+				// got a proper response from the server - put the message as camera status
+				if(rez.msg=='No camera'){
+					$('#cam-status').text('N/A');
+				}
+				else{
+					$('#cam-status').text(rez.msg);
+				}
+				if(rez.encoder!=encStatus || reloadPending){
+					clearTimeout(cameraStateTmr);
+					if (!ajaxInProgress){
+						window.location.reload();
+					}
+					else{
+						reloadPending = true;
+					}
+				}
+			}
+			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //check camera status continuously
+		  },
+		  error: function(xhr, textStatus, errorThrown) {
+		  	if (shutDownCounter>9){//after a few seconds the encoder should be off
+			    $('html').prepend("<div class='overlay hide'></div>");
+			    $('.overlay').fadeIn();
+			    $('#shutdownNotice').fadeIn();
+		  		return;
+		  	}
+		  	if(shuttingDown){
+		  		shutDownCounter++;
+		  	}
+			cameraStateTmr = setTimeout(ajaxCamStatus,2000); //error occurred - keep checking the status
+
+		  }
+		});
+	}
+	// get encoder status (live/paused/off)
+	$(function(){
+		// if there was an onLoad function defined in one of the html's - run it
+		if(typeof fOnLoad=='undefined'){
+			fOnLoad = function (){ };
+        }
+        fOnLoad();
+        // attach ajax submit to the forms
+        $('form').submit(function(){
+        	if(!$(this).attr('default')){
+        		// disable submit button to prevent it from submitting again
+        		btnSubmit = $(this).find('button[type="submit"]');
+				btnSubmit.attr('disabled','disabled');
+				btnHtml = btnSubmit.html();
+				// add ajax loader image
+				btnSubmit.html('<img src="css/img/ajax-loader.gif"/>');
+				// perform the submit
+	        	ajaxSubmit(this,$(this).attr('callback'));
+	        	return false;
+	        }
+        });
+		$('.ajaxbtn').click(function(e) {
+			// ajax buttons have 'action' attribute which is the name of the url to call
+			// some have param attribute - list of #id's of elements whose values to add to the call
+			if($(this).attr('action')=='encshutdown' || $(this).attr('action')=='encstop'){
+				if (confirm("Are you sure?"))
+				  {
+					  ajaxCall(false,false,false,$(this));
+				  }
+			}
+			else{
+				ajaxCall(false,false,false,$(this));
+			}
+
+		});
+	});
+</script>
+</body>
+</html>
+
