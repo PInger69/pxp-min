@@ -228,7 +228,8 @@ class MP4FixWorker (threading.Thread):
             
             # ffmpeg command test only         
             if (pu.pxpconfig.use_ffbrake()):   
-                ffmpeg_param = "-y -i {} -f mp4 {}".format(tsfilename, mp4_path)
+                #ffmpeg_param = "-y -i {} -f mp4 {}".format(tsfilename, mp4_path)
+                ffmpeg_param = "-y -i {} -c copy -bsf:a aac_adtstoasc {}".format(tsfilename, mp4_path)
                 return self.convert_via_ffmpeg(ffmpeg_param)
             
             
@@ -382,7 +383,7 @@ class MP4FixWorker (threading.Thread):
                     error_line = ''
                 else:
                     error_line += err
-                if (time.time()-start_time>60 and not total_time):
+                if ((time.time()-start_time)>60 and not total_time):
                     self.log('Cannot convert_via_ffmpeg because "Duration" is not found')
                     break;
                 sys.stderr.flush()

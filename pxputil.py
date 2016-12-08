@@ -2418,6 +2418,7 @@ class c_misc:
         localtime = time.localtime(now)
         milliseconds = '%03d' % int((now - int(now)) * 1000)
         return time.strftime('%Y/%m/%d %H:%M:%S', localtime) + "." + milliseconds
+
 class c_dbg(object):     
     DBG_NOTSET      = 0
     DBG_NORMAL      = 1<<0

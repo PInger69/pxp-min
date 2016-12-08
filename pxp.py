@@ -8,6 +8,8 @@ import threading
 import dicttoxml
 from xml.dom.minidom import parseString
 
+
+
 #######################################################
 #######################################################
 ################debug section goes here################
@@ -1988,6 +1990,7 @@ def settingsGet():
 		settings['misc']['show_webplayer']=pu.pxpconfig.show_webplayer()
 		settings['misc']['show_tcpopt']=pu.pxpconfig.show_tcpopt()
 		settings['misc']['show_option']=pu.pxpconfig.show_option()
+		settings['misc']['use_ffbrake']=pu.pxpconfig.use_ffbrake()
 	
 	except Exception as e:
 		settings["err"]=str(e)+' '+str(sys.exc_info()[-1].tb_lineno)
@@ -2060,9 +2063,18 @@ def settingsSet():
 		if(secc=='misc' and sett=='use_segment_later'):
 			pu.pxpconfig.change_value("use_segment_later", str(vals))
 
+		if(secc=='misc' and sett=='use_ffbrake'):
+			pu.pxpconfig.change_value("use_ffbrake", str(vals))
+
 		if(secc=='misc' and sett=='restart'):
 			pu.mdbg.log("============= settingsSet----> RESTART!!")
 			cmd = "killall -9 python"
+			os.system(cmd)
+			cmd = "killall -9 ffmpeg"
+			os.system(cmd)
+			cmd = "killall -9 live555"
+			os.system(cmd)
+			cmd = "killall -9 mediastreamsegmenter"
 			os.system(cmd)
 				
 		if(secc=='misc' and sett=='find_delta'):
@@ -3642,7 +3654,8 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 					  strftime('%Y-%m-%d_%H-%M-%S',events.date) AS `dateFmt`, \
 					  leagues.sport AS `sport`, events.datapath, \
 					  events.deleted AS `deleted`, \
-					  IFNULL(events.recstat,'{\"success\":0, \"msg\":\"\"}') AS `extra` \
+					  IFNULL(events.recstat,'{\"success\":false, \"msg\":\"\"}') AS `recstat`, \
+					  IFNULL(events.camsettings,'{\"success\":false, \"msg\":\"\"}') AS `camsettings` \
 				FROM `events` \
 				LEFT JOIN `leagues` ON events.league=leagues.name \
 				" + query + "\
@@ -3684,13 +3697,22 @@ def _listEvents( showDeleted=True, onlyDeleted=False, showSizes=True):
 			evtName = str(row['datapath'])
 			evtDir = c.wwwroot+evtName
 			result[i]['name']=evtName
- 			rec_stat_str = str(row['extra'])
+			
+ 			rec_stat_str = str(row['recstat'])
  			if (rec_stat_str==""):
- 				z = json.loads('{\"success\":0, \"msg\":\"\"}')
+ 				z = json.loads('{\"success\":false, \"msg\":\"\"}')
  			else:
  			 	z = json.loads(rec_stat_str)
 			result[i]['rec_stat'] = z
 			pu.mdbg.log("_listEvents------> extra_rec_stat:{}".format(rec_stat_str))
+			
+ 			camsettings_str = str(row['camsettings'])
+ 			if (camsettings_str==""):
+ 				z = json.loads('{\"success\":false, \"msg\":\"\"}')
+ 			else:
+ 			 	z = json.loads(camsettings_str)
+			result[i]['camsettings'] = z
+			pu.mdbg.log("_listEvents------> camsettings:{}".format(camsettings_str))
 			
 			# check if there is a streaming file (playlist) exists
 			# add any stream playlists to the sources in this format:
@@ -4129,11 +4151,24 @@ def _postProcess():
 							cvq = cfeed[2:4]
 							cfeedpath = c.wwwroot + event + "/video/" + cvq + "_" + sidx
 							mp4path = cfeedpath + "/" + "main_" + sidx + cvq + ".mp4"
+							if (sidx=="00" and cvq=="hq"):
+								# OLD mp4 link restored
+								old_mp4path = c.wwwroot + event + "/video/hq_00/" + "main_00hq.mp4"
+								cmd = "ln -s " + old_mp4path + " " + c.wwwroot + event + "/video/" + "main.mp4 >/dev/null 2>/dev/null"
+								os.system(cmd)
+								pu.mdbg.log("old mp4 path restored, cmd:{}".format(cmd))
 							#pu.mdbg.log("re-create link --> sidx:{} vq:{}  path:{}".format(sidx, cvq, mp4path))
 							os.system("rm " + f)
 							cmd = "ln -s " + mp4path + " " + c.wwwroot + event + "/video/" + "main_" + sidx + cvq + ".mp4 >/dev/null 2>/dev/null"
 							os.system(cmd)
 							pu.mdbg.log("AFTER f:{} --> realpath:{}".format(f, os.path.realpath(f)))
+			else:
+				# split folder is not used...
+				old_mp4path = c.wwwroot + event + "/video/" + "main_00hq.mp4"
+				cmd = "ln -s " + old_mp4path + " " + c.wwwroot + event + "/video/" + "main.mp4 >/dev/null 2>/dev/null"
+				# OLD mp4 link restored
+				os.system(cmd)
+				pu.mdbg.log("old mp4 path restored, cmd:{}".format(cmd))
 			for f in glob.glob(c.wwwroot + event + "/video/vid*.mp4"):
 				pu.mdbg.log("re-create link vid--> link:{}".format(f))
 				if (os.path.islink(f)): # ln -s /var/www/html/events/live/video/00hq_vid_5.mp4 vid_5.mp4

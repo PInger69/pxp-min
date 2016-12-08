@@ -1,7 +1,7 @@
 auto_start = 1
 ignore_video_settings = 0
 make_extra_log = 1
-virtual_lq_enabled = 1
+virtual_lq_enabled = 0
 #--------------------------
 enable_mp4_convert = 0
 lq_mp4_enabled = 0
@@ -11,7 +11,7 @@ use_tcp = 0
 use_mp4tcp = 0
 #--------------------------
 hbrake_conf = -i {} -o {} -e x264 -q 20 -B 160
-use_ffbrake = 0
+use_ffbrake = 1
 hbbrake_timeout = 300
 #--------------------------
 use_ping_camcheck = 0
@@ -22,7 +22,7 @@ use_segment_later = 0
 use_proxy = 1
 #--------------------------
 cam_axs = 0
-cam_snc = 0
+cam_snc = 1
 cam_tdk = 1
 cam_mtr = 0
 cam_dlt = 0
