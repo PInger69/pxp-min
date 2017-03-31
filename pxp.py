@@ -2502,17 +2502,17 @@ def tagmod(tagmodStr=False):
 		sql = "UPDATE `tags` SET "+(', '.join(sqlInsert))+" WHERE id=?"
 		# if(not bookmark):#do not mark as bookmark in the database - only give the user the ability to download it, no need for everyone else to get this file				
 
-		try:
-			if ('type' in jp and ((int(jp['type'])&1)==0)): #((int(jp['type'])==100) or (int(jp['type'])==1006))): # 100: for old app, 1006: for new app
-				pu.mdbg.log("tagmod param1:{}".format(params))
-				xp = list(params) # convert tuple to list
-				pu.mdbg.log("tagmod param2:{}".format(xp))
- 				xp[1] = unicode(str(float(xp[1]) + 9.0), "utf-8") # 2nd 'time' is added JCHOI
-				params = tuple(xp) # convert list to tuple back
-				pu.mdbg.log("tagmod param3-> sql:{} parma:{}".format(sql,params))
-				pu.mdbg.log("tagmod params changed manually... 9 secs are added")
-		except:
-			pass
+		#try:
+		#	if ('type' in jp and ((int(jp['type'])&1)==0)): #((int(jp['type'])==100) or (int(jp['type'])==1006))): # 100: for old app, 1006: for new app
+		#		pu.mdbg.log("tagmod param1:{}".format(params))
+		#		xp = list(params) # convert tuple to list
+		#		pu.mdbg.log("tagmod param2:{}".format(xp))
+ 		#		xp[1] = unicode(str(float(xp[1]) + 9.0), "utf-8") # 2nd 'time' is added JCHOI
+		#		params = tuple(xp) # convert list to tuple back
+		#		pu.mdbg.log("tagmod param3-> sql:{} parma:{}".format(sql,params))
+		#		pu.mdbg.log("tagmod params changed manually... 9 secs are added")
+		#except:
+		#	pass
 
 		#update the tag info in the database		
 		success = db.query(sql,params)
