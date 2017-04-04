@@ -4667,6 +4667,7 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 	""" 
 	import os, datetime
 	try:
+		import sys
 		if (pu.pxpconfig.check_webdbg('param')):
 			pu.mdbg.log("tagformat begins-->event:{0} user:{1} tagId:{2} tag:{3} checkImg:{4} sockSend:{5}".format(event, user, tagID, tag, checkImg, sockSend))
 		outDict = {}
@@ -4796,10 +4797,18 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 			sIdx = s.split('_')[1]+q
 			if(not oldStyleEvent):
 				sPrefix = sIdx+'_'
+			originalPrefix = sIdx+'_'
 			videoPath = '/video/'
 # 			if (split_folder):
 # 				videoPath = '/video/' + getlivefeedfolder(sIdx)
 			tnPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tn'+str(tag['id'])+'.jpg' #thumbnail image
+			tnFullPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+originalPrefix+'tn'+str(tag['id'])+'.jpg' #thumbnail image
+			if (os.path.exists(c.wwwroot+event+'/thumbs/'+originalPrefix+'tn'+str(tag['id'])+'.jpg')):
+				tnPath = tnFullPath
+			elif (os.path.exists(c.wwwroot+event+'/thumbs/tn'+str(tag['id'])+'.jpg')):
+				tnPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/tn'+str(tag['id'])+'.jpg'
+			else:
+				tnPath = tnFullPath
 			tlPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tl'+str(tag['id'])+'.png' #telestration drawing
 			tfPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tf'+str(tag['id'])+'.jpg' #full size screenshot (for telestration)
 			tvPath = 'http://'+pu.uri.host+'/events/'+event+'/thumbs/'+sPrefix+'tv'+str(tag['id'])+'.mp4' #video telestration
