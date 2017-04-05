@@ -2827,7 +2827,12 @@ def tagset(tagStr=False, sendSock=True):
 			pu.disk.sockSendWait("APR|"+str(progress)+":"+cookie, addnewline=True)
 			progressStep = (90-progress)/len(streams)
 		
-		oldStyleEvent = os.path.exists(pathToEvent+'/video/main.mp4')
+		# BCH: - the original algorithm (which only checked for the existence of a main.mp4
+		#        file doesn't work. That file gets created at some point for all events
+		#        but usually after the event has stopped being 'live'. I'm not sure 
+		#        what happens with a non-HQ devices or if that's even a situation that
+		#        ever comes up.
+		oldStyleEvent = os.path.exists(pathToEvent+'/video/main.mp4') and not os.path.exists(pathToEvent+'/video/main_00hq.mp4')
 		if(oldStyleEvent):
 			sIdx = False
 			sPrefix = ""
@@ -4667,7 +4672,6 @@ def _tagFormat( event=False, user=False, tagID=False, tag=False, db=False, check
 	""" 
 	import os, datetime
 	try:
-		import sys
 		if (pu.pxpconfig.check_webdbg('param')):
 			pu.mdbg.log("tagformat begins-->event:{0} user:{1} tagId:{2} tag:{3} checkImg:{4} sockSend:{5}".format(event, user, tagID, tag, checkImg, sockSend))
 		outDict = {}
