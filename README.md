@@ -13,21 +13,21 @@ The server code is executed using an Apache httpd server, using CGI. Here are so
 notes about that configuration:
 
 1. The httpd.conf requires a few options to be set:
-   * The document root should be `/var/www/html`. There are hard-coded references to this 
-     directory in the Python code
-   * The directory configuration should include `Options FollowSymLinks Multiviews ExecCGI` 
-     and `AllowOverride All`. The latter allows the `.htaccess` file to apply some 
-     rewrite rules.
-   * Add `index.py` to the `DirectoryIndex` like so: `DirectoryIndex index.html index.py`
-   * Ensure the the CGI module is loaded: `LoadModule cgi_module libexec/apache2/mod_cgi.so`
-   * Ensure that there's a `.py` option in the CGI Handlers: `AddHandler cgi-script .cgi .py`
+   1. The document root should be `/var/www/html`. There are hard-coded references to this 
+      directory in the Python code
+   2. The directory configuration should include `Options FollowSymLinks Multiviews ExecCGI` 
+      and `AllowOverride All`. The latter allows the `.htaccess` file to apply some 
+      rewrite rules.
+   3. Add `index.py` to the `DirectoryIndex` like so: `DirectoryIndex index.html index.py`
+   4. Ensure the the CGI module is loaded: `LoadModule cgi_module libexec/apache2/mod_cgi.so`
+   5. Ensure that there's a `.py` option in the CGI Handlers: `AddHandler cgi-script .cgi .py`
 2. The Python could should be checked out in to the `/var/www/html/min` directory.
 3. The Python environment needs some extra stuff to be added to it. Loading that extra
    stuff in newer versions of macOS is tricky, because the System Integrity Protection 
    (SIP) really doesn't want you changing the standard Apple-delivered Python 
    installation in the OS Library. You really have two options here:
-   * deactivate SIP and install the modules
-   * install another version of Python and install the modules, there.
+   1. deactivate SIP and install the modules
+   2. install another version of Python and install the modules, there.
 4. Some of the necessary modules include `pybonjour`, `psutil`, `dicttoxml`, `netifaces`, 
    and `wheezy.template`
 5. Some pre-existing files and directories are necessary, including the 
