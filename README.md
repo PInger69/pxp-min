@@ -1,4 +1,4 @@
-# Avoca My Play-by-Play Python Server
+# Avoca myplayXplay Python Server
 
 This codebase contains the Python source code to support the My PxP Server.
 The server essentially performs two functions:
